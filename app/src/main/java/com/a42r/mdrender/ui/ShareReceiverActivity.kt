@@ -3,10 +3,10 @@ package com.a42r.mdrender.ui
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,42 +27,37 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.a42r.mdrender.MDRenderApplication
+import com.a42r.mdrender.ui.theme.MDRenderTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class ShareReceiverActivity : ComponentActivity() {
 
-    private var importCount = 0
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Keep screen on while importing
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        Log.d("ShareReceiver", "onCreate, action=${intent?.action}, type=${intent?.type}")
         val uris = extractUris(intent)
+        Log.d("ShareReceiver", "extracted ${uris.size} URIs: $uris")
 
         setContent {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
-            ) {
-                var completed by remember { mutableIntStateOf(0) }
-                var total by remember { mutableIntStateOf(uris.size) }
-
-                LaunchedEffect(uris) {
-                    if (uris.isNotEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            importFiles(uris) { completed = it }
-                        }
-                    }
-                    finish()
-                }
-
+            MDRenderTheme {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
+                    var completed by remember { mutableIntStateOf(0) }
+                    val total = uris.size
+
+                    LaunchedEffect(uris) {
+                        if (uris.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { importFiles(uris) { completed = it } }
+                        }
+                        Log.d("ShareReceiver", "import done, $completed/$total files imported, finishing")
+                        finish()
+                    }
+
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -90,21 +84,34 @@ class ShareReceiverActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun extractUris(intent: Intent?): List<Uri> {
         if (intent == null) return emptyList()
-        return when (intent.action) {
-            Intent.ACTION_SEND_MULTIPLE ->
-                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: emptyList()
-            Intent.ACTION_SEND ->
-                listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
-            else -> emptyList()
+        if (intent.action == Intent.ACTION_SEND) {
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            if (uri != null) return listOf(uri)
+            // Text shares come as EXTRA_TEXT
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+            if (text != null) return emptyList() // text content, not files
         }
+        if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            return intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: emptyList()
+        }
+        return emptyList()
     }
 
     private suspend fun importFiles(uris: List<Uri>, onProgress: (Int) -> Unit) {
         val fileRepo = MDRenderApplication.instance.fileRepository
         var count = 0
         for (uri in uris) {
+            try {
+                // Take persistable permission so the URI survives beyond this activity
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) { }
+
             try {
                 val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     ?: continue
@@ -116,9 +123,10 @@ class ShareReceiverActivity : ComponentActivity() {
                 fileRepo.importFile(fileName, finalMime, bytes, null)
                 count++
                 onProgress(count)
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                Log.e("ShareReceiver", "import failed for $uri", e)
+            }
         }
-        importCount = count
     }
 
     @Suppress("DEPRECATION")
