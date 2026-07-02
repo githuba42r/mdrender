@@ -5,7 +5,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Persists browser UI state (last viewed folder) across app restarts. */
+/** Persists browser UI state (last viewed folder, view mode) across app restarts. */
 @Singleton
 class BrowserPreferencesStore @Inject constructor(
     @ApplicationContext context: Context
@@ -19,7 +19,14 @@ class BrowserPreferencesStore @Inject constructor(
             prefs.edit().putLong(KEY_LAST_FOLDER, value ?: -1L).apply()
         }
 
+    var isGridView: Boolean
+        get() = prefs.getBoolean(KEY_GRID_VIEW, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_GRID_VIEW, value).apply()
+        }
+
     companion object {
         private const val KEY_LAST_FOLDER = "last_folder_id"
+        private const val KEY_GRID_VIEW = "is_grid_view"
     }
 }

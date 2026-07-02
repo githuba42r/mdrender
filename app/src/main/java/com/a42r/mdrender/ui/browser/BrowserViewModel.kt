@@ -49,7 +49,7 @@ class BrowserViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(BrowserUiState())
+    private val _uiState = MutableStateFlow(BrowserUiState(isGridView = browserPrefs.isGridView))
     val uiState: StateFlow<BrowserUiState> = _uiState.asStateFlow()
 
     /** Whether hidden folders are currently revealed (drives badges + Unhide). */
@@ -253,6 +253,7 @@ class BrowserViewModel @Inject constructor(
 
     fun toggleGridView() {
         _uiState.update { it.copy(isGridView = !it.isGridView) }
+        browserPrefs.isGridView = _uiState.value.isGridView
     }
 
     fun navigateToRoot() = navigateToFolder(null)
