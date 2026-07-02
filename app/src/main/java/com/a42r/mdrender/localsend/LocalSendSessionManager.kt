@@ -69,6 +69,7 @@ class LocalSendSessionManager @Inject constructor(
         val decision = CompletableDeferred<Boolean>()
         val pending = PendingTransfer(sessionId, senderAlias, files, decision)
         _pendingTransfer.value = pending
+        Log.d(TAG, "awaiting decision for session $sessionId from $senderAlias")
 
         // Auto-reject if nobody answers.
         scope.launch {
