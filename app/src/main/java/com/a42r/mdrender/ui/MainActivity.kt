@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.a42r.mdrender.security.AppLockManager
+import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
