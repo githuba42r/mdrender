@@ -5,12 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.entity.FolderEntity
 import android.content.Context
+import android.content.Intent
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderNode
 import com.a42r.mdrender.data.repository.FolderRepository
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.security.AppLock
+import com.a42r.mdrender.share.SharePlan
+import com.a42r.mdrender.share.ShareOutManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -46,6 +49,7 @@ class BrowserViewModel @Inject constructor(
     private val browserPrefs: BrowserPreferencesStore,
     private val appLock: AppLock,
     private val localSendPrefs: LocalSendPrefs,
+    private val shareOutManager: ShareOutManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -65,6 +69,71 @@ class BrowserViewModel @Inject constructor(
 
     private val _undoDelete = MutableSharedFlow<UndoDelete>()
     val undoDelete: SharedFlow<UndoDelete> = _undoDelete.asSharedFlow()
+
+    // --- Sharing ---------------------------------------------------------
+
+    /** Non-null while the hidden-item warning dialog should be showing. */
+    private val _pendingShare = MutableStateFlow<SharePlan.NeedsConfirmation?>(null)
+    val pendingShare: StateFlow<SharePlan.NeedsConfirmation?> = _pendingShare.asStateFlow()
+
+    /** Chooser intents ready to launch. */
+    private val _shareIntent = MutableSharedFlow<Intent>()
+    val shareIntent: SharedFlow<Intent> = _shareIntent.asSharedFlow()
+
+    /** Share failures, for the snackbar. */
+    private val _shareError = MutableSharedFlow<String>()
+    val shareError: SharedFlow<String> = _shareError.asSharedFlow()
+
+    /** True while files are being decrypted and staged. */
+    private val _shareInProgress = MutableStateFlow(false)
+    val shareInProgress: StateFlow<Boolean> = _shareInProgress.asStateFlow()
+
+    /** Entry point for both the top-bar Share action and the file menu.
+     *  Hidden items divert to the confirmation dialog via [pendingShare]. */
+    fun requestShare(ids: Collection<Long>) {
+        viewModelScope.launch {
+            val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
+            val hiddenByFolder = files.map { it.folderId }.distinct()
+                .associateWith { folderRepository.isInHiddenTree(it) }
+            when (val plan = SharePlan.of(files) { hiddenByFolder[it.folderId] == true }) {
+                is SharePlan.ShareNow -> stageAndShare(plan.files)
+                is SharePlan.NeedsConfirmation -> _pendingShare.value = plan
+                SharePlan.None -> Unit
+            }
+        }
+    }
+
+    fun confirmShareAll() {
+        val pending = _pendingShare.value ?: return
+        _pendingShare.value = null
+        stageAndShare(pending.visible + pending.hidden)
+    }
+
+    fun confirmShareVisibleOnly() {
+        val pending = _pendingShare.value ?: return
+        _pendingShare.value = null
+        if (pending.visible.isNotEmpty()) stageAndShare(pending.visible)
+    }
+
+    fun cancelShare() {
+        _pendingShare.value = null
+    }
+
+    private fun stageAndShare(files: List<FileEntity>) {
+        if (files.isEmpty()) return
+        viewModelScope.launch {
+            _shareInProgress.value = true
+            try {
+                when (val result = shareOutManager.stage(files)) {
+                    is ShareOutManager.StageResult.Ready -> _shareIntent.emit(result.intent)
+                    is ShareOutManager.StageResult.Failed ->
+                        _shareError.emit("Couldn't prepare \"${result.fileName}\" — nothing was shared")
+                }
+            } finally {
+                _shareInProgress.value = false
+            }
+        }
+    }
 
     private var undoJob: Job? = null
     private var contentJob: Job? = null
