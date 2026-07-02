@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import com.a42r.mdrender.MDRenderApplication
 
@@ -23,6 +24,14 @@ class ShareReceiverActivity : ComponentActivity() {
             count = importFilesSync(uris)
         }
         Log.d("ShareReceiver", "imported $count of ${uris.size} files")
+
+        val message = when {
+            uris.isEmpty() -> "Nothing to import"
+            count == uris.size && count == 1 -> "Imported to MDRender"
+            count == uris.size -> "Imported $count files to MDRender"
+            else -> "Imported $count of ${uris.size} files — see log for errors"
+        }
+        Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
 
         // Set a result so the caller knows we processed the share
         setResult(RESULT_OK)
