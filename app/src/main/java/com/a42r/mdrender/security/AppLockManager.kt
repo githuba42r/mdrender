@@ -19,8 +19,13 @@ class AppLockManager @Inject constructor() {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var idleTimeoutSeconds: Int = DEFAULT_IDLE_TIMEOUT_SECONDS
     private var idleTimerJob: Job? = null
+    private var backgroundLockJob: Job? = null
     private var consecutiveFailures: Int = 0
     private var lockoutUntil: Long = 0L
+
+    // Grace period before locking on background — allows file picker /
+    // share sheet transitions without triggering re-auth.
+    private val backgroundLockDelayMs = 3_000L
 
     fun lock() {
         _isLocked.value = true
@@ -45,11 +50,19 @@ class AppLockManager @Inject constructor() {
     }
 
     fun onAppInForeground() {
+        backgroundLockJob?.cancel()
+        backgroundLockJob = null
         if (!_isLocked.value) startIdleTimer()
     }
 
     fun onAppInBackground() {
-        lock()
+        // Use a grace delay before locking to allow file picker /
+        // share sheet transitions without triggering re-auth.
+        backgroundLockJob?.cancel()
+        backgroundLockJob = scope.launch {
+            delay(backgroundLockDelayMs)
+            lock()
+        }
     }
 
     fun recordFailedAttempt(): Boolean {

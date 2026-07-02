@@ -3,6 +3,7 @@ package com.a42r.mdrender
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLockManager
 import com.a42r.mdrender.security.AuthPreferencesStore
 import com.a42r.mdrender.security.ScreenOffReceiver
@@ -15,12 +16,19 @@ class MDRenderApplication : Application() {
 
     @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var authPrefs: AuthPreferencesStore
+    @Inject lateinit var fileRepository: FileRepository
+
+    companion object {
+        lateinit var instance: MDRenderApplication
+            private set
+    }
 
     private lateinit var screenOffReceiver: ScreenOffReceiver
     private var activityCount = 0
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
 
         appLockManager.setIdleTimeoutSeconds(authPrefs.idleTimeoutSeconds)
 
