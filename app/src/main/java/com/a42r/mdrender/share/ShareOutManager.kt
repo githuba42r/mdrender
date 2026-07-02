@@ -4,10 +4,12 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.repository.FileRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -44,19 +46,24 @@ class ShareOutManager @Inject constructor(
     suspend fun stage(files: List<FileEntity>): StageResult = withContext(Dispatchers.IO) {
         clearShareCache()
         shareDir.mkdirs()
-        val names = dedupeNames(files.map { it.name })
+        val names = dedupeNames(files.map { sanitizeName(it.name) })
         val uris = ArrayList<Uri>(files.size)
         for ((i, file) in files.withIndex()) {
             try {
                 val bytes = fileRepository.getDecryptedContent(file.id)?.first
                     ?: throw IllegalStateException("No decrypted content for ${file.id}")
                 val staged = File(shareDir, names[i])
+                if (staged.canonicalFile.parentFile != shareDir.canonicalFile) {
+                    throw IllegalStateException("Staged path escapes share dir: ${staged.name}")
+                }
                 staged.writeBytes(bytes)
                 uris += FileProvider.getUriForFile(
                     context, "${context.packageName}.fileprovider", staged
                 )
             } catch (e: Exception) {
                 clearShareCache()
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Failed to stage ${file.name}", e)
                 return@withContext StageResult.Failed(file.name)
             }
         }
@@ -80,6 +87,18 @@ class ShareOutManager @Inject constructor(
 
     companion object {
         const val SHARE_DIR = "share"
+        private const val TAG = "ShareOutManager"
+
+        /** Strips path components and null chars from an externally-influenced
+         *  file name (LocalSend network names, inbound share DISPLAY_NAME) so
+         *  it can't escape shareDir via "../" or embedded separators. */
+        fun sanitizeName(name: String): String {
+            val stripped = name
+                .substringAfterLast('/')
+                .substringAfterLast('\\')
+                .filter { it != '\u0000' }
+            return stripped.ifBlank { "file" }
+        }
 
         /** On-disk names for staged files: duplicates get "name (1).ext". */
         fun dedupeNames(names: List<String>): List<String> {

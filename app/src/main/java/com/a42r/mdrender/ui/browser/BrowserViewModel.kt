@@ -91,6 +91,7 @@ class BrowserViewModel @Inject constructor(
     /** Entry point for both the top-bar Share action and the file menu.
      *  Hidden items divert to the confirmation dialog via [pendingShare]. */
     fun requestShare(ids: Collection<Long>) {
+        if (_shareInProgress.value || _pendingShare.value != null) return
         viewModelScope.launch {
             val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
             val hiddenByFolder = files.map { it.folderId }.distinct()

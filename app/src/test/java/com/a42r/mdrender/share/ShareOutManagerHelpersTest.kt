@@ -6,6 +6,21 @@ import org.junit.Test
 class ShareOutManagerHelpersTest {
 
     @Test
+    fun sanitizeName_stripsPathTraversalComponents() {
+        assertEquals("evil.md", ShareOutManager.sanitizeName("../evil.md"))
+    }
+
+    @Test
+    fun sanitizeName_plainNamePassesThroughUnchanged() {
+        assertEquals("notes.md", ShareOutManager.sanitizeName("notes.md"))
+    }
+
+    @Test
+    fun sanitizeName_blankAfterSanitizingGetsPlaceholder() {
+        assertEquals("file", ShareOutManager.sanitizeName("../"))
+    }
+
+    @Test
     fun dedupeNames_uniqueNamesUnchanged() {
         assertEquals(
             listOf("a.md", "b.md"),
