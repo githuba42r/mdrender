@@ -44,6 +44,10 @@ class FolderRepository @Inject constructor(
 
     suspend fun folderExists(id: Long): Boolean = folderDao.getById(id) != null
 
+    /** Returns the id of the folder with [name] under [parentId], creating it if needed. */
+    suspend fun findOrCreateFolder(name: String, parentId: Long? = null): Long =
+        folderDao.findByName(parentId, name)?.id ?: createFolder(name, parentId)
+
     suspend fun getPathToFolder(folderId: Long): List<FolderEntity> {
         val path = mutableListOf<FolderEntity>()
         var currentId: Long? = folderId

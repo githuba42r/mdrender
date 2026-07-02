@@ -12,6 +12,9 @@ interface FileDao {
     @Query("SELECT * FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
     fun getFilesInFolder(folderId: Long?): Flow<List<FileEntity>>
 
+    @Query("SELECT name FROM files WHERE folder_id IS :folderId")
+    suspend fun getNamesInFolder(folderId: Long?): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(file: FileEntity): Long
 

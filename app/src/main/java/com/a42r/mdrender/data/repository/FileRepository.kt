@@ -36,6 +36,18 @@ class FileRepository @Inject constructor(
 
     suspend fun deleteFile(id: Long) = fileDao.delete(id)
 
+    /** Returns [desired] or, when taken in [folderId], "name (1).ext"-style variant. */
+    suspend fun uniqueNameInFolder(folderId: Long?, desired: String): String {
+        val taken = fileDao.getNamesInFolder(folderId).toSet()
+        if (desired !in taken) return desired
+        val dot = desired.lastIndexOf('.')
+        val base = if (dot > 0) desired.substring(0, dot) else desired
+        val ext = if (dot > 0) desired.substring(dot) else ""
+        var n = 1
+        while ("$base ($n)$ext" in taken) n++
+        return "$base ($n)$ext"
+    }
+
     suspend fun renameFile(id: Long, newName: String) =
         fileDao.rename(id, newName, System.currentTimeMillis())
 

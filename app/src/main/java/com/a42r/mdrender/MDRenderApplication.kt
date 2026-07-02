@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import com.a42r.mdrender.data.repository.FileRepository
+import com.a42r.mdrender.localsend.LocalSendPrefs
+import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.security.AppLockManager
 import com.a42r.mdrender.security.AuthPreferencesStore
 import com.a42r.mdrender.security.ScreenOffReceiver
@@ -19,6 +21,12 @@ class MDRenderApplication : Application() {
     @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var authPrefs: AuthPreferencesStore
     @Inject lateinit var fileRepository: FileRepository
+    @Inject lateinit var localSendPrefs: LocalSendPrefs
+
+    /** True while a non-transient activity is resumed. */
+    @Volatile
+    var isForeground: Boolean = false
+        private set
 
     companion object {
         lateinit var instance: MDRenderApplication
@@ -55,6 +63,10 @@ class MDRenderApplication : Application() {
         }
         registerReceiver(screenOffReceiver, ScreenOffReceiver.FILTER)
 
+        if (localSendPrefs.enabled) {
+            LocalSendService.start(this)
+        }
+
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
             override fun onActivityStarted(activity: Activity) {
@@ -66,6 +78,7 @@ class MDRenderApplication : Application() {
                 }
                 if (!isTransient(activity)) {
                     foregroundActivity = WeakReference(activity)
+                    isForeground = true
                     appLockManager.onAppInForeground()
                     if (appLockManager.isLocked.value) {
                         LockScreenActivity.launch(activity)
@@ -74,6 +87,7 @@ class MDRenderApplication : Application() {
             }
             override fun onActivityPaused(activity: Activity) {
                 if (!isTransient(activity)) {
+                    isForeground = false
                     appLockManager.onAppInBackground()
                 }
             }
