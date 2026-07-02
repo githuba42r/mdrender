@@ -18,11 +18,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.a42r.mdrender.data.entity.FileEntity
+import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
 import java.text.SimpleDateFormat
@@ -50,6 +52,9 @@ fun FolderBrowserScreen(
     var confirmDeleteFolder by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
     val localSendEnabled by viewModel.localSendEnabled.collectAsStateWithLifecycle()
+    val pendingShare by viewModel.pendingShare.collectAsStateWithLifecycle()
+    val shareInProgress by viewModel.shareInProgress.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -122,6 +127,18 @@ fun FolderBrowserScreen(
         }
     }
 
+    // Launch the system share sheet when staging completes; leaving selection
+    // mode afterwards since the action is done.
+    LaunchedEffect(Unit) {
+        viewModel.shareIntent.collect { intent ->
+            context.startActivity(intent)
+            selectedIds = emptySet()
+        }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.shareError.collect { snackbarHostState.showSnackbar(it) }
+    }
+
     Scaffold(
         topBar = {
             if (selectionMode) {
@@ -133,6 +150,9 @@ fun FolderBrowserScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = { viewModel.requestShare(selectedIds) }) {
+                            Icon(Icons.Filled.Share, contentDescription = "Share")
+                        }
                         IconButton(onClick = {
                             viewModel.loadMoveTargets()
                             moveMulti = true
@@ -190,6 +210,9 @@ fun FolderBrowserScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
+            if (shareInProgress) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
             // Breadcrumb
             BreadcrumbBar(
                 path = uiState.breadcrumbPath,
@@ -334,6 +357,14 @@ fun FolderBrowserScreen(
                     modifier = Modifier.clickable {
                         menuFile = null
                         openFile(file)
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Share") },
+                    leadingContent = { Icon(Icons.Filled.Share, "Share") },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        viewModel.requestShare(listOf(file.id))
                     }
                 )
                 ListItem(
@@ -544,6 +575,40 @@ fun FolderBrowserScreen(
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmDeleteMulti = false }) { Text("Cancel") } }
+        )
+    }
+
+    // Hidden-item share warning
+    pendingShare?.let { pending ->
+        val n = pending.hidden.size
+        val warning = if (n == 1)
+            "One of the items you are sharing is stored in a hidden folder. " +
+            "It is sensitive in nature and is normally hidden for security purposes."
+        else
+            "$n of the items you are sharing are stored in a hidden folder. " +
+            "These items are sensitive in nature and are normally hidden for security purposes."
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelShare() },
+            icon = { Icon(Icons.Filled.Warning, contentDescription = null) },
+            title = { Text("Share hidden items?") },
+            text = {
+                Text(warning + "\n\n" + pending.hidden.joinToString("\n") { "• ${it.name}" })
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmShareAll() }) {
+                    Text(if (pending.visible.isEmpty()) "Share" else "Share all")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (pending.visible.isNotEmpty()) {
+                        TextButton(onClick = { viewModel.confirmShareVisibleOnly() }) {
+                            Text("Share non-hidden only")
+                        }
+                    }
+                    TextButton(onClick = { viewModel.cancelShare() }) { Text("Cancel") }
+                }
+            }
         )
     }
 
