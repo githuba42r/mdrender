@@ -1,6 +1,7 @@
 package com.a42r.mdrender.ui.viewer
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -28,9 +29,14 @@ fun ImageViewerScreen(
     viewModel: ViewerViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showAppBar by remember { mutableStateOf(true) }
+    // Full-screen by default; tap the image to toggle the title bar.
+    var showAppBar by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+
+    RegisterViewerZoom { delta ->
+        scale = (scale * if (delta > 0) 1.25f else 0.8f).coerceIn(0.5f, 5f)
+    }
 
     if (showAppBar) {
         Scaffold(
@@ -101,6 +107,9 @@ private fun ImageContent(
                                 offset.y + pan.y
                             ))
                         }
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { onTap() })
                     },
                 contentAlignment = Alignment.Center
             ) {
