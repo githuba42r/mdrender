@@ -36,6 +36,12 @@ class FileRepository @Inject constructor(
 
     suspend fun deleteFile(id: Long) = fileDao.delete(id)
 
+    suspend fun renameFile(id: Long, newName: String) =
+        fileDao.rename(id, newName, System.currentTimeMillis())
+
+    suspend fun moveFile(id: Long, folderId: Long?) =
+        fileDao.move(id, folderId, System.currentTimeMillis())
+
     suspend fun getDecryptedContent(id: Long): Pair<ByteArray, String>? {
         val entity = fileDao.getById(id) ?: return null
         val decrypted = cryptoEngine.decrypt(entity.encryptedBlob)

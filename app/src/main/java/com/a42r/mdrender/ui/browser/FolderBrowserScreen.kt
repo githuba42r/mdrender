@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
 
@@ -29,7 +30,21 @@ fun FolderBrowserScreen(
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
     var showImportSheet by remember { mutableStateOf(false) }
+    var menuFile by remember { mutableStateOf<FileEntity?>(null) }
+    var renameFile by remember { mutableStateOf<FileEntity?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var moveFile by remember { mutableStateOf<FileEntity?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val openFile: (FileEntity) -> Unit = { file ->
+        val route = when {
+            file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
+            file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
+            file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
+            else -> Routes.TextViewer.createRoute(file.id)
+        }
+        navController.navigate(route)
+    }
 
     // Collect undo deletes
     LaunchedEffect(Unit) {
@@ -103,15 +118,8 @@ fun FolderBrowserScreen(
                             name = file.name,
                             fileType = fileType,
                             isGridView = true,
-                            onClick = {
-                                val route = when {
-                                    file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
-                                    file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
-                                    file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
-                                    else -> Routes.TextViewer.createRoute(file.id)
-                                }
-                                navController.navigate(route)
-                            }
+                            onClick = { openFile(file) },
+                            onLongClick = { menuFile = file }
                         )
                     }
                 }
@@ -142,9 +150,12 @@ fun FolderBrowserScreen(
                                 ) { Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error) }
                             },
                             content = {
-                                ListItem(
-                                    headlineContent = { Text(file.name) },
-                                    leadingContent = { Icon(fileType.icon, fileType.label) },
+                                FileItem(
+                                    name = file.name,
+                                    fileType = fileType,
+                                    isGridView = false,
+                                    onClick = { openFile(file) },
+                                    onLongClick = { menuFile = file },
                                     modifier = Modifier.animateItem()
                                 )
                             }
@@ -177,6 +188,129 @@ fun FolderBrowserScreen(
                 )
             }
         }
+    }
+
+    // File context menu (long-press)
+    menuFile?.let { file ->
+        ModalBottomSheet(onDismissRequest = { menuFile = null }) {
+            Column(modifier = Modifier.padding(bottom = 24.dp)) {
+                ListItem(
+                    headlineContent = { Text(file.name, maxLines = 1) },
+                    supportingContent = { Text(FileType.fromMimeType(file.mimeType).label) }
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("Open") },
+                    leadingContent = { Icon(Icons.Filled.FileOpen, "Open") },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        openFile(file)
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Rename") },
+                    leadingContent = { Icon(Icons.Filled.Edit, "Rename") },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        renameText = file.name
+                        renameFile = file
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Move") },
+                    leadingContent = { Icon(Icons.Filled.DriveFileMove, "Move") },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        viewModel.loadMoveTargets()
+                        moveFile = file
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Delete") },
+                    leadingContent = {
+                        Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                    },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        viewModel.deleteFile(file.id)
+                    }
+                )
+            }
+        }
+    }
+
+    // Rename dialog
+    renameFile?.let { file ->
+        AlertDialog(
+            onDismissRequest = { renameFile = null },
+            title = { Text("Rename File") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("File name") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameText.isNotBlank(),
+                    onClick = {
+                        viewModel.renameFile(file.id, renameText.trim())
+                        renameFile = null
+                    }
+                ) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameFile = null }) { Text("Cancel") } }
+        )
+    }
+
+    // Move dialog
+    moveFile?.let { file ->
+        val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+        AlertDialog(
+            onDismissRequest = { moveFile = null },
+            title = { Text("Move to") },
+            text = {
+                LazyColumn {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("Root") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Root") },
+                            modifier = Modifier.clickable(enabled = file.folderId != null) {
+                                viewModel.moveFile(file.id, null)
+                                moveFile = null
+                            },
+                            colors = ListItemDefaults.colors(
+                                headlineColor = if (file.folderId == null)
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                else ListItemDefaults.colors().headlineColor
+                            )
+                        )
+                    }
+                    items(moveTargets, key = { it.folder.id }) { target ->
+                        val isCurrent = file.folderId == target.folder.id
+                        ListItem(
+                            headlineContent = { Text(target.folder.name) },
+                            leadingContent = { Icon(Icons.Filled.Folder, "Folder") },
+                            modifier = Modifier
+                                .padding(start = (target.depth * 16).dp)
+                                .clickable(enabled = !isCurrent) {
+                                    viewModel.moveFile(file.id, target.folder.id)
+                                    moveFile = null
+                                },
+                            colors = ListItemDefaults.colors(
+                                headlineColor = if (isCurrent)
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                else ListItemDefaults.colors().headlineColor
+                            )
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { moveFile = null }) { Text("Cancel") } }
+        )
     }
 
     // New Folder Dialog

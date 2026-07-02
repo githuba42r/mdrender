@@ -18,6 +18,12 @@ interface FileDao {
     @Update
     suspend fun update(file: FileEntity)
 
+    @Query("UPDATE files SET name = :name, updated_at = :updatedAt WHERE id = :id")
+    suspend fun rename(id: Long, name: String, updatedAt: Long)
+
+    @Query("UPDATE files SET folder_id = :folderId, updated_at = :updatedAt WHERE id = :id")
+    suspend fun move(id: Long, folderId: Long?, updatedAt: Long)
+
     @Query("DELETE FROM files WHERE id = :id")
     suspend fun delete(id: Long)
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.entity.FolderEntity
 import com.a42r.mdrender.data.repository.FileRepository
+import com.a42r.mdrender.data.repository.FolderNode
 import com.a42r.mdrender.data.repository.FolderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -25,6 +26,12 @@ data class BrowserUiState(
 data class UndoDelete(
     val message: String,
     val action: suspend () -> Unit
+)
+
+/** A candidate destination for the Move dialog: a folder and its tree depth. */
+data class MoveTarget(
+    val folder: FolderEntity,
+    val depth: Int
 )
 
 @HiltViewModel
@@ -100,6 +107,36 @@ class BrowserViewModel @Inject constructor(
                 delay(5000)
                 // Delete is already committed at this point
             }
+        }
+    }
+
+    fun renameFile(id: Long, newName: String) {
+        viewModelScope.launch {
+            fileRepository.renameFile(id, newName)
+        }
+    }
+
+    fun moveFile(id: Long, targetFolderId: Long?) {
+        viewModelScope.launch {
+            fileRepository.moveFile(id, targetFolderId)
+        }
+    }
+
+    private val _moveTargets = MutableStateFlow<List<MoveTarget>>(emptyList())
+    val moveTargets: StateFlow<List<MoveTarget>> = _moveTargets.asStateFlow()
+
+    /** Refresh the flattened folder tree shown in the Move dialog. */
+    fun loadMoveTargets() {
+        viewModelScope.launch {
+            val flattened = mutableListOf<MoveTarget>()
+            fun flatten(nodes: List<FolderNode>, depth: Int) {
+                for (node in nodes) {
+                    flattened.add(MoveTarget(node.folder, depth))
+                    flatten(node.children, depth + 1)
+                }
+            }
+            flatten(folderRepository.buildTree(), 0)
+            _moveTargets.value = flattened
         }
     }
 

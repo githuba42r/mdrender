@@ -1,5 +1,7 @@
 package com.a42r.mdrender.ui.browser
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -11,18 +13,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.a42r.mdrender.ui.navigation.FileType
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileItem(
     name: String,
     fileType: FileType,
     isGridView: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null
 ) {
     if (isGridView) {
         Card(
-            onClick = onClick,
-            modifier = modifier.width(120.dp).padding(4.dp)
+            modifier = modifier
+                .width(120.dp)
+                .padding(4.dp)
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
             Column(
                 modifier = Modifier.padding(12.dp).fillMaxWidth(),
@@ -47,7 +53,7 @@ fun FileItem(
         ListItem(
             headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             leadingContent = { Icon(fileType.icon, fileType.label) },
-            modifier = modifier,
+            modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
             // Swipe-to-delete is handled at the parent list level
         )
     }
