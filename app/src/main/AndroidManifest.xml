@@ -28,7 +28,7 @@
             android:name=".ui.ShareReceiverActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:theme="@style/Theme.MDRender.Transparent">
+            android:theme="@style/Theme.MDRender.Share">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
