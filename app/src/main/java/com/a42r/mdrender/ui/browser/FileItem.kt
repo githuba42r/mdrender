@@ -22,7 +22,8 @@ fun FileItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
-    selected: Boolean = false
+    selected: Boolean = false,
+    hiddenBadge: Boolean = false
 ) {
     if (isGridView) {
         Card(
@@ -38,12 +39,22 @@ fun FileItem(
                 modifier = Modifier.padding(12.dp).fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = if (selected) Icons.Filled.CheckCircle else fileType.icon,
-                    contentDescription = if (selected) "Selected" else fileType.label,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Box {
+                    Icon(
+                        imageVector = if (selected) Icons.Filled.CheckCircle else fileType.icon,
+                        contentDescription = if (selected) "Selected" else fileType.label,
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    if (hiddenBadge) {
+                        Icon(
+                            Icons.Filled.VisibilityOff,
+                            contentDescription = "Hidden",
+                            modifier = Modifier.size(16.dp).align(Alignment.BottomEnd),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = name,
@@ -63,6 +74,9 @@ fun FileItem(
                     tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current
                 )
             },
+            trailingContent = if (hiddenBadge) {
+                { Icon(Icons.Filled.VisibilityOff, "Hidden", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else null,
             colors = if (selected) ListItemDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.primaryContainer
             ) else ListItemDefaults.colors(),

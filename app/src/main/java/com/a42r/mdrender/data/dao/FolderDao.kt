@@ -18,6 +18,9 @@ interface FolderDao {
     @Query("SELECT * FROM folders WHERE parent_id IS :parentId AND name = :name LIMIT 1")
     suspend fun findByName(parentId: Long?, name: String): FolderEntity?
 
+    @Query("UPDATE folders SET hidden = :hidden, updated_at = :updatedAt WHERE id = :id")
+    suspend fun setHidden(id: Long, hidden: Boolean, updatedAt: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(folder: FolderEntity): Long
 

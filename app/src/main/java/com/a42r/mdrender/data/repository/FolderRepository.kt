@@ -44,6 +44,23 @@ class FolderRepository @Inject constructor(
 
     suspend fun folderExists(id: Long): Boolean = folderDao.getById(id) != null
 
+    suspend fun setFolderHidden(id: Long, hidden: Boolean) =
+        folderDao.setHidden(id, hidden, System.currentTimeMillis())
+
+    /** True if [folderId] or any ancestor is marked hidden. */
+    suspend fun isInHiddenTree(folderId: Long?): Boolean {
+        var currentId: Long? = folderId
+        // Guard against cycles in malformed data.
+        var hops = 0
+        while (currentId != null && hops < 1000) {
+            val folder = folderDao.getById(currentId) ?: return false
+            if (folder.hidden) return true
+            currentId = folder.parentId
+            hops++
+        }
+        return false
+    }
+
     /** Returns the id of the folder with [name] under [parentId], creating it if needed. */
     suspend fun findOrCreateFolder(name: String, parentId: Long? = null): Long =
         folderDao.findByName(parentId, name)?.id ?: createFolder(name, parentId)

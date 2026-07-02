@@ -36,6 +36,26 @@ fun FolderBrowserScreen(
     var renameText by remember { mutableStateOf("") }
     var moveFile by remember { mutableStateOf<FileEntity?>(null) }
     var confirmDeleteFile by remember { mutableStateOf<FileEntity?>(null) }
+    var folderMenu by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
+    val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
+
+    // Secret gesture: 12 taps on the title within 30s reveals hidden folders.
+    var titleTapCount by remember { mutableStateOf(0) }
+    var titleWindowStart by remember { mutableStateOf(0L) }
+    val onTitleTap = {
+        val now = System.currentTimeMillis()
+        if (now - titleWindowStart > 30_000L) {
+            titleWindowStart = now
+            titleTapCount = 1
+        } else {
+            titleTapCount++
+        }
+        if (titleTapCount >= 12) {
+            viewModel.revealHiddenFolders()
+            titleTapCount = 0
+        }
+    }
+
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var confirmDeleteMulti by remember { mutableStateOf(false) }
     var moveMulti by remember { mutableStateOf(false) }
@@ -103,7 +123,7 @@ fun FolderBrowserScreen(
                 )
             } else {
                 TopAppBar(
-                    title = { Text("MDRender") },
+                    title = { Text("MDRender", modifier = Modifier.clickable { onTitleTap() }) },
                     actions = {
                         IconButton(onClick = { viewModel.toggleGridView() }) {
                             Icon(
@@ -151,7 +171,9 @@ fun FolderBrowserScreen(
                             name = folder.name,
                             fileType = FileType.FOLDER,
                             isGridView = true,
-                            onClick = { if (!selectionMode) viewModel.navigateToFolder(folder.id) }
+                            onClick = { if (!selectionMode) viewModel.navigateToFolder(folder.id) },
+                            onLongClick = { if (!selectionMode) folderMenu = folder },
+                            hiddenBadge = folder.hidden
                         )
                     }
                     // Files
@@ -170,11 +192,15 @@ fun FolderBrowserScreen(
             } else {
                 LazyColumn {
                     items(uiState.folders, key = { "folder_${it.id}" }) { folder ->
-                        ListItem(
-                            headlineContent = { Text(folder.name) },
-                            leadingContent = { Icon(Icons.Filled.Folder, "Folder") },
+                        FileItem(
+                            name = folder.name,
+                            fileType = FileType.FOLDER,
+                            isGridView = false,
+                            onClick = { if (!selectionMode) viewModel.navigateToFolder(folder.id) },
+                            onLongClick = { if (!selectionMode) folderMenu = folder },
+                            hiddenBadge = folder.hidden,
                             modifier = Modifier.animateItem()
-                        ) // No click support needed for list view in this iteration
+                        )
                     }
                     items(uiState.files, key = { "file_${it.id}" }) { file ->
                         val fileType = FileType.fromMimeType(file.mimeType)
@@ -294,6 +320,38 @@ fun FolderBrowserScreen(
                         confirmDeleteFile = file
                     }
                 )
+            }
+        }
+    }
+
+    // Folder context menu (long-press)
+    folderMenu?.let { folder ->
+        ModalBottomSheet(onDismissRequest = { folderMenu = null }) {
+            Column(modifier = Modifier.padding(bottom = 24.dp)) {
+                ListItem(
+                    headlineContent = { Text(folder.name, maxLines = 1) },
+                    supportingContent = { Text("Folder") }
+                )
+                HorizontalDivider()
+                if (folder.hidden) {
+                    ListItem(
+                        headlineContent = { Text("Unhide folder") },
+                        leadingContent = { Icon(Icons.Filled.Visibility, "Unhide") },
+                        modifier = Modifier.clickable {
+                            viewModel.setFolderHidden(folder.id, false)
+                            folderMenu = null
+                        }
+                    )
+                } else {
+                    ListItem(
+                        headlineContent = { Text("Hide folder") },
+                        leadingContent = { Icon(Icons.Filled.VisibilityOff, "Hide") },
+                        modifier = Modifier.clickable {
+                            viewModel.setFolderHidden(folder.id, true)
+                            folderMenu = null
+                        }
+                    )
+                }
             }
         }
     }

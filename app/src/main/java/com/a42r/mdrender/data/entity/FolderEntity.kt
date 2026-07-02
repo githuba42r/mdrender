@@ -20,6 +20,7 @@ data class FolderEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     @ColumnInfo(name = "name") val name: String,
     @ColumnInfo(name = "parent_id") val parentId: Long? = null,
+    @ColumnInfo(name = "hidden", defaultValue = "0") val hidden: Boolean = false,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )

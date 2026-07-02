@@ -7,6 +7,7 @@ import com.a42r.mdrender.data.entity.FolderEntity
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderNode
 import com.a42r.mdrender.data.repository.FolderRepository
+import com.a42r.mdrender.security.AppLock
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -38,11 +39,15 @@ data class MoveTarget(
 class BrowserViewModel @Inject constructor(
     private val folderRepository: FolderRepository,
     private val fileRepository: FileRepository,
-    private val browserPrefs: BrowserPreferencesStore
+    private val browserPrefs: BrowserPreferencesStore,
+    private val appLock: AppLock
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
     val uiState: StateFlow<BrowserUiState> = _uiState.asStateFlow()
+
+    /** Whether hidden folders are currently revealed (drives badges + Unhide). */
+    val revealHidden: StateFlow<Boolean> = appLock.revealHidden
 
     private val _undoDelete = MutableSharedFlow<UndoDelete>()
     val undoDelete: SharedFlow<UndoDelete> = _undoDelete.asSharedFlow()
@@ -58,8 +63,13 @@ class BrowserViewModel @Inject constructor(
         if (initialized) return
         initialized = true
         viewModelScope.launch {
-            val target = requestedFolderId
+            val requested = requestedFolderId
                 ?: browserPrefs.lastFolderId?.takeIf { folderRepository.folderExists(it) }
+            // Never land inside a hidden tree on (re)start — authentication
+            // alone must not expose hidden content. Fall back to root.
+            val target = requested?.takeUnless {
+                !appLock.revealHidden.value && folderRepository.isInHiddenTree(it)
+            }
             navigateToFolder(target)
         }
     }
@@ -75,7 +85,12 @@ class BrowserViewModel @Inject constructor(
         contentJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             launch {
-                folderRepository.getChildrenOf(folderId).collect { folders ->
+                combine(
+                    folderRepository.getChildrenOf(folderId),
+                    appLock.revealHidden
+                ) { folders, reveal ->
+                    if (reveal) folders else folders.filter { !it.hidden }
+                }.collect { folders ->
                     _uiState.update { it.copy(folders = folders) }
                 }
             }
@@ -169,6 +184,15 @@ class BrowserViewModel @Inject constructor(
             _moveTargets.value = flattened
         }
     }
+
+    fun setFolderHidden(id: Long, hidden: Boolean) {
+        viewModelScope.launch {
+            folderRepository.setFolderHidden(id, hidden)
+        }
+    }
+
+    /** Called by the secret title-tap gesture to reveal hidden folders. */
+    fun revealHiddenFolders() = appLock.revealHiddenFolders()
 
     fun toggleGridView() {
         _uiState.update { it.copy(isGridView = !it.isGridView) }

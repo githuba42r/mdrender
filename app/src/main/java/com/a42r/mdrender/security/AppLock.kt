@@ -18,11 +18,18 @@ class AppLock @Inject constructor() {
     private val _isLocked = MutableStateFlow(true)
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
 
+    // Whether hidden folders are temporarily revealed. Runtime-only; reset on
+    // every lock so authentication alone never exposes hidden content.
+    private val _revealHidden = MutableStateFlow(false)
+    val revealHidden: StateFlow<Boolean> = _revealHidden.asStateFlow()
+
     // Skips the next background-lock (e.g. while the system file picker is open).
     @Volatile
     private var suspendNextLock = false
 
     fun unlock() { _isLocked.value = false }
+
+    fun revealHiddenFolders() { _revealHidden.value = true }
 
     /** Call before launching a system activity (file picker) so returning to
      *  the app doesn't demand re-authentication. */
@@ -35,5 +42,6 @@ class AppLock @Inject constructor() {
             return
         }
         _isLocked.value = true
+        _revealHidden.value = false
     }
 }
