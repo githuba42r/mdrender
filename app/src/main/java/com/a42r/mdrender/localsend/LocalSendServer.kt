@@ -54,10 +54,13 @@ class LocalSendServer(
 
         // PIN gate
         val requiredPin = prefs.pin
-        if (requiredPin.isNotEmpty()) {
+        val pinValidated = requiredPin.isNotEmpty()
+        if (pinValidated) {
             val sentPin = session.parameters["pin"]?.firstOrNull()
             if (sentPin != requiredPin) return error(Response.Status.UNAUTHORIZED, "PIN required")
         }
+        // Auto-accept only when a PIN is set (and thus just validated).
+        val autoAccept = pinValidated && prefs.autoAccept
 
         val body = JSONObject(String(readBody(session), Charsets.UTF_8))
         val senderAlias = body.optJSONObject("info")?.optString("alias") ?: "Unknown device"
@@ -72,7 +75,7 @@ class LocalSendServer(
         }
         Log.d(TAG, "prepare-upload from $senderAlias: ${files.size} file(s)")
 
-        val grant = sessionManager.requestSession(senderAlias, files)
+        val grant = sessionManager.requestSession(senderAlias, files, autoAccept)
             ?: return error(Response.Status.FORBIDDEN, "Rejected")
 
         val response = JSONObject().apply {

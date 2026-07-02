@@ -27,6 +27,12 @@ class LocalSendPrefs @Inject constructor(
         get() = prefs.getString(KEY_PIN, "") ?: ""
         set(value) = prefs.edit().putString(KEY_PIN, value).apply()
 
+    /** Auto-accept incoming transfers that supply the correct PIN, without
+     *  prompting. Only honored when a PIN is set. */
+    var autoAccept: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_ACCEPT, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_ACCEPT, value).apply()
+
     /** Stable random fingerprint identifying this device on the network. */
     val fingerprint: String
         get() = prefs.getString(KEY_FINGERPRINT, null) ?: UUID.randomUUID().toString().also {
@@ -43,6 +49,7 @@ class LocalSendPrefs @Inject constructor(
         private const val KEY_ENABLED = "enabled"
         private const val KEY_ALIAS = "alias"
         private const val KEY_PIN = "pin"
+        private const val KEY_AUTO_ACCEPT = "auto_accept"
         private const val KEY_FINGERPRINT = "fingerprint"
 
         private val ADJECTIVES = listOf(

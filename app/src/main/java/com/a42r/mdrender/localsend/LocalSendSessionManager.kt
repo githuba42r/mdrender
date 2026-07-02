@@ -63,23 +63,35 @@ class LocalSendSessionManager @Inject constructor(
 
     /** Called by the HTTP server (worker thread). Blocks until the user
      *  decides or the request times out. Returns fileId->token map on accept,
-     *  null on reject/timeout. Only one pending/active session at a time. */
-    fun requestSession(senderAlias: String, files: List<IncomingFile>): SessionGrant? {
+     *  null on reject/timeout. Only one pending/active session at a time.
+     *
+     *  When [autoAccept] is true (PIN was set and validated), the transfer is
+     *  granted immediately without prompting the user. */
+    fun requestSession(
+        senderAlias: String,
+        files: List<IncomingFile>,
+        autoAccept: Boolean = false
+    ): SessionGrant? {
         val sessionId = UUID.randomUUID().toString()
-        val decision = CompletableDeferred<Boolean>()
-        val pending = PendingTransfer(sessionId, senderAlias, files, decision)
-        _pendingTransfer.value = pending
-        Log.d(TAG, "awaiting decision for session $sessionId from $senderAlias")
 
-        // Auto-reject if nobody answers.
-        scope.launch {
-            delay(DECISION_TIMEOUT_MS)
-            decision.complete(false)
+        if (!autoAccept) {
+            val decision = CompletableDeferred<Boolean>()
+            val pending = PendingTransfer(sessionId, senderAlias, files, decision)
+            _pendingTransfer.value = pending
+            Log.d(TAG, "awaiting decision for session $sessionId from $senderAlias")
+
+            // Auto-reject if nobody answers.
+            scope.launch {
+                delay(DECISION_TIMEOUT_MS)
+                decision.complete(false)
+            }
+
+            val accepted = runBlocking { decision.await() }
+            _pendingTransfer.value = null
+            if (!accepted) return null
+        } else {
+            Log.d(TAG, "auto-accepting session $sessionId from $senderAlias")
         }
-
-        val accepted = runBlocking { decision.await() }
-        _pendingTransfer.value = null
-        if (!accepted) return null
 
         val tokens = files.associate { it.id to UUID.randomUUID().toString() }
         sessions[sessionId] = ActiveSession(sessionId, tokens, files.associateBy { it.id })
