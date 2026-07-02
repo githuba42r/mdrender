@@ -2,6 +2,7 @@ package com.a42r.mdrender.ui
 
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -58,6 +59,19 @@ class MainActivity : FragmentActivity() {
         setContent {
             MDRenderTheme {
                 val locked by appLock.isLocked.collectAsState()
+
+                // While a hidden folder/file is on screen, mark the window
+                // secure so the OS renders a blank app-switcher snapshot instead
+                // of the hidden content.
+                val displayingHidden by appLock.displayingHidden.collectAsState()
+                LaunchedEffect(displayingHidden) {
+                    if (displayingHidden) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+
                 if (locked) {
                     LockGate(onUnlockClick = { promptAuth(force = true) })
                 } else {

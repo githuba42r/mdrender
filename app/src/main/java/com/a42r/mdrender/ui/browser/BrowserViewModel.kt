@@ -78,6 +78,11 @@ class BrowserViewModel @Inject constructor(
         browserPrefs.lastFolderId = folderId
         _uiState.update { it.copy(currentFolderId = folderId) }
         loadContent(folderId)
+        // Secure the window while inside a hidden tree so the app-switcher
+        // snapshot never captures hidden content.
+        viewModelScope.launch {
+            appLock.setDisplayingHidden(folderId != null && folderRepository.isInHiddenTree(folderId))
+        }
     }
 
     private fun loadContent(folderId: Long?) {

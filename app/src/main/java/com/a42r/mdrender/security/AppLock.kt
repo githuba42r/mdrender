@@ -23,6 +23,16 @@ class AppLock @Inject constructor() {
     private val _revealHidden = MutableStateFlow(false)
     val revealHidden: StateFlow<Boolean> = _revealHidden.asStateFlow()
 
+    // Whether the currently-displayed folder is inside a hidden tree. Drives
+    // FLAG_SECURE so the recents/app-switcher snapshot can't capture hidden
+    // content. Deliberately NOT reset on background — it must stay true across
+    // the moment the snapshot is taken, and is cleared only once the browser
+    // navigates back to non-hidden content (e.g. home on the next unlock).
+    private val _displayingHidden = MutableStateFlow(false)
+    val displayingHidden: StateFlow<Boolean> = _displayingHidden.asStateFlow()
+
+    fun setDisplayingHidden(value: Boolean) { _displayingHidden.value = value }
+
     // Skips the next background-lock (e.g. while the system file picker is open).
     @Volatile
     private var suspendNextLock = false
