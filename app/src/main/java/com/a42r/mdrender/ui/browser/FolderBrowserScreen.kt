@@ -34,6 +34,7 @@ fun FolderBrowserScreen(
     var renameFile by remember { mutableStateOf<FileEntity?>(null) }
     var renameText by remember { mutableStateOf("") }
     var moveFile by remember { mutableStateOf<FileEntity?>(null) }
+    var confirmDeleteFile by remember { mutableStateOf<FileEntity?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val openFile: (FileEntity) -> Unit = { file ->
@@ -138,9 +139,10 @@ fun FolderBrowserScreen(
                             state = rememberSwipeToDismissBoxState(
                                 confirmValueChange = { value ->
                                     if (value == SwipeToDismissBoxValue.EndToStart) {
-                                        viewModel.deleteFile(file.id)
-                                        true
-                                    } else false
+                                        // Ask for confirmation; row snaps back until confirmed
+                                        confirmDeleteFile = file
+                                    }
+                                    false
                                 }
                             ),
                             backgroundContent = {
@@ -232,11 +234,27 @@ fun FolderBrowserScreen(
                     },
                     modifier = Modifier.clickable {
                         menuFile = null
-                        viewModel.deleteFile(file.id)
+                        confirmDeleteFile = file
                     }
                 )
             }
         }
+    }
+
+    // Delete confirmation dialog
+    confirmDeleteFile?.let { file ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteFile = null },
+            title = { Text("Delete File?") },
+            text = { Text("\"${file.name}\" will be permanently deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteFile(file.id)
+                    confirmDeleteFile = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteFile = null }) { Text("Cancel") } }
+        )
     }
 
     // Rename dialog
