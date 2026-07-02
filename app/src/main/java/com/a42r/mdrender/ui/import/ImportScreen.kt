@@ -2,6 +2,7 @@ package com.a42r.mdrender.ui.import
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.a42r.mdrender.MDRenderApplication
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -53,6 +54,11 @@ fun ImportScreen(
         }
     }
 
+    val launchPicker: () -> Unit = {
+        MDRenderApplication.instance.appLockManager.suspendNextPause()
+        filePickerLauncher.launch("*/*")
+    }
+
     LaunchedEffect(Unit) {
         viewModel.importComplete.collect { complete ->
             if (complete) onBack()
@@ -89,7 +95,7 @@ fun ImportScreen(
                     color = MaterialTheme.colorScheme.error
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { filePickerLauncher.launch("*/*") }) {
+                Button(onClick = { launchPicker() }) {
                     Text("Try Again")
                 }
             } else {
@@ -98,7 +104,7 @@ fun ImportScreen(
                     style = MaterialTheme.typography.bodyLarge
                 )
                 Spacer(Modifier.height(24.dp))
-                Button(onClick = { filePickerLauncher.launch("*/*") }) {
+                Button(onClick = { launchPicker() }) {
                     Text("Choose Files")
                 }
             }

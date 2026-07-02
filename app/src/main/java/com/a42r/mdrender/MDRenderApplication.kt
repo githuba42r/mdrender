@@ -8,6 +8,7 @@ import com.a42r.mdrender.security.AppLockManager
 import com.a42r.mdrender.security.AuthPreferencesStore
 import com.a42r.mdrender.security.ScreenOffReceiver
 import com.a42r.mdrender.ui.LockScreenActivity
+import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -24,7 +25,10 @@ class MDRenderApplication : Application() {
     }
 
     private lateinit var screenOffReceiver: ScreenOffReceiver
-    private var activityCount = 0
+
+    private fun isTransient(activity: Activity): Boolean {
+        return activity is LockScreenActivity || activity is ShareReceiverActivity
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -43,7 +47,7 @@ class MDRenderApplication : Application() {
                 // Don't count LockScreenActivity; it lives on top of MainActivity
             }
             override fun onActivityResumed(activity: Activity) {
-                if (activity !is LockScreenActivity) {
+                if (!isTransient(activity)) {
                     appLockManager.onAppInForeground()
                     if (appLockManager.isLocked.value) {
                         LockScreenActivity.launch(activity)
@@ -51,7 +55,7 @@ class MDRenderApplication : Application() {
                 }
             }
             override fun onActivityPaused(activity: Activity) {
-                if (activity !is LockScreenActivity) {
+                if (!isTransient(activity)) {
                     appLockManager.onAppInBackground()
                 }
             }

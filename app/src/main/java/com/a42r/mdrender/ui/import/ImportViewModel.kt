@@ -5,11 +5,8 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.repository.FileRepository
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -29,10 +26,11 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(ImportUiState())
     val uiState: StateFlow<ImportUiState> = _uiState.asStateFlow()
 
-    private val _importComplete = MutableSharedFlow<Boolean>()
-    val importComplete: SharedFlow<Boolean> = _importComplete.asSharedFlow()
+    private val _importComplete = MutableStateFlow(false)
+    val importComplete: StateFlow<Boolean> = _importComplete.asStateFlow()
 
     fun importFiles(uris: List<Uri>, folderId: Long?) {
+        _importComplete.value = false
         viewModelScope.launch {
             _uiState.update { it.copy(isImporting = true, errorMessage = null, completedCount = 0) }
             var count = 0
@@ -59,7 +57,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             _uiState.update { it.copy(isImporting = false) }
-            _importComplete.emit(true)
+            _importComplete.value = true
         }
     }
 

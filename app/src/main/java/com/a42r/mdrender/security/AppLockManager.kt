@@ -27,6 +27,15 @@ class AppLockManager @Inject constructor() {
     // share sheet transitions without triggering re-auth.
     private val backgroundLockDelayMs = 3_000L
 
+    @Volatile
+    private var suspendNextPause = false
+
+    /** Call before launching a system picker/dialog — skips the next
+     *  background-lock so the user doesn't have to re-authenticate. */
+    fun suspendNextPause() {
+        suspendNextPause = true
+    }
+
     fun lock() {
         _isLocked.value = true
         cancelIdleTimer()
@@ -50,19 +59,19 @@ class AppLockManager @Inject constructor() {
     }
 
     fun onAppInForeground() {
+        suspendNextPause = false
         backgroundLockJob?.cancel()
         backgroundLockJob = null
         if (!_isLocked.value) startIdleTimer()
     }
 
     fun onAppInBackground() {
-        // Use a grace delay before locking to allow file picker /
-        // share sheet transitions without triggering re-auth.
-        backgroundLockJob?.cancel()
-        backgroundLockJob = scope.launch {
-            delay(backgroundLockDelayMs)
-            lock()
+        if (suspendNextPause) {
+            suspendNextPause = false
+            return // skip lock — picker is open
         }
+        cancelIdleTimer()
+        _isLocked.value = true
     }
 
     fun recordFailedAttempt(): Boolean {
