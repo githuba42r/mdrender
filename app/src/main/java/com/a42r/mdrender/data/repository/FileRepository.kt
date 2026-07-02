@@ -65,6 +65,17 @@ class FileRepository @Inject constructor(
         return entity.encryptedThumbnail?.let { cryptoEngine.decrypt(it) }
     }
 
+    /** Ordered image files in the same folder as [fileId], with the index of
+     *  [fileId] itself. Used to page between sibling images in the viewer. */
+    suspend fun getImageSiblings(fileId: Long): Pair<List<Long>, Int> {
+        val file = fileDao.getById(fileId) ?: return emptyList<Long>() to 0
+        val images = fileDao.getFilesInFolderList(file.folderId)
+            .filter { it.mimeType.startsWith("image/") }
+            .map { it.id }
+        val index = images.indexOf(fileId).coerceAtLeast(0)
+        return images to index
+    }
+
     private fun generateEncryptedThumbnail(rawBytes: ByteArray): ByteArray? {
         return try {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }

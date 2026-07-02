@@ -23,6 +23,12 @@ data class ViewerUiState(
     val error: String? = null
 )
 
+/** Ordered sibling image ids in the folder plus the index of the opened one. */
+data class ImagePagerState(
+    val ids: List<Long>,
+    val startIndex: Int
+)
+
 @HiltViewModel
 class ViewerViewModel @Inject constructor(
     private val fileRepository: FileRepository,
@@ -34,7 +40,28 @@ class ViewerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
 
-    init { loadContent() }
+    // Populated for image viewing; null until the sibling list is resolved.
+    private val _imagePager = MutableStateFlow<ImagePagerState?>(null)
+    val imagePager: StateFlow<ImagePagerState?> = _imagePager.asStateFlow()
+
+    init {
+        loadContent()
+        loadImageSiblings()
+    }
+
+    private fun loadImageSiblings() {
+        viewModelScope.launch {
+            val (ids, index) = fileRepository.getImageSiblings(fileId)
+            if (ids.isNotEmpty()) _imagePager.value = ImagePagerState(ids, index)
+        }
+    }
+
+    /** Decrypt a specific image (used per-page by the pager). */
+    suspend fun decryptImage(id: Long): ByteArray? =
+        fileRepository.getDecryptedContent(id)?.first
+
+    suspend fun fileNameFor(id: Long): String =
+        fileRepository.getFileMetadata(id)?.name ?: ""
 
     private fun loadContent() {
         viewModelScope.launch {

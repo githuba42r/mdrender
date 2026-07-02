@@ -179,11 +179,16 @@ fun FolderBrowserScreen(
                     // Files
                     items(uiState.files, key = { "file_${it.id}" }) { file ->
                         val fileType = FileType.fromMimeType(file.mimeType)
+                        val thumb by produceState<ByteArray?>(null, file.id) {
+                            value = if (file.mimeType.startsWith("image/"))
+                                viewModel.decryptThumbnail(file.id) else null
+                        }
                         FileItem(
                             name = file.name,
                             fileType = fileType,
                             isGridView = true,
                             selected = file.id in selectedIds,
+                            thumbnail = thumb,
                             onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
                             onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file }
                         )
@@ -204,12 +209,17 @@ fun FolderBrowserScreen(
                     }
                     items(uiState.files, key = { "file_${it.id}" }) { file ->
                         val fileType = FileType.fromMimeType(file.mimeType)
+                        val thumb by produceState<ByteArray?>(null, file.id) {
+                            value = if (file.mimeType.startsWith("image/"))
+                                viewModel.decryptThumbnail(file.id) else null
+                        }
                         val fileRow = @Composable {
                             FileItem(
                                 name = file.name,
                                 fileType = fileType,
                                 isGridView = false,
                                 selected = file.id in selectedIds,
+                                thumbnail = thumb,
                                 onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
                                 onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file },
                                 modifier = Modifier.animateItem()

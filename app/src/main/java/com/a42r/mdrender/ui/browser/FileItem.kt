@@ -3,14 +3,20 @@ package com.a42r.mdrender.ui.browser
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.a42r.mdrender.ui.navigation.FileType
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -23,8 +29,10 @@ fun FileItem(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     selected: Boolean = false,
-    hiddenBadge: Boolean = false
+    hiddenBadge: Boolean = false,
+    thumbnail: ByteArray? = null
 ) {
+    val showThumb = thumbnail != null && !selected
     if (isGridView) {
         Card(
             modifier = modifier
@@ -40,12 +48,22 @@ fun FileItem(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box {
-                    Icon(
-                        imageVector = if (selected) Icons.Filled.CheckCircle else fileType.icon,
-                        contentDescription = if (selected) "Selected" else fileType.label,
-                        modifier = Modifier.size(40.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    if (showThumb) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(thumbnail).crossfade(true).build(),
+                            contentDescription = fileType.label,
+                            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (selected) Icons.Filled.CheckCircle else fileType.icon,
+                            contentDescription = if (selected) "Selected" else fileType.label,
+                            modifier = Modifier.size(40.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     if (hiddenBadge) {
                         Icon(
                             Icons.Filled.VisibilityOff,
@@ -68,11 +86,21 @@ fun FileItem(
         ListItem(
             headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             leadingContent = {
-                Icon(
-                    if (selected) Icons.Filled.CheckCircle else fileType.icon,
-                    if (selected) "Selected" else fileType.label,
-                    tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                )
+                if (showThumb) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(thumbnail).crossfade(true).build(),
+                        contentDescription = fileType.label,
+                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        if (selected) Icons.Filled.CheckCircle else fileType.icon,
+                        if (selected) "Selected" else fileType.label,
+                        tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                    )
+                }
             },
             trailingContent = if (hiddenBadge) {
                 { Icon(Icons.Filled.VisibilityOff, "Hidden", tint = MaterialTheme.colorScheme.onSurfaceVariant) }

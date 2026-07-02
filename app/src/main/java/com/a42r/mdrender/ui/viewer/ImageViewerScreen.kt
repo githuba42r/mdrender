@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
@@ -28,21 +30,44 @@ fun ImageViewerScreen(
     onBack: () -> Unit,
     viewModel: ViewerViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    // Full-screen by default; tap the image to toggle the title bar.
+    val pager by viewModel.imagePager.collectAsStateWithLifecycle()
     var showAppBar by remember { mutableStateOf(false) }
+
+    // Zoom/pan hoisted to the viewer: only the current page is interactive and
+    // paging is disabled while zoomed, so a single scale/offset is sufficient.
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
     RegisterViewerZoom { delta ->
-        scale = (scale * if (delta > 0) 1.25f else 0.8f).coerceIn(0.5f, 5f)
+        scale = (scale * if (delta > 0) 1.25f else 0.8f).coerceIn(1f, 5f)
+        if (scale == 1f) offset = Offset.Zero
     }
 
-    if (showAppBar) {
-        Scaffold(
-            topBar = {
+    val state = pager
+    if (state == null || state.ids.isEmpty()) {
+        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    val pagerState = rememberPagerState(initialPage = state.startIndex) { state.ids.size }
+
+    // Reset zoom when the settled page changes; also update the title source.
+    LaunchedEffect(pagerState.currentPage) {
+        scale = 1f
+        offset = Offset.Zero
+    }
+
+    val currentId = state.ids[pagerState.currentPage]
+    val currentName by produceState("", currentId) { value = viewModel.fileNameFor(currentId) }
+
+    Scaffold(
+        containerColor = Color.Black,
+        topBar = {
+            if (showAppBar) {
                 TopAppBar(
-                    title = { Text(uiState.fileName) },
+                    title = { Text("$currentName  (${pagerState.currentPage + 1}/${state.ids.size})") },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
@@ -50,89 +75,57 @@ fun ImageViewerScreen(
                     }
                 )
             }
-        ) { padding ->
-            ImageContent(
-                uiState = uiState,
-                padding = padding,
-                scale = scale,
-                offset = offset,
-                onScaleChange = { scale = it },
-                onOffsetChange = { offset = it },
-                onTap = { showAppBar = !showAppBar }
-            )
         }
-    } else {
-        Box(
-            modifier = Modifier.fillMaxSize().background(Color.Black)
-        ) {
-            ImageContent(
-                uiState = uiState,
-                padding = PaddingValues(0.dp),
-                scale = scale,
-                offset = offset,
-                onScaleChange = { scale = it },
-                onOffsetChange = { offset = it },
-                onTap = { showAppBar = !showAppBar }
-            )
-        }
-    }
-}
-
-@Composable
-private fun ImageContent(
-    uiState: ViewerUiState,
-    padding: PaddingValues,
-    scale: Float,
-    offset: Offset,
-    onScaleChange: (Float) -> Unit,
-    onOffsetChange: (Offset) -> Unit,
-    onTap: () -> Unit
-) {
-    when {
-        uiState.isLoading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        uiState.imageBytes != null -> {
+    ) { padding ->
+        VerticalPager(
+            state = pagerState,
+            // Swipe pages only when not zoomed; otherwise a drag pans the image.
+            userScrollEnabled = scale == 1f,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (showAppBar) Modifier.padding(padding) else Modifier)
+        ) { page ->
+            val id = state.ids[page]
+            val isCurrent = page == pagerState.currentPage
+            val bytes by produceState<ByteArray?>(null, id) { value = viewModel.decryptImage(id) }
             val context = LocalContext.current
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
                     .background(Color.Black)
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            onScaleChange((scale * zoom).coerceIn(0.5f, 5f))
-                            onOffsetChange(Offset(
-                                offset.x + pan.x,
-                                offset.y + pan.y
-                            ))
-                        }
+                    .pointerInput(id) {
+                        detectTapGestures(onTap = { showAppBar = !showAppBar })
                     }
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { onTap() })
+                    .pointerInput(id) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val newScale = (scale * zoom).coerceIn(1f, 5f)
+                            scale = newScale
+                            offset = if (newScale > 1f) offset + pan else Offset.Zero
+                        }
                     },
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(uiState.imageBytes)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = uiState.fileName,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offset.x,
-                            translationY = offset.y
-                        ),
-                    contentScale = ContentScale.Fit
-                )
+                if (bytes != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context).data(bytes).crossfade(true).build(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (isCurrent) Modifier.graphicsLayer(
+                                    scaleX = scale,
+                                    scaleY = scale,
+                                    translationX = offset.x,
+                                    translationY = offset.y
+                                ) else Modifier
+                            ),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    CircularProgressIndicator()
+                }
             }
-        }
-        uiState.error != null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-            Text("Error: ${uiState.error}", color = MaterialTheme.colorScheme.error)
         }
     }
 }

@@ -190,6 +190,10 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    /** Decrypt a file's thumbnail for browser display (image files only). */
+    suspend fun decryptThumbnail(id: Long): ByteArray? =
+        fileRepository.getDecryptedThumbnail(id)
+
     fun setFolderHidden(id: Long, hidden: Boolean) {
         viewModelScope.launch {
             folderRepository.setFolderHidden(id, hidden)
