@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Shield (coral), within the central safe zone -->
+    <path
+        android:fillColor="#E94560"
+        android:pathData="M36,30 L72,30 Q76,30 76,34 L76,56 C76,70 66,79 54,83 C42,79 32,70 32,56 L32,34 Q32,30 36,30 Z" />
+
+    <!-- Markdown "M" (cream stroke) -->
+    <path
+        android:strokeColor="#FDEFE8"
+        android:strokeWidth="4.6"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M39,61 L39,45 L47,53 L55,45 L55,61" />
+
+    <!-- Down arrow (cream stroke) -->
+    <path
+        android:strokeColor="#FDEFE8"
+        android:strokeWidth="4.6"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M64,45 L64,59 M59.5,54.5 L64,59 L68.5,54.5" />
+</vector>
