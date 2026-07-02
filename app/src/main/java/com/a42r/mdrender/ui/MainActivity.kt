@@ -18,15 +18,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.localsend.LocalSendSessionManager
@@ -35,7 +34,6 @@ import com.a42r.mdrender.security.DeviceAuth
 import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import com.a42r.mdrender.ui.viewer.ViewerZoom
-import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -45,6 +43,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var localSendSessionManager: LocalSendSessionManager
     @Inject lateinit var localSendPrefs: LocalSendPrefs
     @Inject lateinit var appLock: AppLock
+
+    private var authInProgress = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,11 +58,8 @@ class MainActivity : FragmentActivity() {
         setContent {
             MDRenderTheme {
                 val locked by appLock.isLocked.collectAsState()
-
                 if (locked) {
-                    LockGate(
-                        onUnlock = { appLock.unlock() }
-                    )
+                    LockGate(onUnlockClick = { promptAuth(force = true) })
                 } else {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         MDRenderNavHost()
@@ -73,30 +70,32 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Full-screen gate shown while locked. Triggers the OS auth prompt on
-     *  appearance and offers a retry if the user dismisses it. */
-    @androidx.compose.runtime.Composable
-    private fun LockGate(onUnlock: () -> Unit) {
-        var prompting by remember { mutableStateOf(false) }
+    override fun onResume() {
+        super.onResume()
+        // Request authentication whenever we come to the foreground locked.
+        if (appLock.isLocked.value) promptAuth()
+    }
 
-        fun prompt() {
-            if (prompting) return
-            // Only bypass when the device has no lock at all (can't gate).
-            // Transient failures keep us locked and let the user retry.
-            if (DeviceAuth.noCredentialConfigured(this@MainActivity)) {
-                onUnlock()
-                return
-            }
-            prompting = true
-            DeviceAuth.authenticate(
-                activity = this@MainActivity,
-                onSuccess = { prompting = false; onUnlock() },
-                onFailure = { prompting = false }
-            )
+    /** Show the OS auth prompt. [force] restarts even if a prompt was thought
+     *  to be in progress — used by the manual Unlock button to recover from a
+     *  lost callback. */
+    private fun promptAuth(force: Boolean = false) {
+        if (authInProgress && !force) return
+        // No device lock at all → we can't gate; let the user in.
+        if (DeviceAuth.noCredentialConfigured(this)) {
+            appLock.unlock()
+            return
         }
+        authInProgress = true
+        DeviceAuth.authenticate(
+            activity = this,
+            onSuccess = { authInProgress = false; appLock.unlock() },
+            onFailure = { authInProgress = false }
+        )
+    }
 
-        LaunchedEffect(Unit) { prompt() }
-
+    @Composable
+    private fun LockGate(onUnlockClick: () -> Unit) {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -110,14 +109,14 @@ class MainActivity : FragmentActivity() {
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Text("MDRender is locked", style = MaterialTheme.typography.titleMedium)
-                Button(onClick = { prompt() }, modifier = Modifier.padding(top = 24.dp)) {
+                Button(onClick = onUnlockClick, modifier = Modifier.padding(top = 24.dp)) {
                     Text("Unlock")
                 }
             }
         }
     }
 
-    @androidx.compose.runtime.Composable
+    @Composable
     private fun LocalSendOverlays() {
         // Incoming LocalSend transfer: in-app Accept/Reject dialog.
         val pending by localSendSessionManager.pendingTransfer.collectAsState()

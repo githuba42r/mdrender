@@ -5,8 +5,10 @@ import android.app.Application
 import android.os.Bundle
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
+import com.a42r.mdrender.security.ScreenOffReceiver
 import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
+import java.lang.ref.WeakReference
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -30,6 +32,8 @@ class MDRenderApplication : Application() {
 
     // Count of visible non-transient activities; 0 means the app is backgrounded.
     private var startedActivities = 0
+    private var foregroundActivity: WeakReference<Activity>? = null
+    private lateinit var screenOffReceiver: ScreenOffReceiver
 
     override fun onCreate() {
         super.onCreate()
@@ -39,13 +43,27 @@ class MDRenderApplication : Application() {
         // not here — startForegroundService() is illegal when the process is
         // created in the background (e.g. after a restart).
 
+        // On screen-off: lock and push the app behind the launcher, so
+        // unlocking the phone doesn't land on our lock gate. Re-opening the
+        // app then requests authentication.
+        screenOffReceiver = ScreenOffReceiver().also {
+            it.onScreenOff = {
+                appLock.onBackground()
+                foregroundActivity?.get()?.moveTaskToBack(true)
+            }
+        }
+        registerReceiver(screenOffReceiver, ScreenOffReceiver.FILTER)
+
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
             override fun onActivityStarted(activity: Activity) {
                 if (!isTransient(activity)) startedActivities++
             }
             override fun onActivityResumed(activity: Activity) {
-                if (!isTransient(activity)) isForeground = true
+                if (!isTransient(activity)) {
+                    isForeground = true
+                    foregroundActivity = WeakReference(activity)
+                }
             }
             override fun onActivityPaused(activity: Activity) {
                 if (!isTransient(activity)) isForeground = false
