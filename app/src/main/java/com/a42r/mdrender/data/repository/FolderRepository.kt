@@ -42,6 +42,8 @@ class FolderRepository @Inject constructor(
         return buildNode(null)
     }
 
+    suspend fun folderExists(id: Long): Boolean = folderDao.getById(id) != null
+
     suspend fun getPathToFolder(folderId: Long): List<FolderEntity> {
         val path = mutableListOf<FolderEntity>()
         var currentId: Long? = folderId

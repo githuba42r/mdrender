@@ -37,7 +37,8 @@ data class MoveTarget(
 @HiltViewModel
 class BrowserViewModel @Inject constructor(
     private val folderRepository: FolderRepository,
-    private val fileRepository: FileRepository
+    private val fileRepository: FileRepository,
+    private val browserPrefs: BrowserPreferencesStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -47,14 +48,31 @@ class BrowserViewModel @Inject constructor(
     val undoDelete: SharedFlow<UndoDelete> = _undoDelete.asSharedFlow()
 
     private var undoJob: Job? = null
+    private var contentJob: Job? = null
+    private var initialized = false
+
+    /** First-load entry point. Restores the last viewed folder when no
+     *  explicit folder was requested; no-op if this ViewModel instance has
+     *  already initialized (e.g. returning from the Import screen). */
+    fun initialize(requestedFolderId: Long?) {
+        if (initialized) return
+        initialized = true
+        viewModelScope.launch {
+            val target = requestedFolderId
+                ?: browserPrefs.lastFolderId?.takeIf { folderRepository.folderExists(it) }
+            navigateToFolder(target)
+        }
+    }
 
     fun navigateToFolder(folderId: Long?) {
+        browserPrefs.lastFolderId = folderId
         _uiState.update { it.copy(currentFolderId = folderId) }
         loadContent(folderId)
     }
 
     private fun loadContent(folderId: Long?) {
-        viewModelScope.launch {
+        contentJob?.cancel()
+        contentJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             launch {
                 folderRepository.getChildrenOf(folderId).collect { folders ->

@@ -32,7 +32,7 @@ fun MDRenderNavHost() {
             val folderIdStr = backStackEntry.arguments?.getString("folderId") ?: "root"
             val folderId = folderIdStr.toLongOrNull()
             val viewModel: BrowserViewModel = hiltViewModel()
-            LaunchedEffect(folderId) { viewModel.navigateToFolder(folderId) }
+            LaunchedEffect(folderId) { viewModel.initialize(folderId) }
             FolderBrowserScreen(navController = navController, viewModel = viewModel)
         }
         composable(
