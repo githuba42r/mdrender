@@ -140,7 +140,9 @@ class LocalSendSessionManager @Inject constructor(
     companion object {
         private const val TAG = "LocalSendSession"
         private const val FOLDER_NAME = "LocalSend"
-        private const val DECISION_TIMEOUT_MS = 60_000L
+        // Long enough to notice the notification, unlock, and tap Accept
+        // without the app being open.
+        private const val DECISION_TIMEOUT_MS = 3 * 60_000L
         private const val SESSION_TIMEOUT_MS = 30 * 60_000L
     }
 }
