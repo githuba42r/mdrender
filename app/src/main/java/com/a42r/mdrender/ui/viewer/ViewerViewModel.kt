@@ -1,0 +1,72 @@
+package com.a42r.mdrender.ui.viewer
+
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.a42r.mdrender.data.entity.FileEntity
+import com.a42r.mdrender.data.repository.FileRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class ViewerUiState(
+    val fileName: String = "",
+    val mimeType: String = "",
+    val markdownContent: String = "",
+    val textContent: String = "",
+    val imageBytes: ByteArray? = null,
+    val isLoading: Boolean = true,
+    val error: String? = null
+)
+
+@HiltViewModel
+class ViewerViewModel @Inject constructor(
+    private val fileRepository: FileRepository,
+    savedStateHandle: SavedStateHandle
+) : ViewModel() {
+
+    private val fileId: Long = savedStateHandle.get<Long>("fileId") ?: 0L
+
+    private val _uiState = MutableStateFlow(ViewerUiState())
+    val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
+
+    init { loadContent() }
+
+    private fun loadContent() {
+        viewModelScope.launch {
+            try {
+                val metadata = fileRepository.getFileMetadata(fileId)
+                val (bytes, mimeType) = fileRepository.getDecryptedContent(fileId)
+                    ?: throw Exception("File not found")
+
+                _uiState.update {
+                    it.copy(
+                        fileName = metadata?.name ?: "Unknown",
+                        mimeType = mimeType,
+                        isLoading = false
+                    )
+                }
+
+                when {
+                    mimeType.startsWith("text/markdown") || mimeType.startsWith("text/plain") -> {
+                        val text = String(bytes, Charsets.UTF_8)
+                        if (mimeType.startsWith("text/markdown")) {
+                            _uiState.update { it.copy(markdownContent = text) }
+                        } else {
+                            _uiState.update { it.copy(textContent = text) }
+                        }
+                    }
+                    mimeType.startsWith("image/") -> {
+                        _uiState.update { it.copy(imageBytes = bytes) }
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = e.message) }
+            }
+        }
+    }
+}

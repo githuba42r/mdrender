@@ -15,6 +15,10 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.a42r.mdrender.ui.browser.BrowserViewModel
 import com.a42r.mdrender.ui.browser.FolderBrowserScreen
+import com.a42r.mdrender.ui.viewer.ImageViewerScreen
+import com.a42r.mdrender.ui.viewer.MarkdownViewerScreen
+import com.a42r.mdrender.ui.viewer.TextViewerScreen
+import com.a42r.mdrender.ui.import.ImportScreen
 
 @Composable
 fun MDRenderNavHost() {
@@ -37,19 +41,23 @@ fun MDRenderNavHost() {
         composable(
             route = Routes.MarkdownViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
-        ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Markdown Viewer") } }
+        ) { MarkdownViewerScreen(onBack = { navController.popBackStack() }) }
         composable(
             route = Routes.TextViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
-        ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Text Viewer") } }
+        ) { TextViewerScreen(onBack = { navController.popBackStack() }) }
         composable(
             route = Routes.ImageViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
-        ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Image Viewer") } }
+        ) { ImageViewerScreen(onBack = { navController.popBackStack() }) }
         composable(Routes.Settings.route) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Settings") } }
         composable(
             route = Routes.Import.route,
             arguments = listOf(navArgument("folderId") { type = NavType.StringType })
-        ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Import") } }
+        ) { backStackEntry ->
+            val folderIdStr = backStackEntry.arguments?.getString("folderId") ?: "root"
+            val folderId = folderIdStr.toLongOrNull()
+            ImportScreen(onBack = { navController.popBackStack() }, folderId = folderId)
+        }
     }
 }
