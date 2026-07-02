@@ -7,6 +7,8 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -84,6 +86,11 @@ fun ImageViewerScreen(
             state = pagerState,
             // Swipe pages only when not zoomed; otherwise a drag pans the image.
             userScrollEnabled = scale == 1f,
+            // One image per swipe — a fast fling can't skip past the next image.
+            flingBehavior = PagerDefaults.flingBehavior(
+                state = pagerState,
+                pagerSnapDistance = PagerSnapDistance.atMost(1)
+            ),
             modifier = Modifier
                 .fillMaxSize()
                 .then(if (showAppBar) Modifier.padding(padding) else Modifier)
