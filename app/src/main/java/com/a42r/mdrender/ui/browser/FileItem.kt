@@ -21,22 +21,26 @@ fun FileItem(
     isGridView: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    selected: Boolean = false
 ) {
     if (isGridView) {
         Card(
             modifier = modifier
                 .width(120.dp)
                 .padding(4.dp)
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            colors = if (selected) CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ) else CardDefaults.cardColors()
         ) {
             Column(
                 modifier = Modifier.padding(12.dp).fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Icon(
-                    imageVector = fileType.icon,
-                    contentDescription = fileType.label,
+                    imageVector = if (selected) Icons.Filled.CheckCircle else fileType.icon,
+                    contentDescription = if (selected) "Selected" else fileType.label,
                     modifier = Modifier.size(40.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -52,7 +56,16 @@ fun FileItem(
     } else {
         ListItem(
             headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            leadingContent = { Icon(fileType.icon, fileType.label) },
+            leadingContent = {
+                Icon(
+                    if (selected) Icons.Filled.CheckCircle else fileType.icon,
+                    if (selected) "Selected" else fileType.label,
+                    tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                )
+            },
+            colors = if (selected) ListItemDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ) else ListItemDefaults.colors(),
             modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
             // Swipe-to-delete is handled at the parent list level
         )

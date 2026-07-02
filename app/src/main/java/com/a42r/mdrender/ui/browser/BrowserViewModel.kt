@@ -140,6 +140,18 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    fun deleteFiles(ids: Set<Long>) {
+        viewModelScope.launch {
+            ids.forEach { fileRepository.deleteFile(it) }
+        }
+    }
+
+    fun moveFiles(ids: Set<Long>, targetFolderId: Long?) {
+        viewModelScope.launch {
+            ids.forEach { fileRepository.moveFile(it, targetFolderId) }
+        }
+    }
+
     private val _moveTargets = MutableStateFlow<List<MoveTarget>>(emptyList())
     val moveTargets: StateFlow<List<MoveTarget>> = _moveTargets.asStateFlow()
 

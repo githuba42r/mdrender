@@ -1,5 +1,6 @@
 package com.a42r.mdrender.ui.browser
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -35,7 +36,24 @@ fun FolderBrowserScreen(
     var renameText by remember { mutableStateOf("") }
     var moveFile by remember { mutableStateOf<FileEntity?>(null) }
     var confirmDeleteFile by remember { mutableStateOf<FileEntity?>(null) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var confirmDeleteMulti by remember { mutableStateOf(false) }
+    var moveMulti by remember { mutableStateOf(false) }
+    val selectionMode = selectedIds.isNotEmpty()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Selections referencing files no longer present (moved/deleted) are pruned.
+    LaunchedEffect(uiState.files) {
+        val present = uiState.files.mapTo(mutableSetOf()) { it.id }
+        if (selectedIds.any { it !in present }) selectedIds = selectedIds intersect present
+    }
+
+    val toggleSelect: (Long) -> Unit = { id ->
+        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+    }
+
+    // Back exits selection mode before leaving the screen.
+    BackHandler(enabled = selectionMode) { selectedIds = emptySet() }
 
     val openFile: (FileEntity) -> Unit = { file ->
         val route = when {
@@ -63,24 +81,48 @@ fun FolderBrowserScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("MDRender") },
-                actions = {
-                    IconButton(onClick = { viewModel.toggleGridView() }) {
-                        Icon(
-                            if (uiState.isGridView) Icons.Filled.ViewList else Icons.Filled.GridView,
-                            contentDescription = "Toggle view"
-                        )
+            if (selectionMode) {
+                TopAppBar(
+                    title = { Text("${selectedIds.size} selected") },
+                    navigationIcon = {
+                        IconButton(onClick = { selectedIds = emptySet() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear selection")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            viewModel.loadMoveTargets()
+                            moveMulti = true
+                        }) {
+                            Icon(Icons.Filled.DriveFileMove, contentDescription = "Move")
+                        }
+                        IconButton(onClick = { confirmDeleteMulti = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                        }
                     }
-                    IconButton(onClick = { navController.navigate(Routes.Settings.route) }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("MDRender") },
+                    actions = {
+                        IconButton(onClick = { viewModel.toggleGridView() }) {
+                            Icon(
+                                if (uiState.isGridView) Icons.Filled.ViewList else Icons.Filled.GridView,
+                                contentDescription = "Toggle view"
+                            )
+                        }
+                        IconButton(onClick = { navController.navigate(Routes.Settings.route) }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
                     }
-                }
-            )
+                )
+            }
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showImportSheet = true }) {
-                Icon(Icons.Filled.Add, contentDescription = "Add")
+            if (!selectionMode) {
+                FloatingActionButton(onClick = { showImportSheet = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add")
+                }
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -103,13 +145,13 @@ fun FolderBrowserScreen(
                 }
             } else if (uiState.isGridView) {
                 LazyVerticalGrid(columns = GridCells.Adaptive(120.dp)) {
-                    // Folders
+                    // Folders (not selectable; disabled while selecting)
                     items(uiState.folders, key = { "folder_${it.id}" }) { folder ->
                         FileItem(
                             name = folder.name,
                             fileType = FileType.FOLDER,
                             isGridView = true,
-                            onClick = { viewModel.navigateToFolder(folder.id) }
+                            onClick = { if (!selectionMode) viewModel.navigateToFolder(folder.id) }
                         )
                     }
                     // Files
@@ -119,8 +161,9 @@ fun FolderBrowserScreen(
                             name = file.name,
                             fileType = fileType,
                             isGridView = true,
-                            onClick = { openFile(file) },
-                            onLongClick = { menuFile = file }
+                            selected = file.id in selectedIds,
+                            onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
+                            onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file }
                         )
                     }
                 }
@@ -135,33 +178,39 @@ fun FolderBrowserScreen(
                     }
                     items(uiState.files, key = { "file_${it.id}" }) { file ->
                         val fileType = FileType.fromMimeType(file.mimeType)
-                        SwipeToDismissBox(
-                            state = rememberSwipeToDismissBoxState(
-                                confirmValueChange = { value ->
-                                    if (value == SwipeToDismissBoxValue.EndToStart) {
-                                        // Ask for confirmation; row snaps back until confirmed
-                                        confirmDeleteFile = file
+                        val fileRow = @Composable {
+                            FileItem(
+                                name = file.name,
+                                fileType = fileType,
+                                isGridView = false,
+                                selected = file.id in selectedIds,
+                                onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
+                                onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file },
+                                modifier = Modifier.animateItem()
+                            )
+                        }
+                        if (selectionMode) {
+                            // No swipe-to-delete while selecting — taps toggle selection.
+                            fileRow()
+                        } else {
+                            SwipeToDismissBox(
+                                state = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { value ->
+                                        if (value == SwipeToDismissBoxValue.EndToStart) {
+                                            confirmDeleteFile = file
+                                        }
+                                        false
                                     }
-                                    false
-                                }
-                            ),
-                            backgroundContent = {
-                                Box(
-                                    Modifier.fillMaxSize().padding(horizontal = 20.dp),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) { Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error) }
-                            },
-                            content = {
-                                FileItem(
-                                    name = file.name,
-                                    fileType = fileType,
-                                    isGridView = false,
-                                    onClick = { openFile(file) },
-                                    onLongClick = { menuFile = file },
-                                    modifier = Modifier.animateItem()
-                                )
-                            }
-                        )
+                                ),
+                                backgroundContent = {
+                                    Box(
+                                        Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.CenterEnd
+                                    ) { Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error) }
+                                },
+                                content = { fileRow() }
+                            )
+                        }
                     }
                 }
             }
@@ -228,6 +277,14 @@ fun FolderBrowserScreen(
                     }
                 )
                 ListItem(
+                    headlineContent = { Text("Select") },
+                    leadingContent = { Icon(Icons.Filled.CheckCircle, "Select") },
+                    modifier = Modifier.clickable {
+                        selectedIds = selectedIds + file.id
+                        menuFile = null
+                    }
+                )
+                ListItem(
                     headlineContent = { Text("Delete") },
                     leadingContent = {
                         Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
@@ -254,6 +311,64 @@ fun FolderBrowserScreen(
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmDeleteFile = null }) { Text("Cancel") } }
+        )
+    }
+
+    // Multi-select delete confirmation
+    if (confirmDeleteMulti) {
+        val count = selectedIds.size
+        AlertDialog(
+            onDismissRequest = { confirmDeleteMulti = false },
+            title = { Text("Delete $count file(s)?") },
+            text = { Text("The selected file(s) will be permanently deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteFiles(selectedIds)
+                    selectedIds = emptySet()
+                    confirmDeleteMulti = false
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteMulti = false }) { Text("Cancel") } }
+        )
+    }
+
+    // Multi-select move dialog
+    if (moveMulti) {
+        val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+        val idsToMove = selectedIds
+        AlertDialog(
+            onDismissRequest = { moveMulti = false },
+            title = { Text("Move ${idsToMove.size} file(s) to") },
+            text = {
+                LazyColumn {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("Root") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Root") },
+                            modifier = Modifier.clickable {
+                                viewModel.moveFiles(idsToMove, null)
+                                selectedIds = emptySet()
+                                moveMulti = false
+                            }
+                        )
+                    }
+                    items(moveTargets, key = { it.folder.id }) { target ->
+                        ListItem(
+                            headlineContent = { Text(target.folder.name) },
+                            leadingContent = { Icon(Icons.Filled.Folder, "Folder") },
+                            modifier = Modifier
+                                .padding(start = (target.depth * 16).dp)
+                                .clickable {
+                                    viewModel.moveFiles(idsToMove, target.folder.id)
+                                    selectedIds = emptySet()
+                                    moveMulti = false
+                                }
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { moveMulti = false }) { Text("Cancel") } }
         )
     }
 
