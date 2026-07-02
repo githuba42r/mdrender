@@ -38,23 +38,27 @@ class ShareOutManager @Inject constructor(
     }
 
     /** Decrypts [files] into cacheDir/share/ and builds a chooser intent.
-     *  Any decryption failure wipes the cache again and aborts. */
+     *  Any decryption or write failure — including a missing DB row, a
+     *  CryptoEngine SecurityException, or an IOException writing the staged
+     *  file — wipes the cache again and aborts with no partial share. */
     suspend fun stage(files: List<FileEntity>): StageResult = withContext(Dispatchers.IO) {
         clearShareCache()
         shareDir.mkdirs()
         val names = dedupeNames(files.map { it.name })
         val uris = ArrayList<Uri>(files.size)
         for ((i, file) in files.withIndex()) {
-            val bytes = fileRepository.getDecryptedContent(file.id)?.first
-            if (bytes == null) {
+            try {
+                val bytes = fileRepository.getDecryptedContent(file.id)?.first
+                    ?: throw IllegalStateException("No decrypted content for ${file.id}")
+                val staged = File(shareDir, names[i])
+                staged.writeBytes(bytes)
+                uris += FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", staged
+                )
+            } catch (e: Exception) {
                 clearShareCache()
                 return@withContext StageResult.Failed(file.name)
             }
-            val staged = File(shareDir, names[i])
-            staged.writeBytes(bytes)
-            uris += FileProvider.getUriForFile(
-                context, "${context.packageName}.fileprovider", staged
-            )
         }
         val send = if (uris.size == 1) {
             Intent(Intent.ACTION_SEND).apply { putExtra(Intent.EXTRA_STREAM, uris[0]) }
