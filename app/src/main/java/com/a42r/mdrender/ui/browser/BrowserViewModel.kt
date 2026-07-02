@@ -4,11 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.entity.FolderEntity
+import android.content.Context
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderNode
 import com.a42r.mdrender.data.repository.FolderRepository
+import com.a42r.mdrender.localsend.LocalSendPrefs
+import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.security.AppLock
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -40,7 +44,9 @@ class BrowserViewModel @Inject constructor(
     private val folderRepository: FolderRepository,
     private val fileRepository: FileRepository,
     private val browserPrefs: BrowserPreferencesStore,
-    private val appLock: AppLock
+    private val appLock: AppLock,
+    private val localSendPrefs: LocalSendPrefs,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -48,6 +54,14 @@ class BrowserViewModel @Inject constructor(
 
     /** Whether hidden folders are currently revealed (drives badges + Unhide). */
     val revealHidden: StateFlow<Boolean> = appLock.revealHidden
+
+    /** Whether the LocalSend receiver is on (drives the top-bar toggle). */
+    val localSendEnabled: StateFlow<Boolean> = localSendPrefs.enabledFlow
+
+    fun setLocalSendEnabled(enabled: Boolean) {
+        localSendPrefs.enabled = enabled
+        if (enabled) LocalSendService.start(context) else LocalSendService.stop(context)
+    }
 
     private val _undoDelete = MutableSharedFlow<UndoDelete>()
     val undoDelete: SharedFlow<UndoDelete> = _undoDelete.asSharedFlow()

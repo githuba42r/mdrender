@@ -1,6 +1,10 @@
 package com.a42r.mdrender.ui.browser
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -45,6 +49,18 @@ fun FolderBrowserScreen(
     var moveFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     var confirmDeleteFolder by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
+    val localSendEnabled by viewModel.localSendEnabled.collectAsStateWithLifecycle()
+
+    val notifPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* the service still runs without notification permission */ }
+    val toggleLocalSend = {
+        val newState = !localSendEnabled
+        if (newState && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        viewModel.setLocalSendEnabled(newState)
+    }
 
     // Secret gesture: 12 taps on the title within 30s reveals hidden folders.
     var titleTapCount by remember { mutableStateOf(0) }
@@ -140,6 +156,16 @@ fun FolderBrowserScreen(
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
+                        }
+                        IconButton(onClick = { toggleLocalSend() }) {
+                            Icon(
+                                if (localSendEnabled) Icons.Filled.Sensors else Icons.Filled.SensorsOff,
+                                contentDescription = if (localSendEnabled)
+                                    "LocalSend on — tap to turn off"
+                                else "LocalSend off — tap to turn on",
+                                tint = if (localSendEnabled)
+                                    MaterialTheme.colorScheme.primary else LocalContentColor.current
+                            )
                         }
                         IconButton(onClick = { viewModel.toggleGridView() }) {
                             Icon(

@@ -2,6 +2,9 @@ package com.a42r.mdrender.localsend
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -13,9 +16,16 @@ class LocalSendPrefs @Inject constructor(
 ) {
     private val prefs = context.getSharedPreferences("mdrender_localsend_prefs", Context.MODE_PRIVATE)
 
+    // Reactive so the Settings switch and the browser top-bar toggle stay in sync.
+    private val _enabled = MutableStateFlow(prefs.getBoolean(KEY_ENABLED, false))
+    val enabledFlow: StateFlow<Boolean> = _enabled.asStateFlow()
+
     var enabled: Boolean
-        get() = prefs.getBoolean(KEY_ENABLED, false)
-        set(value) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
+        get() = _enabled.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_ENABLED, value).apply()
+            _enabled.value = value
+        }
 
     /** Device name shown to other LocalSend clients. Generated on first use. */
     var alias: String
