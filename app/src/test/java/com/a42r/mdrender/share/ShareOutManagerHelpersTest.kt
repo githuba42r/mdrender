@@ -21,6 +21,31 @@ class ShareOutManagerHelpersTest {
     }
 
     @Test
+    fun sanitizeName_dotDotAloneGetsPlaceholder() {
+        assertEquals("file", ShareOutManager.sanitizeName(".."))
+    }
+
+    @Test
+    fun sanitizeName_dotAloneGetsPlaceholder() {
+        assertEquals("file", ShareOutManager.sanitizeName("."))
+    }
+
+    @Test
+    fun sanitizeName_backslashTraversalStripped() {
+        assertEquals("evil.md", ShareOutManager.sanitizeName("..\\evil.md"))
+    }
+
+    @Test
+    fun sanitizeName_embeddedNullByteStripped() {
+        assertEquals("ab.md", ShareOutManager.sanitizeName("a\u0000b.md"))
+    }
+
+    @Test
+    fun sanitizeName_mixedTraversalKeepsOnlyFinalComponent() {
+        assertEquals("b.md", ShareOutManager.sanitizeName("a/../../b.md"))
+    }
+
+    @Test
     fun dedupeNames_uniqueNamesUnchanged() {
         assertEquals(
             listOf("a.md", "b.md"),

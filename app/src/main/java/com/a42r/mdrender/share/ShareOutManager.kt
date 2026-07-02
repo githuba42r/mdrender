@@ -97,7 +97,12 @@ class ShareOutManager @Inject constructor(
                 .substringAfterLast('/')
                 .substringAfterLast('\\')
                 .filter { it != '\u0000' }
-            return stripped.ifBlank { "file" }
+            if (stripped.isBlank()) return "file"
+            // "." / ".." survive path-stripping unchanged (no separator to
+            // strip after). The canonical containment check downstream would
+            // safely fail a share on either, but renaming to the placeholder
+            // is friendlier than a hard failure.
+            return if (stripped == "." || stripped == "..") "file" else stripped
         }
 
         /** On-disk names for staged files: duplicates get "name (1).ext". */

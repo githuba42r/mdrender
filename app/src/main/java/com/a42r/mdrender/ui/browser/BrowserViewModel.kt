@@ -89,17 +89,39 @@ class BrowserViewModel @Inject constructor(
     val shareInProgress: StateFlow<Boolean> = _shareInProgress.asStateFlow()
 
     /** Entry point for both the top-bar Share action and the file menu.
-     *  Hidden items divert to the confirmation dialog via [pendingShare]. */
+     *  Hidden items divert to the confirmation dialog via [pendingShare].
+     *
+     *  [_shareInProgress] is set synchronously here, before the coroutine
+     *  even launches, so a second tap arriving while we're still awaiting
+     *  the DB lookups below is rejected by the guard above — not just once
+     *  [stageAndShareLocked] starts staging. */
     fun requestShare(ids: Collection<Long>) {
         if (_shareInProgress.value || _pendingShare.value != null) return
+        _shareInProgress.value = true
         viewModelScope.launch {
-            val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
-            val hiddenByFolder = files.map { it.folderId }.distinct()
-                .associateWith { folderRepository.isInHiddenTree(it) }
-            when (val plan = SharePlan.of(files) { hiddenByFolder[it.folderId] == true }) {
-                is SharePlan.ShareNow -> stageAndShare(plan.files)
-                is SharePlan.NeedsConfirmation -> _pendingShare.value = plan
-                SharePlan.None -> Unit
+            var handedOffToStaging = false
+            try {
+                val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
+                val hiddenByFolder = files.map { it.folderId }.distinct()
+                    .associateWith { folderRepository.isInHiddenTree(it) }
+                when (val plan = SharePlan.of(files) { hiddenByFolder[it.folderId] == true }) {
+                    is SharePlan.ShareNow -> {
+                        handedOffToStaging = true
+                        stageAndShareLocked(plan.files)
+                    }
+                    is SharePlan.NeedsConfirmation -> {
+                        _shareInProgress.value = false
+                        _pendingShare.value = plan
+                    }
+                    SharePlan.None -> _shareInProgress.value = false
+                }
+            } finally {
+                // stageAndShareLocked owns clearing the flag on the ShareNow
+                // path (including any error inside it). Every other exit —
+                // including an exception thrown before a plan was even
+                // reached (e.g. in getFileMetadata/isInHiddenTree) — must
+                // clear it here so the flag can never get stuck true.
+                if (!handedOffToStaging) _shareInProgress.value = false
             }
         }
     }
@@ -124,15 +146,25 @@ class BrowserViewModel @Inject constructor(
         if (files.isEmpty()) return
         viewModelScope.launch {
             _shareInProgress.value = true
-            try {
-                when (val result = shareOutManager.stage(files)) {
-                    is ShareOutManager.StageResult.Ready -> _shareIntent.emit(result.intent)
-                    is ShareOutManager.StageResult.Failed ->
-                        _shareError.emit("Couldn't prepare \"${result.fileName}\" — nothing was shared")
-                }
-            } finally {
-                _shareInProgress.value = false
+            stageAndShareLocked(files)
+        }
+    }
+
+    /** Stages and shares [files], assuming [_shareInProgress] is already
+     *  true (set by the caller before entering this coroutine). Always
+     *  clears the flag when done — success, staging failure, empty input,
+     *  or an exception escaping [ShareOutManager.stage] — so callers can
+     *  treat "handed off here" as "the flag will end up false". */
+    private suspend fun stageAndShareLocked(files: List<FileEntity>) {
+        try {
+            if (files.isEmpty()) return
+            when (val result = shareOutManager.stage(files)) {
+                is ShareOutManager.StageResult.Ready -> _shareIntent.emit(result.intent)
+                is ShareOutManager.StageResult.Failed ->
+                    _shareError.emit("Couldn't prepare \"${result.fileName}\" — nothing was shared")
             }
+        } finally {
+            _shareInProgress.value = false
         }
     }
 
