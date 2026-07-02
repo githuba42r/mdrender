@@ -2,7 +2,6 @@ package com.a42r.mdrender.ui
 
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,7 +17,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.a42r.mdrender.localsend.LocalSendSessionManager
-import com.a42r.mdrender.security.AppLockManager
 import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import com.a42r.mdrender.ui.viewer.ViewerZoom
@@ -28,7 +26,6 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var localSendSessionManager: LocalSendSessionManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,13 +86,5 @@ class MainActivity : ComponentActivity() {
         }
         if (delta != 0 && ViewerZoom.onVolumeKey(delta)) return true
         return super.onKeyDown(keyCode, event)
-    }
-
-    /** Reset idle timer on every touch — dispatched to AppLockManager. */
-    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-        if (ev?.action == MotionEvent.ACTION_DOWN) {
-            appLockManager.onUserInteraction()
-        }
-        return super.dispatchTouchEvent(ev)
     }
 }

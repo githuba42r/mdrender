@@ -2,7 +2,6 @@ package com.a42r.mdrender.ui.import
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import com.a42r.mdrender.MDRenderApplication
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,7 +54,6 @@ fun ImportScreen(
     }
 
     val launchPicker: () -> Unit = {
-        MDRenderApplication.instance.appLockManager.suspendNextPause()
         filePickerLauncher.launch("*/*")
     }
 

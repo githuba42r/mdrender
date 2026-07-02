@@ -2,11 +2,8 @@ package com.a42r.mdrender.di
 
 import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FolderDao
-import com.a42r.mdrender.data.repository.AuthRepository
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
-import com.a42r.mdrender.security.AppLockManager
-import com.a42r.mdrender.security.AuthPreferencesStore
 import com.a42r.mdrender.security.CryptoEngine
 import dagger.Module
 import dagger.Provides
@@ -17,11 +14,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object RepositoryModule {
-
-    @Provides
-    @Singleton
-    fun provideAuthRepository(prefs: AuthPreferencesStore, appLockManager: AppLockManager): AuthRepository =
-        AuthRepository(prefs, appLockManager)
 
     @Provides
     @Singleton
