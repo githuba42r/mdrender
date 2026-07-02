@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.play.publisher)
+    kotlin("kapt")
 }
 
 val versionPropsFile = rootProject.file("version.properties")
@@ -88,7 +89,7 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
+    kapt(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.coil.compose)
     implementation(libs.kotlinx.coroutines.android)

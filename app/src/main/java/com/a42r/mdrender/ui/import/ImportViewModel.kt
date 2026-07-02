@@ -1,11 +1,14 @@
 package com.a42r.mdrender.ui.import
 
-import android.app.Application
+import android.content.ContentResolver
 import android.net.Uri
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.repository.FileRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -14,7 +17,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import javax.inject.Inject
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface ImportViewModelEntryPoint {
+    fun fileRepository(): FileRepository
+}
 
 data class ImportUiState(
     val isImporting: Boolean = false,
@@ -22,10 +30,8 @@ data class ImportUiState(
     val errorMessage: String? = null
 )
 
-@HiltViewModel
-class ImportViewModel @Inject constructor(
-    private val fileRepository: FileRepository,
-    private val application: Application
+class ImportViewModel(
+    private val fileRepository: FileRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ImportUiState())
@@ -34,22 +40,20 @@ class ImportViewModel @Inject constructor(
     private val _importComplete = MutableSharedFlow<Boolean>()
     val importComplete: SharedFlow<Boolean> = _importComplete.asSharedFlow()
 
-    fun importFiles(uris: List<Uri>, folderId: Long?) {
+    fun importFiles(uris: List<Uri>, folderId: Long?, contentResolver: ContentResolver) {
         viewModelScope.launch {
             _uiState.update { it.copy(isImporting = true, errorMessage = null, completedCount = 0) }
             var count = 0
             for (uri in uris) {
                 try {
-                    val bytes = application.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: throw Exception("Cannot read file")
-                    val fileName = getFileName(uri) ?: "unknown_file"
-                    // Skip if unsupported
+                    val fileName = getFileName(uri, contentResolver) ?: "unknown_file"
                     val mimeType = fileRepository.mimeTypeFromExtension(fileName)
                     if (mimeType == "application/octet-stream") {
-                        // Try content resolver's mime type
-                        val resolvedMime = application.contentResolver.getType(uri) ?: mimeType
+                        val resolvedMime = contentResolver.getType(uri) ?: mimeType
                         if (!resolvedMime.startsWith("text/") && !resolvedMime.startsWith("image/")) {
-                            continue // unsupported
+                            continue
                         }
                         fileRepository.importFile(fileName, resolvedMime, bytes, folderId)
                     } else {
@@ -66,13 +70,23 @@ class ImportViewModel @Inject constructor(
         }
     }
 
-    private fun getFileName(uri: Uri): String? {
-        val cursor = application.contentResolver.query(uri, null, null, null, null)
+    private fun getFileName(uri: Uri, contentResolver: ContentResolver): String? {
+        val cursor = contentResolver.query(uri, null, null, null, null)
         return cursor?.use {
             if (it.moveToFirst()) {
                 val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                 if (nameIndex >= 0) it.getString(nameIndex) else null
             } else null
         }
+    }
+
+    companion object {
+        fun provideFactory(fileRepository: FileRepository): ViewModelProvider.Factory =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return ImportViewModel(fileRepository) as T
+                }
+            }
     }
 }

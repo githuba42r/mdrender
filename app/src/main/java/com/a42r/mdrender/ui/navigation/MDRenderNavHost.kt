@@ -1,11 +1,7 @@
 package com.a42r.mdrender.ui.navigation
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
@@ -19,6 +15,7 @@ import com.a42r.mdrender.ui.viewer.ImageViewerScreen
 import com.a42r.mdrender.ui.viewer.MarkdownViewerScreen
 import com.a42r.mdrender.ui.viewer.TextViewerScreen
 import com.a42r.mdrender.ui.import.ImportScreen
+import com.a42r.mdrender.ui.settings.SettingsScreen
 
 @Composable
 fun MDRenderNavHost() {
@@ -50,7 +47,9 @@ fun MDRenderNavHost() {
             route = Routes.ImageViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
         ) { ImageViewerScreen(onBack = { navController.popBackStack() }) }
-        composable(Routes.Settings.route) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Settings") } }
+        composable(Routes.Settings.route) {
+            SettingsScreen(onBack = { navController.popBackStack() })
+        }
         composable(
             route = Routes.Import.route,
             arguments = listOf(navArgument("folderId") { type = NavType.StringType })

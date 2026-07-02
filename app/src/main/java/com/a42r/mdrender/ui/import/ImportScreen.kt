@@ -22,26 +22,42 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dagger.hilt.android.EntryPointAccessors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
     onBack: () -> Unit,
-    folderId: Long? = null,
-    viewModel: ImportViewModel = hiltViewModel()
+    folderId: Long? = null
 ) {
+    val context = LocalContext.current
+    val contentResolver = remember { context.contentResolver }
+
+    val entryPoint = remember {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            ImportViewModelEntryPoint::class.java
+        )
+    }
+
+    val viewModel: ImportViewModel = viewModel(
+        factory = ImportViewModel.provideFactory(entryPoint.fileRepository())
+    )
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
-            viewModel.importFiles(uris, folderId)
+            viewModel.importFiles(uris, folderId, contentResolver)
         }
     }
 
