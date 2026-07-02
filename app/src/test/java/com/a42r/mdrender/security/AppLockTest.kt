@@ -22,6 +22,19 @@ class AppLockTest {
     }
 
     @Test
+    fun `hideHiddenFolders turns reveal off without locking`() {
+        val lock = AppLock()
+        lock.unlock()
+        lock.revealHiddenFolders()
+        assertTrue(lock.revealHidden.value)
+
+        lock.hideHiddenFolders()
+
+        assertFalse(lock.revealHidden.value)
+        assertFalse("must not lock the app", lock.isLocked.value)
+    }
+
+    @Test
     fun `going to background re-locks and hides revealed folders`() {
         val lock = AppLock()
         lock.unlock()

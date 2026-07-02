@@ -121,6 +121,16 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    fun moveFolder(id: Long, targetFolderId: Long?) {
+        viewModelScope.launch {
+            folderRepository.moveFolder(id, targetFolderId)
+        }
+    }
+
+    /** The folder plus its descendants — excluded as move destinations. */
+    suspend fun getSubtreeIds(folderId: Long): Set<Long> =
+        folderRepository.getSubtreeIds(folderId)
+
     fun deleteFile(id: Long) {
         viewModelScope.launch {
             val entity = fileRepository.getFileMetadata(id) ?: return@launch
@@ -175,12 +185,16 @@ class BrowserViewModel @Inject constructor(
     private val _moveTargets = MutableStateFlow<List<MoveTarget>>(emptyList())
     val moveTargets: StateFlow<List<MoveTarget>> = _moveTargets.asStateFlow()
 
-    /** Refresh the flattened folder tree shown in the Move dialog. */
+    /** Refresh the flattened folder tree shown in the Move dialog. Hidden
+     *  folders (and their subtrees) are omitted unless currently revealed, so
+     *  a move destination can never expose hidden folders. */
     fun loadMoveTargets() {
         viewModelScope.launch {
+            val reveal = appLock.revealHidden.value
             val flattened = mutableListOf<MoveTarget>()
             fun flatten(nodes: List<FolderNode>, depth: Int) {
                 for (node in nodes) {
+                    if (!reveal && node.folder.hidden) continue
                     flattened.add(MoveTarget(node.folder, depth))
                     flatten(node.children, depth + 1)
                 }
@@ -210,6 +224,18 @@ class BrowserViewModel @Inject constructor(
 
     /** Called by the secret title-tap gesture to reveal hidden folders. */
     fun revealHiddenFolders() = appLock.revealHiddenFolders()
+
+    /** Turn reveal off. If currently inside a hidden tree, return to root
+     *  immediately so no hidden content stays visible. */
+    fun turnOffReveal() {
+        appLock.hideHiddenFolders()
+        viewModelScope.launch {
+            val current = _uiState.value.currentFolderId
+            if (current != null && folderRepository.isInHiddenTree(current)) {
+                navigateToRoot()
+            }
+        }
+    }
 
     fun toggleGridView() {
         _uiState.update { it.copy(isGridView = !it.isGridView) }

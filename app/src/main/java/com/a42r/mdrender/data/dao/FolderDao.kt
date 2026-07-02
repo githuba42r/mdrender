@@ -21,6 +21,9 @@ interface FolderDao {
     @Query("UPDATE folders SET hidden = :hidden, updated_at = :updatedAt WHERE id = :id")
     suspend fun setHidden(id: Long, hidden: Boolean, updatedAt: Long)
 
+    @Query("UPDATE folders SET parent_id = :parentId, updated_at = :updatedAt WHERE id = :id")
+    suspend fun move(id: Long, parentId: Long?, updatedAt: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(folder: FolderEntity): Long
 

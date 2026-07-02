@@ -42,6 +42,8 @@ fun FolderBrowserScreen(
     var confirmDeleteFile by remember { mutableStateOf<FileEntity?>(null) }
     var propertiesFile by remember { mutableStateOf<FileEntity?>(null) }
     var folderMenu by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
+    var moveFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
+    var confirmDeleteFolder by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
 
     // Secret gesture: 12 taps on the title within 30s reveals hidden folders.
@@ -130,6 +132,15 @@ fun FolderBrowserScreen(
                 TopAppBar(
                     title = { Text("MDRender", modifier = Modifier.clickable { onTitleTap() }) },
                     actions = {
+                        if (revealHidden) {
+                            IconButton(onClick = { viewModel.turnOffReveal() }) {
+                                Icon(
+                                    Icons.Filled.Visibility,
+                                    contentDescription = "Hidden folders visible — tap to hide",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         IconButton(onClick = { viewModel.toggleGridView() }) {
                             Icon(
                                 if (uiState.isGridView) Icons.Filled.ViewList else Icons.Filled.GridView,
@@ -356,6 +367,23 @@ fun FolderBrowserScreen(
                     supportingContent = { Text("Folder") }
                 )
                 HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("Open") },
+                    leadingContent = { Icon(Icons.Filled.FolderOpen, "Open") },
+                    modifier = Modifier.clickable {
+                        folderMenu = null
+                        viewModel.navigateToFolder(folder.id)
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Move") },
+                    leadingContent = { Icon(Icons.Filled.DriveFileMove, "Move") },
+                    modifier = Modifier.clickable {
+                        folderMenu = null
+                        viewModel.loadMoveTargets()
+                        moveFolderState = folder
+                    }
+                )
                 if (folder.hidden) {
                     ListItem(
                         headlineContent = { Text("Unhide folder") },
@@ -375,8 +403,88 @@ fun FolderBrowserScreen(
                         }
                     )
                 }
+                ListItem(
+                    headlineContent = { Text("Delete") },
+                    leadingContent = {
+                        Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                    },
+                    modifier = Modifier.clickable {
+                        folderMenu = null
+                        confirmDeleteFolder = folder
+                    }
+                )
             }
         }
+    }
+
+    // Folder move dialog (excludes the folder's own subtree and hidden folders)
+    moveFolderState?.let { folder ->
+        val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+        val excluded by produceState(setOf(folder.id), folder.id) {
+            value = viewModel.getSubtreeIds(folder.id)
+        }
+        AlertDialog(
+            onDismissRequest = { moveFolderState = null },
+            title = { Text("Move \"${folder.name}\" to") },
+            text = {
+                LazyColumn {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("Root") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Root") },
+                            modifier = Modifier.clickable(enabled = folder.parentId != null) {
+                                viewModel.moveFolder(folder.id, null)
+                                moveFolderState = null
+                            },
+                            colors = ListItemDefaults.colors(
+                                headlineColor = if (folder.parentId == null)
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                else ListItemDefaults.colors().headlineColor
+                            )
+                        )
+                    }
+                    items(
+                        moveTargets.filter { it.folder.id !in excluded },
+                        key = { it.folder.id }
+                    ) { target ->
+                        val isCurrent = folder.parentId == target.folder.id
+                        ListItem(
+                            headlineContent = { Text(target.folder.name) },
+                            leadingContent = { Icon(Icons.Filled.Folder, "Folder") },
+                            modifier = Modifier
+                                .padding(start = (target.depth * 16).dp)
+                                .clickable(enabled = !isCurrent) {
+                                    viewModel.moveFolder(folder.id, target.folder.id)
+                                    moveFolderState = null
+                                },
+                            colors = ListItemDefaults.colors(
+                                headlineColor = if (isCurrent)
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                else ListItemDefaults.colors().headlineColor
+                            )
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { moveFolderState = null }) { Text("Cancel") } }
+        )
+    }
+
+    // Folder delete confirmation (cascades to contents)
+    confirmDeleteFolder?.let { folder ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteFolder = null },
+            title = { Text("Delete Folder?") },
+            text = { Text("\"${folder.name}\" and all its contents will be permanently deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteFolder(folder.id)
+                    confirmDeleteFolder = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteFolder = null }) { Text("Cancel") } }
+        )
     }
 
     // Delete confirmation dialog

@@ -47,6 +47,22 @@ class FolderRepository @Inject constructor(
     suspend fun setFolderHidden(id: Long, hidden: Boolean) =
         folderDao.setHidden(id, hidden, System.currentTimeMillis())
 
+    suspend fun moveFolder(id: Long, parentId: Long?) =
+        folderDao.move(id, parentId, System.currentTimeMillis())
+
+    /** A folder plus all its descendants — invalid move destinations for it. */
+    suspend fun getSubtreeIds(folderId: Long): Set<Long> {
+        val childrenMap = folderDao.getAllFolders().groupBy { it.parentId }
+        val result = mutableSetOf(folderId)
+        fun collect(id: Long) {
+            childrenMap[id]?.forEach { child ->
+                if (result.add(child.id)) collect(child.id)
+            }
+        }
+        collect(folderId)
+        return result
+    }
+
     /** True if [folderId] or any ancestor is marked hidden. */
     suspend fun isInHiddenTree(folderId: Long?): Boolean {
         var currentId: Long? = folderId

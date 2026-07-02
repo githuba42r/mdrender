@@ -41,6 +41,9 @@ class AppLock @Inject constructor() {
 
     fun revealHiddenFolders() { _revealHidden.value = true }
 
+    /** Turn reveal off manually (via the title-bar toggle) without locking. */
+    fun hideHiddenFolders() { _revealHidden.value = false }
+
     /** Call before launching a system activity (file picker) so returning to
      *  the app doesn't demand re-authentication. */
     fun suspendNextLock() { suspendNextLock = true }
