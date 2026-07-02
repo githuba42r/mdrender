@@ -85,6 +85,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment.ktx)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)

@@ -4,8 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.fragment.app.FragmentActivity
 import com.a42r.mdrender.security.AppLockManager
 import com.a42r.mdrender.ui.auth.LockScreen
 import com.a42r.mdrender.ui.theme.MDRenderTheme
@@ -13,7 +13,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class LockScreenActivity : ComponentActivity() {
+class LockScreenActivity : FragmentActivity() {
 
     @Inject lateinit var appLockManager: AppLockManager
 
