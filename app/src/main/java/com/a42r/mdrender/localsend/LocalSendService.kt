@@ -53,13 +53,22 @@ class LocalSendService : Service() {
                 acquire()
             }
 
+        // HTTPS with a self-signed cert (LocalSend default; some clients
+        // hardcode https). Fall back to plain http if TLS setup fails.
+        val certificate = try {
+            LocalSendCertificate.getOrCreate(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "TLS unavailable, serving plain http", e)
+            null
+        }
+
         // Prefer the standard port; fall back when another LocalSend instance
         // (e.g. the official app) already holds it. Announcements carry the
         // actual port so clients connect correctly either way.
         var started: LocalSendServer? = null
         for (port in LocalSendProtocol.PORT..LocalSendProtocol.PORT + 10) {
             try {
-                started = LocalSendServer(prefs, sessionManager, port).also { it.start() }
+                started = LocalSendServer(prefs, sessionManager, port, certificate).also { it.start() }
                 break
             } catch (e: Exception) {
                 Log.w(TAG, "Port $port unavailable: ${e.message}")
@@ -71,8 +80,11 @@ class LocalSendService : Service() {
             return
         }
         server = started
-        discovery = LocalSendDiscovery(prefs, started.listeningPort).also { it.start() }
-        Log.i(TAG, "LocalSend receiver active as '${prefs.alias}' on port ${started.listeningPort}")
+        discovery = LocalSendDiscovery(
+            prefs, started.listeningPort, started.fingerprint, started.protocolName
+        ).also { it.start() }
+        Log.i(TAG, "LocalSend receiver active as '${prefs.alias}' " +
+            "(${started.protocolName}) on port ${started.listeningPort}")
 
         // Incoming transfer requests → notification when app is backgrounded.
         scope.launch {

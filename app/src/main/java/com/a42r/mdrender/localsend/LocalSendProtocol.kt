@@ -19,12 +19,14 @@ object LocalSendProtocol {
 }
 
 /** This device's identity as announced to the network.
- *  [port] is the actually-bound HTTP port — may differ from 53317 when
- *  another LocalSend instance runs on the same device. */
+ *  [port] is the actually-bound port — may differ from 53317 when another
+ *  LocalSend instance runs on the same device. [fingerprint] is the SHA-256
+ *  of the TLS certificate when serving https, or a random id for http. */
 data class DeviceInfo(
     val alias: String,
     val fingerprint: String,
-    val port: Int = LocalSendProtocol.PORT
+    val port: Int = LocalSendProtocol.PORT,
+    val protocol: String = "https"
 ) {
     fun toJson(announce: Boolean? = null): JSONObject = JSONObject().apply {
         put("alias", alias)
@@ -33,7 +35,7 @@ data class DeviceInfo(
         put("deviceType", "mobile")
         put("fingerprint", fingerprint)
         put("port", port)
-        put("protocol", "http")
+        put("protocol", protocol)
         put("download", false)
         if (announce != null) put("announce", announce)
     }

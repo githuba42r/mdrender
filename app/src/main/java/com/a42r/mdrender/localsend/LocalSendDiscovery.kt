@@ -19,7 +19,9 @@ import java.net.MulticastSocket
  */
 class LocalSendDiscovery(
     private val prefs: LocalSendPrefs,
-    private val httpPort: Int = LocalSendProtocol.PORT
+    private val httpPort: Int = LocalSendProtocol.PORT,
+    private val fingerprint: String = prefs.fingerprint,
+    private val protocol: String = "http"
 ) {
     private var scope: CoroutineScope? = null
     private var socket: MulticastSocket? = null
@@ -40,7 +42,7 @@ class LocalSendDiscovery(
     }
 
     private fun myInfoJson(announce: Boolean): ByteArray =
-        DeviceInfo(prefs.alias, prefs.fingerprint, httpPort).toJson(announce).toString()
+        DeviceInfo(prefs.alias, fingerprint, httpPort, protocol).toJson(announce).toString()
             .toByteArray(Charsets.UTF_8)
 
     /** Broadcast our presence so already-running clients pick us up. */
@@ -80,7 +82,7 @@ class LocalSendDiscovery(
     private fun handlePacket(packet: DatagramPacket) {
         try {
             val json = JSONObject(String(packet.data, packet.offset, packet.length, Charsets.UTF_8))
-            if (json.optString("fingerprint") == prefs.fingerprint) return // our own packet
+            if (json.optString("fingerprint") == fingerprint) return // our own packet
             if (!json.optBoolean("announce", false)) return
 
             // Respond directly to the announcer so it lists us immediately.

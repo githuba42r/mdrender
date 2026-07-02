@@ -12,10 +12,21 @@ import org.json.JSONObject
 class LocalSendServer(
     private val prefs: LocalSendPrefs,
     private val sessionManager: LocalSendSessionManager,
-    port: Int = LocalSendProtocol.PORT
+    port: Int = LocalSendProtocol.PORT,
+    private val certificate: LocalSendCertificate? = null
 ) : NanoHTTPD(port) {
 
-    private fun deviceInfo() = DeviceInfo(prefs.alias, prefs.fingerprint, listeningPort)
+    init {
+        certificate?.let {
+            makeSecure(makeSSLSocketFactory(it.keyStore, it.keyManagerFactory), null)
+        }
+    }
+
+    val fingerprint: String get() = certificate?.fingerprint ?: prefs.fingerprint
+    val protocolName: String get() = if (certificate != null) "https" else "http"
+
+    private fun deviceInfo() =
+        DeviceInfo(prefs.alias, fingerprint, listeningPort, protocolName)
 
     override fun serve(session: IHTTPSession): Response {
         return try {
