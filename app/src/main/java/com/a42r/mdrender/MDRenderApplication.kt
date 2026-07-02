@@ -70,9 +70,11 @@ class MDRenderApplication : Application() {
             }
             override fun onActivityStopped(activity: Activity) {
                 if (!isTransient(activity)) {
-                    startedActivities--
-                    if (startedActivities <= 0) {
-                        startedActivities = 0
+                    startedActivities = (startedActivities - 1).coerceAtLeast(0)
+                    // Don't treat a configuration-change recreation (e.g. screen
+                    // rotation) as backgrounding — that would force a needless
+                    // re-authentication.
+                    if (startedActivities == 0 && !activity.isChangingConfigurations) {
                         // App fully backgrounded — re-lock so the next open re-auths.
                         appLock.onBackground()
                     }
