@@ -1,8 +1,16 @@
 package com.a42r.mdrender.share
 
+import android.content.ClipData
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.repository.FileRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,6 +23,57 @@ class ShareOutManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val fileRepository: FileRepository
 ) {
+    /** Outcome of staging: a launchable chooser intent, or the name of the
+     *  file whose decryption failed (nothing is shared partially). */
+    sealed interface StageResult {
+        data class Ready(val intent: Intent) : StageResult
+        data class Failed(val fileName: String) : StageResult
+    }
+
+    private val shareDir get() = File(context.cacheDir, SHARE_DIR)
+
+    /** Remove all staged plaintext. Called on app start and before staging. */
+    fun clearShareCache() {
+        shareDir.deleteRecursively()
+    }
+
+    /** Decrypts [files] into cacheDir/share/ and builds a chooser intent.
+     *  Any decryption failure wipes the cache again and aborts. */
+    suspend fun stage(files: List<FileEntity>): StageResult = withContext(Dispatchers.IO) {
+        clearShareCache()
+        shareDir.mkdirs()
+        val names = dedupeNames(files.map { it.name })
+        val uris = ArrayList<Uri>(files.size)
+        for ((i, file) in files.withIndex()) {
+            val bytes = fileRepository.getDecryptedContent(file.id)?.first
+            if (bytes == null) {
+                clearShareCache()
+                return@withContext StageResult.Failed(file.name)
+            }
+            val staged = File(shareDir, names[i])
+            staged.writeBytes(bytes)
+            uris += FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", staged
+            )
+        }
+        val send = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply { putExtra(Intent.EXTRA_STREAM, uris[0]) }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            }
+        }
+        send.type = commonMimeType(files.map { it.mimeType })
+        // ClipData so the chooser target gets read grants on every URI.
+        send.clipData = ClipData.newUri(context.contentResolver, "share", uris[0]).apply {
+            for (j in 1 until uris.size) addItem(ClipData.Item(uris[j]))
+        }
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val chooser = Intent.createChooser(send, null)
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        StageResult.Ready(chooser)
+    }
+
     companion object {
         const val SHARE_DIR = "share"
 

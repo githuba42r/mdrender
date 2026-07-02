@@ -6,16 +6,19 @@ import android.os.Bundle
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.ScreenOffReceiver
+import com.a42r.mdrender.share.ShareOutManager
 import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
 import java.lang.ref.WeakReference
 import javax.inject.Inject
+import kotlin.concurrent.thread
 
 @HiltAndroidApp
 class MDRenderApplication : Application() {
 
     @Inject lateinit var fileRepository: FileRepository
     @Inject lateinit var appLock: AppLock
+    @Inject lateinit var shareOutManager: ShareOutManager
 
     /** True while a non-transient activity is resumed. Used by LocalSend to
      *  decide between an in-app dialog and a notification. */
@@ -38,6 +41,10 @@ class MDRenderApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // Crash-safe plaintext cleanup: any decrypted share copies left by an
+        // unexpected shutdown are removed before anything else runs.
+        thread { shareOutManager.clearShareCache() }
 
         // NB: the LocalSend foreground service is started from MainActivity,
         // not here — startForegroundService() is illegal when the process is
