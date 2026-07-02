@@ -1,8 +1,11 @@
 package com.a42r.mdrender.ui.viewer
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -98,10 +101,24 @@ fun ImageViewerScreen(
                         detectTapGestures(onTap = { showAppBar = !showAppBar })
                     }
                     .pointerInput(id) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val newScale = (scale * zoom).coerceIn(1f, 5f)
-                            scale = newScale
-                            offset = if (newScale > 1f) offset + pan else Offset.Zero
+                        // Only handle (and consume) the gesture when it's a
+                        // pinch or the image is already zoomed. A one-finger
+                        // drag at 1x is left unconsumed so the VerticalPager
+                        // can page to the next/previous image.
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            do {
+                                val event = awaitPointerEvent()
+                                val pressed = event.changes.count { it.pressed }
+                                if (pressed >= 2 || scale > 1f) {
+                                    val zoom = event.calculateZoom()
+                                    val pan = event.calculatePan()
+                                    val newScale = (scale * zoom).coerceIn(1f, 5f)
+                                    scale = newScale
+                                    offset = if (newScale > 1f) offset + pan else Offset.Zero
+                                    event.changes.forEach { it.consume() }
+                                }
+                            } while (event.changes.any { it.pressed })
                         }
                     },
                 contentAlignment = Alignment.Center
