@@ -10,6 +10,7 @@ import com.a42r.mdrender.security.ScreenOffReceiver
 import com.a42r.mdrender.ui.LockScreenActivity
 import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
+import java.lang.ref.WeakReference
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -26,8 +27,21 @@ class MDRenderApplication : Application() {
 
     private lateinit var screenOffReceiver: ScreenOffReceiver
 
+    // Last-resumed activities, used to push the app out of the way when the
+    // phone locks so unlocking the phone doesn't land on our auth prompt.
+    private var foregroundActivity: WeakReference<Activity>? = null
+    private var lockScreenActivity: WeakReference<Activity>? = null
+
     private fun isTransient(activity: Activity): Boolean {
         return activity is LockScreenActivity || activity is ShareReceiverActivity
+    }
+
+    /** Screen turned off: lock the app and send it behind the launcher so
+     *  unlocking the phone doesn't immediately present our auth screen. */
+    private fun onScreenOff() {
+        appLockManager.lock()
+        lockScreenActivity?.get()?.finish()
+        foregroundActivity?.get()?.moveTaskToBack(true)
     }
 
     override fun onCreate() {
@@ -37,7 +51,7 @@ class MDRenderApplication : Application() {
         appLockManager.setIdleTimeoutSeconds(authPrefs.idleTimeoutSeconds)
 
         screenOffReceiver = ScreenOffReceiver().also {
-            it.appLockManager = appLockManager
+            it.onScreenOff = { onScreenOff() }
         }
         registerReceiver(screenOffReceiver, ScreenOffReceiver.FILTER)
 
@@ -47,7 +61,11 @@ class MDRenderApplication : Application() {
                 // Don't count LockScreenActivity; it lives on top of MainActivity
             }
             override fun onActivityResumed(activity: Activity) {
+                if (activity is LockScreenActivity) {
+                    lockScreenActivity = WeakReference(activity)
+                }
                 if (!isTransient(activity)) {
+                    foregroundActivity = WeakReference(activity)
                     appLockManager.onAppInForeground()
                     if (appLockManager.isLocked.value) {
                         LockScreenActivity.launch(activity)

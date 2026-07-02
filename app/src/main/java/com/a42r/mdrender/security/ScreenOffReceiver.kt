@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import javax.inject.Inject
 
 class ScreenOffReceiver : BroadcastReceiver() {
 
@@ -14,11 +13,11 @@ class ScreenOffReceiver : BroadcastReceiver() {
     }
 
     // Injected manually by Application since BroadcastReceiver can't use @AndroidEntryPoint
-    var appLockManager: AppLockManager? = null
+    var onScreenOff: (() -> Unit)? = null
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-            appLockManager?.lock()
+            onScreenOff?.invoke()
         }
     }
 }
