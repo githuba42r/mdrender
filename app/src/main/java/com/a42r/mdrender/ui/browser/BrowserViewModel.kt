@@ -194,6 +194,14 @@ class BrowserViewModel @Inject constructor(
     suspend fun decryptThumbnail(id: Long): ByteArray? =
         fileRepository.getDecryptedThumbnail(id)
 
+    /** Decode an image's pixel dimensions (width to height) for Properties. */
+    suspend fun getImageResolution(id: Long): Pair<Int, Int>? {
+        val bytes = fileRepository.getDecryptedContent(id)?.first ?: return null
+        val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        return if (opts.outWidth > 0) opts.outWidth to opts.outHeight else null
+    }
+
     fun setFolderHidden(id: Long, hidden: Boolean) {
         viewModelScope.launch {
             folderRepository.setFolderHidden(id, hidden)

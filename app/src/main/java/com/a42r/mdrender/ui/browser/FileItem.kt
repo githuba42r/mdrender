@@ -52,8 +52,9 @@ fun FileItem(
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(thumbnail).crossfade(true).build(),
-                            contentDescription = fileType.label,
-                            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
+                            contentDescription = name,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+                                .clip(RoundedCornerShape(6.dp)),
                             contentScale = ContentScale.Crop
                         )
                     } else {
@@ -73,13 +74,16 @@ fun FileItem(
                         )
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // Thumbnail tiles show the image only; other files show a name.
+                if (!showThumb) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     } else {

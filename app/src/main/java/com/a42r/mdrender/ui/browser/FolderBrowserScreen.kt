@@ -14,12 +14,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,6 +40,7 @@ fun FolderBrowserScreen(
     var renameText by remember { mutableStateOf("") }
     var moveFile by remember { mutableStateOf<FileEntity?>(null) }
     var confirmDeleteFile by remember { mutableStateOf<FileEntity?>(null) }
+    var propertiesFile by remember { mutableStateOf<FileEntity?>(null) }
     var folderMenu by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
 
@@ -321,6 +326,14 @@ fun FolderBrowserScreen(
                     }
                 )
                 ListItem(
+                    headlineContent = { Text("Properties") },
+                    leadingContent = { Icon(Icons.Filled.Info, "Properties") },
+                    modifier = Modifier.clickable {
+                        propertiesFile = file
+                        menuFile = null
+                    }
+                )
+                ListItem(
                     headlineContent = { Text("Delete") },
                     leadingContent = {
                         Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
@@ -440,6 +453,36 @@ fun FolderBrowserScreen(
         )
     }
 
+    // Properties dialog
+    propertiesFile?.let { file ->
+        val isImage = file.mimeType.startsWith("image/")
+        val resolution by produceState<Pair<Int, Int>?>(null, file.id) {
+            value = if (isImage) viewModel.getImageResolution(file.id) else null
+        }
+        AlertDialog(
+            onDismissRequest = { propertiesFile = null },
+            title = { Text("Properties") },
+            text = {
+                Column {
+                    PropertyRow("Name", file.name)
+                    if (isImage) {
+                        PropertyRow("Format", file.mimeType.substringAfter('/').uppercase())
+                        PropertyRow(
+                            "Resolution",
+                            resolution?.let { "${it.first} × ${it.second}" } ?: "…"
+                        )
+                    } else {
+                        PropertyRow("Created", formatDateTime(file.createdAt))
+                        PropertyRow("Size", formatSize(file.fileSize))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { propertiesFile = null }) { Text("Close") }
+            }
+        )
+    }
+
     // Rename dialog
     renameFile?.let { file ->
         AlertDialog(
@@ -539,4 +582,26 @@ fun FolderBrowserScreen(
             dismissButton = { TextButton(onClick = { showNewFolderDialog = false }) { Text("Cancel") } }
         )
     }
+}
+
+@Composable
+private fun PropertyRow(label: String, value: String) {
+    Row(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(
+            "$label:",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(96.dp)
+        )
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun formatDateTime(millis: Long): String =
+    SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(millis))
+
+private fun formatSize(bytes: Long): String = when {
+    bytes >= 1_048_576 -> String.format(Locale.getDefault(), "%.1f MB", bytes / 1_048_576.0)
+    bytes >= 1024 -> String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+    else -> "$bytes B"
 }
