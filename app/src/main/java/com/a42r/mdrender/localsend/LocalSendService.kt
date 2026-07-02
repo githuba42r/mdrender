@@ -96,10 +96,11 @@ class LocalSendService : Service() {
                 }
             }
         }
-        // Completion notice when backgrounded.
+        // Completion notice when backgrounded — suppressed under auto-accept,
+        // where silent, unattended transfers shouldn't spam notifications.
         scope.launch {
             sessionManager.lastCompleted.collect { message ->
-                if (message != null && !MDRenderApplication.instance.isForeground) {
+                if (message != null && !MDRenderApplication.instance.isForeground && !prefs.autoAccept) {
                     postCompletedNotification(message)
                 }
             }
