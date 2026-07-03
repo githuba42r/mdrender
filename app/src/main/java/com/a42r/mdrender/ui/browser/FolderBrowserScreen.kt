@@ -27,6 +27,7 @@ import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,11 +50,15 @@ fun FolderBrowserScreen(
     var propertiesFile by remember { mutableStateOf<FileEntity?>(null) }
     var folderMenu by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     var moveFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
+    var renameFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
+    var renameFolderText by remember { mutableStateOf("") }
     var confirmDeleteFolder by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
     val localSendEnabled by viewModel.localSendEnabled.collectAsStateWithLifecycle()
     val pendingShare by viewModel.pendingShare.collectAsStateWithLifecycle()
     val shareInProgress by viewModel.shareInProgress.collectAsStateWithLifecycle()
+    val moveConflict by viewModel.moveConflict.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     val notifPermission = rememberLauncherForActivityResult(
@@ -137,6 +142,9 @@ fun FolderBrowserScreen(
     }
     LaunchedEffect(Unit) {
         viewModel.shareError.collect { snackbarHostState.showSnackbar(it) }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.userMessage.collect { snackbarHostState.showSnackbar(it) }
     }
 
     Scaffold(
@@ -433,6 +441,15 @@ fun FolderBrowserScreen(
                     }
                 )
                 ListItem(
+                    headlineContent = { Text("Rename") },
+                    leadingContent = { Icon(Icons.Filled.Edit, "Rename") },
+                    modifier = Modifier.clickable {
+                        folderMenu = null
+                        renameFolderText = folder.name
+                        renameFolderState = folder
+                    }
+                )
+                ListItem(
                     headlineContent = { Text("Move") },
                     leadingContent = { Icon(Icons.Filled.DriveFileMove, "Move") },
                     modifier = Modifier.clickable {
@@ -528,6 +545,50 @@ fun FolderBrowserScreen(
         )
     }
 
+    // Rename Folder dialog
+    renameFolderState?.let { folder ->
+        var folderRenameError by remember(folder) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { renameFolderState = null },
+            title = { Text("Rename Folder") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = renameFolderText,
+                        onValueChange = { renameFolderText = it; folderRenameError = false },
+                        label = { Text("Folder name") },
+                        singleLine = true,
+                        isError = folderRenameError
+                    )
+                    if (folderRenameError) {
+                        Text(
+                            "A folder with this name already exists",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameFolderText.isNotBlank(),
+                    onClick = {
+                        val newName = renameFolderText.trim()
+                        scope.launch {
+                            if (viewModel.folderNameExists(folder.parentId, newName, excludeId = folder.id)) {
+                                folderRenameError = true
+                            } else {
+                                viewModel.renameFolder(folder.id, newName)
+                                renameFolderState = null
+                            }
+                        }
+                    }
+                ) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameFolderState = null }) { Text("Cancel") } }
+        )
+    }
+
     // Folder delete confirmation (cascades to contents)
     confirmDeleteFolder?.let { folder ->
         AlertDialog(
@@ -612,6 +673,44 @@ fun FolderBrowserScreen(
         )
     }
 
+    // Move name-conflict dialog (Replace / Skip / Cancel + apply-to-all)
+    moveConflict?.let { conflict ->
+        var applyToAll by remember(conflict) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { viewModel.resolveMoveConflict(ConflictDecision.CancelBatch) },
+            title = { Text("Name conflict") },
+            text = {
+                Column {
+                    Text("\"${conflict.file.name}\" already exists in \"${conflict.targetFolderName}\".")
+                    if (conflict.remaining > 1) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 8.dp)
+                        ) {
+                            Checkbox(checked = applyToAll, onCheckedChange = { applyToAll = it })
+                            Text("Apply to all remaining conflicts")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.resolveMoveConflict(ConflictDecision.Replace(applyToAll))
+                }) { Text("Replace") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        viewModel.resolveMoveConflict(ConflictDecision.Skip(applyToAll))
+                    }) { Text("Skip") }
+                    TextButton(onClick = {
+                        viewModel.resolveMoveConflict(ConflictDecision.CancelBatch)
+                    }) { Text("Cancel") }
+                }
+            }
+        )
+    }
+
     // Multi-select move dialog
     if (moveMulti) {
         val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
@@ -626,7 +725,7 @@ fun FolderBrowserScreen(
                             headlineContent = { Text("Root") },
                             leadingContent = { Icon(Icons.Filled.Home, "Root") },
                             modifier = Modifier.clickable {
-                                viewModel.moveFiles(idsToMove, null)
+                                viewModel.moveFilesResolvingConflicts(idsToMove, null)
                                 selectedIds = emptySet()
                                 moveMulti = false
                             }
@@ -639,7 +738,7 @@ fun FolderBrowserScreen(
                             modifier = Modifier
                                 .padding(start = (target.depth * 16).dp)
                                 .clickable {
-                                    viewModel.moveFiles(idsToMove, target.folder.id)
+                                    viewModel.moveFilesResolvingConflicts(idsToMove, target.folder.id)
                                     selectedIds = emptySet()
                                     moveMulti = false
                                 }
@@ -684,23 +783,41 @@ fun FolderBrowserScreen(
 
     // Rename dialog
     renameFile?.let { file ->
+        var renameError by remember(file) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { renameFile = null },
             title = { Text("Rename File") },
             text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    label = { Text("File name") },
-                    singleLine = true
-                )
+                Column {
+                    OutlinedTextField(
+                        value = renameText,
+                        onValueChange = { renameText = it; renameError = false },
+                        label = { Text("File name") },
+                        singleLine = true,
+                        isError = renameError
+                    )
+                    if (renameError) {
+                        Text(
+                            "A file with this name already exists",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
                     enabled = renameText.isNotBlank(),
                     onClick = {
-                        viewModel.renameFile(file.id, renameText.trim())
-                        renameFile = null
+                        val newName = renameText.trim()
+                        scope.launch {
+                            if (viewModel.fileNameExists(file.folderId, newName, excludeId = file.id)) {
+                                renameError = true
+                            } else {
+                                viewModel.renameFile(file.id, newName)
+                                renameFile = null
+                            }
+                        }
                     }
                 ) { Text("Rename") }
             },
@@ -721,7 +838,7 @@ fun FolderBrowserScreen(
                             headlineContent = { Text("Root") },
                             leadingContent = { Icon(Icons.Filled.Home, "Root") },
                             modifier = Modifier.clickable(enabled = file.folderId != null) {
-                                viewModel.moveFile(file.id, null)
+                                viewModel.moveFilesResolvingConflicts(listOf(file.id), null)
                                 moveFile = null
                             },
                             colors = ListItemDefaults.colors(
@@ -739,7 +856,7 @@ fun FolderBrowserScreen(
                             modifier = Modifier
                                 .padding(start = (target.depth * 16).dp)
                                 .clickable(enabled = !isCurrent) {
-                                    viewModel.moveFile(file.id, target.folder.id)
+                                    viewModel.moveFilesResolvingConflicts(listOf(file.id), target.folder.id)
                                     moveFile = null
                                 },
                             colors = ListItemDefaults.colors(
@@ -758,23 +875,41 @@ fun FolderBrowserScreen(
 
     // New Folder Dialog
     if (showNewFolderDialog) {
+        var folderError by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showNewFolderDialog = false },
             title = { Text("New Folder") },
             text = {
-                OutlinedTextField(
-                    value = newFolderName,
-                    onValueChange = { newFolderName = it },
-                    label = { Text("Folder name") },
-                    singleLine = true
-                )
+                Column {
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it; folderError = false },
+                        label = { Text("Folder name") },
+                        singleLine = true,
+                        isError = folderError
+                    )
+                    if (folderError) {
+                        Text(
+                            "A folder with this name already exists",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (newFolderName.isNotBlank()) {
-                        viewModel.createFolder(newFolderName.trim())
-                        newFolderName = ""
-                        showNewFolderDialog = false
+                    val name = newFolderName.trim()
+                    if (name.isNotBlank()) {
+                        scope.launch {
+                            if (viewModel.folderNameExists(uiState.currentFolderId, name)) {
+                                folderError = true
+                            } else {
+                                viewModel.createFolder(name)
+                                newFolderName = ""
+                                showNewFolderDialog = false
+                            }
+                        }
                     }
                 }) { Text("Create") }
             },

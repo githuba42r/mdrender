@@ -16,6 +16,7 @@ import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.share.ShareOutManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -40,6 +41,13 @@ data class UndoDelete(
 data class MoveTarget(
     val folder: FolderEntity,
     val depth: Int
+)
+
+/** A move name-conflict currently awaiting the user's decision. */
+data class MoveConflict(
+    val file: FileEntity,
+    val targetFolderName: String,
+    val remaining: Int
 )
 
 @HiltViewModel
@@ -237,8 +245,16 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    /** Blocked when the destination already has a same-named sibling. */
     fun moveFolder(id: Long, targetFolderId: Long?) {
         viewModelScope.launch {
+            val folder = folderRepository.getFolder(id) ?: return@launch
+            if (folderRepository.siblingNameExists(targetFolderId, folder.name, excludeId = id)) {
+                _userMessage.emit(
+                    "A folder named \"${folder.name}\" already exists in \"${folderDisplayName(targetFolderId)}\""
+                )
+                return@launch
+            }
             folderRepository.moveFolder(id, targetFolderId)
         }
     }
@@ -280,21 +296,76 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    fun moveFile(id: Long, targetFolderId: Long?) {
+    // --- Move with conflict resolution ------------------------------------
+
+    /** Non-null while the Replace/Skip dialog should be showing. */
+    private val _moveConflict = MutableStateFlow<MoveConflict?>(null)
+    val moveConflict: StateFlow<MoveConflict?> = _moveConflict.asStateFlow()
+
+    /** One-off user-facing notices (batch summaries, blocked folder moves). */
+    private val _userMessage = MutableSharedFlow<String>()
+    val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
+
+    private var conflictAnswer: CompletableDeferred<ConflictDecision>? = null
+
+    private val walker = MoveConflictWalker(
+        findByName = { folderId, name -> fileRepository.findByName(folderId, name) },
+        moveFile = { id, folderId -> fileRepository.moveFile(id, folderId) },
+        deleteFile = { id -> fileRepository.deleteFile(id) }
+    )
+
+    /** Moves [ids] into [targetFolderId], prompting Replace/Skip per name
+     *  conflict. Used by both the single-file and multi-select Move dialogs. */
+    fun moveFilesResolvingConflicts(ids: Collection<Long>, targetFolderId: Long?) {
         viewModelScope.launch {
-            fileRepository.moveFile(id, targetFolderId)
+            val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
+            val targetName = folderDisplayName(targetFolderId)
+            val result = walker.run(files, targetFolderId) { file, remaining ->
+                val answer = CompletableDeferred<ConflictDecision>()
+                conflictAnswer = answer
+                _moveConflict.value = MoveConflict(file, targetName, remaining)
+                try {
+                    answer.await()
+                } finally {
+                    _moveConflict.value = null
+                }
+            }
+            val summary = buildString {
+                append("Moved ${result.moved}")
+                if (result.replaced > 0) append(", replaced ${result.replaced}")
+                if (result.skipped > 0) append(", skipped ${result.skipped}")
+            }
+            _userMessage.emit(summary)
+        }
+    }
+
+    /** Called by the conflict dialog's buttons (and its dismiss = CancelBatch). */
+    fun resolveMoveConflict(decision: ConflictDecision) {
+        conflictAnswer?.takeIf { !it.isCompleted }?.complete(decision)
+    }
+
+    private suspend fun folderDisplayName(folderId: Long?): String =
+        folderId?.let { folderRepository.getFolder(it)?.name } ?: "Home"
+
+    // --- Name availability checks (rename / create dialogs) ---------------
+
+    /** True when another file in [folderId] already uses [name] (exact match). */
+    suspend fun fileNameExists(folderId: Long?, name: String, excludeId: Long): Boolean =
+        fileRepository.findByName(folderId, name)?.let { it.id != excludeId } ?: false
+
+    /** True when a sibling folder already uses [name] (case-insensitive). */
+    suspend fun folderNameExists(parentId: Long?, name: String, excludeId: Long? = null): Boolean =
+        folderRepository.siblingNameExists(parentId, name, excludeId)
+
+    fun renameFolder(id: Long, newName: String) {
+        viewModelScope.launch {
+            folderRepository.renameFolder(id, newName)
         }
     }
 
     fun deleteFiles(ids: Set<Long>) {
         viewModelScope.launch {
             ids.forEach { fileRepository.deleteFile(it) }
-        }
-    }
-
-    fun moveFiles(ids: Set<Long>, targetFolderId: Long?) {
-        viewModelScope.launch {
-            ids.forEach { fileRepository.moveFile(it, targetFolderId) }
         }
     }
 
