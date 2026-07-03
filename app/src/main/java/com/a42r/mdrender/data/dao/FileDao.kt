@@ -15,6 +15,9 @@ interface FileDao {
     @Query("SELECT name FROM files WHERE folder_id IS :folderId")
     suspend fun getNamesInFolder(folderId: Long?): List<String>
 
+    @Query("SELECT * FROM files WHERE folder_id IS :folderId AND name = :name LIMIT 1")
+    suspend fun findByName(folderId: Long?, name: String): FileEntity?
+
     @Query("SELECT * FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
     suspend fun getFilesInFolderList(folderId: Long?): List<FileEntity>
 

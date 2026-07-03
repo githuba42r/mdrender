@@ -15,7 +15,7 @@ interface FolderDao {
     @Query("SELECT * FROM folders ORDER BY name ASC")
     suspend fun getAllFolders(): List<FolderEntity>
 
-    @Query("SELECT * FROM folders WHERE parent_id IS :parentId AND name = :name LIMIT 1")
+    @Query("SELECT * FROM folders WHERE parent_id IS :parentId AND name = :name COLLATE NOCASE LIMIT 1")
     suspend fun findByName(parentId: Long?, name: String): FolderEntity?
 
     @Query("UPDATE folders SET hidden = :hidden, updated_at = :updatedAt WHERE id = :id")

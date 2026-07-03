@@ -44,6 +44,15 @@ class FolderRepository @Inject constructor(
 
     suspend fun folderExists(id: Long): Boolean = folderDao.getById(id) != null
 
+    suspend fun getFolder(id: Long): FolderEntity? = folderDao.getById(id)
+
+    /** True when a sibling of [parentId] already uses [name]
+     *  (case-insensitive), ignoring [excludeId] (for renames). */
+    suspend fun siblingNameExists(parentId: Long?, name: String, excludeId: Long? = null): Boolean {
+        val found = folderDao.findByName(parentId, name) ?: return false
+        return found.id != excludeId
+    }
+
     suspend fun setFolderHidden(id: Long, hidden: Boolean) =
         folderDao.setHidden(id, hidden, System.currentTimeMillis())
 

@@ -94,6 +94,10 @@ class FileRepository @Inject constructor(
 
     suspend fun getFileMetadata(id: Long): FileEntity? = fileDao.getById(id)
 
+    /** The file named [name] in [folderId] (exact match), or null. */
+    suspend fun findByName(folderId: Long?, name: String): FileEntity? =
+        fileDao.findByName(folderId, name)
+
     fun mimeTypeFromExtension(filename: String): String {
         return when {
             filename.endsWith(".md", ignoreCase = true) -> "text/markdown"
