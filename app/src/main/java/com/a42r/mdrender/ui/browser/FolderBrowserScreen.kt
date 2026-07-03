@@ -458,24 +458,29 @@ fun FolderBrowserScreen(
                         moveFolderState = folder
                     }
                 )
-                if (folder.hidden) {
-                    ListItem(
-                        headlineContent = { Text("Unhide folder") },
-                        leadingContent = { Icon(Icons.Filled.Visibility, "Unhide") },
-                        modifier = Modifier.clickable {
-                            viewModel.setFolderHidden(folder.id, false)
-                            folderMenu = null
-                        }
-                    )
-                } else {
-                    ListItem(
-                        headlineContent = { Text("Hide folder") },
-                        leadingContent = { Icon(Icons.Filled.VisibilityOff, "Hide") },
-                        modifier = Modifier.clickable {
-                            viewModel.setFolderHidden(folder.id, true)
-                            folderMenu = null
-                        }
-                    )
+                // Hide/Unhide only appear while hidden folders are revealed —
+                // offering "Hide folder" to everyone would leak that the
+                // hidden-folders feature exists.
+                if (revealHidden) {
+                    if (folder.hidden) {
+                        ListItem(
+                            headlineContent = { Text("Unhide folder") },
+                            leadingContent = { Icon(Icons.Filled.Visibility, "Unhide") },
+                            modifier = Modifier.clickable {
+                                viewModel.setFolderHidden(folder.id, false)
+                                folderMenu = null
+                            }
+                        )
+                    } else {
+                        ListItem(
+                            headlineContent = { Text("Hide folder") },
+                            leadingContent = { Icon(Icons.Filled.VisibilityOff, "Hide") },
+                            modifier = Modifier.clickable {
+                                viewModel.setFolderHidden(folder.id, true)
+                                folderMenu = null
+                            }
+                        )
+                    }
                 }
                 ListItem(
                     headlineContent = { Text("Delete") },
