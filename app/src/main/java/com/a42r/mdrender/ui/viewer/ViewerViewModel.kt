@@ -20,7 +20,8 @@ data class ViewerUiState(
     val textContent: String = "",
     val imageBytes: ByteArray? = null,
     val isLoading: Boolean = true,
-    val error: String? = null
+    val error: String? = null,
+    val initialScrollPosition: Int = 0
 )
 
 /** Ordered sibling image ids in the folder plus the index of the opened one. */
@@ -74,7 +75,8 @@ class ViewerViewModel @Inject constructor(
                     it.copy(
                         fileName = metadata?.name ?: "Unknown",
                         mimeType = mimeType,
-                        isLoading = false
+                        isLoading = false,
+                        initialScrollPosition = metadata?.scrollPosition ?: 0
                     )
                 }
 
@@ -94,6 +96,12 @@ class ViewerViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }
+        }
+    }
+
+    fun saveScrollPosition(pos: Int) {
+        viewModelScope.launch {
+            fileRepository.saveScrollPosition(fileId, pos)
         }
     }
 }
