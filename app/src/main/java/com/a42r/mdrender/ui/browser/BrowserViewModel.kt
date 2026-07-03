@@ -307,6 +307,7 @@ class BrowserViewModel @Inject constructor(
     val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
 
     private var conflictAnswer: CompletableDeferred<ConflictDecision>? = null
+    private var moveBatchJob: Job? = null
 
     private val walker = MoveConflictWalker(
         findByName = { folderId, name -> fileRepository.findByName(folderId, name) },
@@ -317,7 +318,8 @@ class BrowserViewModel @Inject constructor(
     /** Moves [ids] into [targetFolderId], prompting Replace/Skip per name
      *  conflict. Used by both the single-file and multi-select Move dialogs. */
     fun moveFilesResolvingConflicts(ids: Collection<Long>, targetFolderId: Long?) {
-        viewModelScope.launch {
+        if (moveBatchJob?.isActive == true) return
+        moveBatchJob = viewModelScope.launch {
             val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
             val targetName = folderDisplayName(targetFolderId)
             val result = walker.run(files, targetFolderId) { file, remaining ->
