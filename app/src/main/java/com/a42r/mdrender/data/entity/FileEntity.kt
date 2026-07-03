@@ -25,7 +25,8 @@ data class FileEntity(
     @ColumnInfo(name = "encrypted_thumbnail") val encryptedThumbnail: ByteArray? = null,
     @ColumnInfo(name = "file_size") val fileSize: Long,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "scroll_position") val scrollPosition: Int = 0
 ) {
     override fun equals(other: Any?): Boolean = this === other || (other is FileEntity && id == other.id)
     override fun hashCode(): Int = id.hashCode()

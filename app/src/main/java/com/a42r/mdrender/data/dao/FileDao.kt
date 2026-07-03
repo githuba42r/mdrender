@@ -38,4 +38,7 @@ interface FileDao {
 
     @Query("DELETE FROM files WHERE folder_id = :folderId")
     suspend fun deleteByFolderId(folderId: Long)
+
+    @Query("UPDATE files SET scroll_position = :pos WHERE id = :id")
+    suspend fun updateScrollPosition(id: Long, pos: Int)
 }

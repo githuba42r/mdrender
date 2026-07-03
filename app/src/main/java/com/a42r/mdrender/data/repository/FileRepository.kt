@@ -92,6 +92,8 @@ class FileRepository @Inject constructor(
         }
     }
 
+    suspend fun saveScrollPosition(id: Long, pos: Int) = fileDao.updateScrollPosition(id, pos)
+
     suspend fun getFileMetadata(id: Long): FileEntity? = fileDao.getById(id)
 
     /** The file named [name] in [folderId] (exact match), or null. */
