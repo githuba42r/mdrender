@@ -16,6 +16,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.ui.Alignment
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,24 +57,71 @@ fun TextViewerScreen(
             uiState.error != null -> Box(Modifier.fillMaxSize().padding(padding)) {
                 Text("Error: ${uiState.error}", color = MaterialTheme.colorScheme.error)
             }
-            else -> SelectionContainer {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
-                        .verticalScroll(rememberScrollState())
-                        .pointerInput(Unit) {
-                            detectTapGestures(onTap = { showAppBar = !showAppBar })
+            else -> {
+                val scrollState = rememberScrollState()
+                val coroutineScope = rememberCoroutineScope()
+
+                val showTopButton by remember {
+                    derivedStateOf { scrollState.value > 200 }
+                }
+
+                // Restore saved scroll position once content is loaded
+                LaunchedEffect(uiState.isLoading) {
+                    if (!uiState.isLoading && uiState.initialScrollPosition > 0) {
+                        scrollState.scrollTo(
+                            uiState.initialScrollPosition.coerceAtMost(scrollState.maxValue)
+                        )
+                    }
+                }
+
+                // Save scroll position when leaving the screen
+                val currentScroll by rememberUpdatedState(scrollState.value)
+                DisposableEffect(Unit) {
+                    onDispose { viewModel.saveScrollPosition(currentScroll) }
+                }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SelectionContainer {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(padding)
+                                .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
+                                .verticalScroll(scrollState)
+                                .pointerInput(Unit) {
+                                    detectTapGestures(onTap = { showAppBar = !showAppBar })
+                                }
+                                .padding(16.dp)
+                        ) {
+                            Text(
+                                text = uiState.textContent,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = (14 * fontScale).sp,
+                                lineHeight = (20 * fontScale).sp
+                            )
                         }
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = uiState.textContent,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = (14 * fontScale).sp,
-                        lineHeight = (20 * fontScale).sp
-                    )
+                    }
+
+                    // Jump-to-top FAB
+                    AnimatedVisibility(
+                        visible = showTopButton,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        SmallFloatingActionButton(
+                            onClick = { coroutineScope.launch { scrollState.animateScrollTo(0) } },
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                .copy(alpha = 0.85f)
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Jump to top"
+                            )
+                        }
+                    }
                 }
             }
         }
