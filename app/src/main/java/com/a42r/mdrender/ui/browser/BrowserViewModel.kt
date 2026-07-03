@@ -16,6 +16,7 @@ import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.share.ShareOutManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -318,26 +319,36 @@ class BrowserViewModel @Inject constructor(
     /** Moves [ids] into [targetFolderId], prompting Replace/Skip per name
      *  conflict. Used by both the single-file and multi-select Move dialogs. */
     fun moveFilesResolvingConflicts(ids: Collection<Long>, targetFolderId: Long?) {
-        if (moveBatchJob?.isActive == true) return
+        if (moveBatchJob?.isActive == true) {
+            viewModelScope.launch { _userMessage.emit("A move is already in progress") }
+            return
+        }
         moveBatchJob = viewModelScope.launch {
-            val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
-            val targetName = folderDisplayName(targetFolderId)
-            val result = walker.run(files, targetFolderId) { file, remaining ->
-                val answer = CompletableDeferred<ConflictDecision>()
-                conflictAnswer = answer
-                _moveConflict.value = MoveConflict(file, targetName, remaining)
-                try {
-                    answer.await()
-                } finally {
-                    _moveConflict.value = null
+            try {
+                val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
+                val targetName = folderDisplayName(targetFolderId)
+                val result = walker.run(files, targetFolderId) { file, remaining ->
+                    val answer = CompletableDeferred<ConflictDecision>()
+                    conflictAnswer = answer
+                    _moveConflict.value = MoveConflict(file, targetName, remaining)
+                    try {
+                        answer.await()
+                    } finally {
+                        _moveConflict.value = null
+                    }
                 }
+                if (result.moved + result.replaced + result.skipped > 0) {
+                    val summary = buildString {
+                        append("Moved ${result.moved}")
+                        if (result.replaced > 0) append(", replaced ${result.replaced}")
+                        if (result.skipped > 0) append(", skipped ${result.skipped}")
+                    }
+                    _userMessage.emit(summary)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _userMessage.emit("Move failed — some files may not have been moved")
             }
-            val summary = buildString {
-                append("Moved ${result.moved}")
-                if (result.replaced > 0) append(", replaced ${result.replaced}")
-                if (result.skipped > 0) append(", skipped ${result.skipped}")
-            }
-            _userMessage.emit(summary)
         }
     }
 

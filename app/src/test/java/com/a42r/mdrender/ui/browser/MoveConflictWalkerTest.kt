@@ -102,6 +102,10 @@ class MoveConflictWalkerTest {
         }
         assertEquals(1, asks)
         assertEquals(MoveConflictWalker.Result(0, 0, 2, false), result)
+        assertEquals(1L, store.byId.getValue(s1.id).folderId)
+        assertEquals(1L, store.byId.getValue(s2.id).folderId)
+        assertNotNull(store.byId[t1.id])
+        assertNotNull(store.byId[t2.id])
     }
 
     @Test
@@ -145,6 +149,8 @@ class MoveConflictWalkerTest {
         }
         assertEquals(s2.id, askedFor)
         assertEquals(MoveConflictWalker.Result(moved = 1, replaced = 0, skipped = 1, cancelled = false), result)
+        assertEquals(2L, store.byId.getValue(s1.id).folderId)
+        assertEquals(3L, store.byId.getValue(s2.id).folderId)
     }
 
     @Test
@@ -158,6 +164,9 @@ class MoveConflictWalkerTest {
         }
         // s1 conflicts first with s2, s3 still unprocessed -> remaining = 3.
         assertEquals(3, seenRemaining)
+        assertEquals(1L, store.byId.getValue(s1.id).folderId)
+        assertEquals(2L, store.byId.getValue(s2.id).folderId)
+        assertEquals(2L, store.byId.getValue(s3.id).folderId)
     }
 
     @Test

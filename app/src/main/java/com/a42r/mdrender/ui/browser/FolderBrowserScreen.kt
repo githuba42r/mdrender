@@ -504,8 +504,8 @@ fun FolderBrowserScreen(
                 LazyColumn {
                     item {
                         ListItem(
-                            headlineContent = { Text("Root") },
-                            leadingContent = { Icon(Icons.Filled.Home, "Root") },
+                            headlineContent = { Text("Home") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Home") },
                             modifier = Modifier.clickable(enabled = folder.parentId != null) {
                                 viewModel.moveFolder(folder.id, null)
                                 moveFolderState = null
@@ -722,8 +722,8 @@ fun FolderBrowserScreen(
                 LazyColumn {
                     item {
                         ListItem(
-                            headlineContent = { Text("Root") },
-                            leadingContent = { Icon(Icons.Filled.Home, "Root") },
+                            headlineContent = { Text("Home") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Home") },
                             modifier = Modifier.clickable {
                                 viewModel.moveFilesResolvingConflicts(idsToMove, null)
                                 selectedIds = emptySet()
@@ -835,8 +835,8 @@ fun FolderBrowserScreen(
                 LazyColumn {
                     item {
                         ListItem(
-                            headlineContent = { Text("Root") },
-                            leadingContent = { Icon(Icons.Filled.Home, "Root") },
+                            headlineContent = { Text("Home") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Home") },
                             modifier = Modifier.clickable(enabled = file.folderId != null) {
                                 viewModel.moveFilesResolvingConflicts(listOf(file.id), null)
                                 moveFile = null
