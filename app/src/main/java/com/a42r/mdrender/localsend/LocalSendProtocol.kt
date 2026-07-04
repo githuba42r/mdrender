@@ -57,3 +57,40 @@ data class IncomingFile(
         )
     }
 }
+
+/**
+ * MDRender protocol extension for LocalSend v2. Sent as an optional top-level
+ * `"mds"` field in the prepare-upload request body. Vanilla LocalSend receivers
+ * ignore the unknown key and fall back to their defaults.
+ */
+data class MDRenderOptions(
+    /** Folder path relative to root, e.g. "Docs/Reports". Empty = root. */
+    val folder: String = "",
+    /** What to do when a file with the same name already exists. */
+    val conflict: ConflictStrategy = ConflictStrategy.RENAME
+) {
+    companion object {
+        private const val KEY = "mds"
+
+        fun fromRequestBody(body: JSONObject): MDRenderOptions {
+            val mds = body.optJSONObject(KEY) ?: return MDRenderOptions()
+            return MDRenderOptions(
+                folder = mds.optString("folder", ""),
+                conflict = ConflictStrategy.fromValue(mds.optString("conflict", null))
+            )
+        }
+    }
+}
+
+enum class ConflictStrategy(val value: String) {
+    /** Overwrite the existing file. */
+    REPLACE("replace"),
+    /** Skip importing the file if the name exists. */
+    SKIP("skip"),
+    /** Auto-rename to "name (1).ext" style. */
+    RENAME("rename");
+
+    companion object {
+        fun fromValue(v: String?): ConflictStrategy = values().firstOrNull { it.value == v } ?: RENAME
+    }
+}

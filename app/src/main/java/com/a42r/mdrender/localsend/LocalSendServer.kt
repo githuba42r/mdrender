@@ -75,7 +75,11 @@ class LocalSendServer(
         }
         Log.d(TAG, "prepare-upload from $senderAlias: ${files.size} file(s)")
 
-        val grant = sessionManager.requestSession(senderAlias, files, autoAccept)
+        // Parse optional MDRender protocol extension (backwards compatible).
+        val mdOptions = MDRenderOptions.fromRequestBody(body)
+        Log.d(TAG, "MDRender options: folder='${mdOptions.folder}' conflict=${mdOptions.conflict.value}")
+
+        val grant = sessionManager.requestSession(senderAlias, files, autoAccept, mdOptions)
             ?: return error(Response.Status.FORBIDDEN, "Rejected")
 
         val response = JSONObject().apply {

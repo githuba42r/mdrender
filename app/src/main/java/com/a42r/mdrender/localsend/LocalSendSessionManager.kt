@@ -37,6 +37,7 @@ private class ActiveSession(
     val sessionId: String,
     val tokens: Map<String, String>,          // fileId -> token
     val files: Map<String, IncomingFile>,     // fileId -> metadata
+    val options: MDRenderOptions,
     val received: MutableSet<String> = mutableSetOf()
 )
 
@@ -70,7 +71,8 @@ class LocalSendSessionManager @Inject constructor(
     fun requestSession(
         senderAlias: String,
         files: List<IncomingFile>,
-        autoAccept: Boolean = false
+        autoAccept: Boolean = false,
+        options: MDRenderOptions = MDRenderOptions()
     ): SessionGrant? {
         val sessionId = UUID.randomUUID().toString()
 
@@ -94,7 +96,7 @@ class LocalSendSessionManager @Inject constructor(
         }
 
         val tokens = files.associate { it.id to UUID.randomUUID().toString() }
-        sessions[sessionId] = ActiveSession(sessionId, tokens, files.associateBy { it.id })
+        sessions[sessionId] = ActiveSession(sessionId, tokens, files.associateBy { it.id }, options)
         // Safety net: drop the session if the sender never finishes.
         scope.launch {
             delay(SESSION_TIMEOUT_MS)
@@ -113,6 +115,18 @@ class LocalSendSessionManager @Inject constructor(
         _pendingTransfer.value?.takeIf { it.sessionId == sessionId }?.decision?.complete(false)
     }
 
+    /** Resolve a slash-delimited folder path like "Docs/Reports" into a folder
+     *  ID, creating missing folders as needed. Empty or blank → root with the
+     *  default "LocalSend" folder. */
+    private suspend fun resolveFolder(path: String): Long {
+        if (path.isBlank()) return folderRepository.findOrCreateFolder(FOLDER_NAME)
+        var parentId: Long? = null
+        for (segment in path.split("/").filter { it.isNotBlank() }) {
+            parentId = folderRepository.findOrCreateFolder(segment, parentId)
+        }
+        return parentId ?: folderRepository.findOrCreateFolder(FOLDER_NAME)
+    }
+
     /** Validates the upload and stores the file. Called on a server worker
      *  thread with the complete file body. Returns true on success. */
     fun receiveFile(sessionId: String, fileId: String, token: String, bytes: ByteArray): Boolean {
@@ -120,12 +134,31 @@ class LocalSendSessionManager @Inject constructor(
         if (session.tokens[fileId] != token) return false
         val meta = session.files[fileId] ?: return false
 
+        // --- ConflictStrategy.SKIP early-out ---
+        // Check before runBlocking so we can return normally.
+        if (session.options.conflict == ConflictStrategy.SKIP && runBlocking {
+                fileRepository.findByName(resolveFolder(session.options.folder), meta.fileName) != null
+            }) {
+            synchronized(session.received) { session.received.add(fileId) }
+            if (session.received.size == session.files.size) {
+                sessions.remove(sessionId)
+                _lastCompleted.value = if (session.files.size == 1)
+                    "\"${meta.fileName}\" skipped" else "${session.files.size} files received (with skips)"
+            }
+            return true
+        }
+
         return try {
             runBlocking {
-                val folderId = folderRepository.findOrCreateFolder(FOLDER_NAME)
+                val folderId = resolveFolder(session.options.folder)
                 val mime = fileRepository.mimeTypeFromExtension(meta.fileName)
                     .takeIf { it != "application/octet-stream" } ?: meta.fileType
-                val name = fileRepository.uniqueNameInFolder(folderId, meta.fileName)
+
+                val name = when (session.options.conflict) {
+                    ConflictStrategy.REPLACE -> meta.fileName
+                    ConflictStrategy.SKIP -> meta.fileName // early-out above already handled this
+                    ConflictStrategy.RENAME -> fileRepository.uniqueNameInFolder(folderId, meta.fileName)
+                }
                 fileRepository.importFile(name, mime, bytes, folderId)
             }
             synchronized(session.received) { session.received.add(fileId) }

@@ -5,6 +5,19 @@ the MDRender Android app (or any LocalSend receiver). Targets a device
 **directly by IP** — no discovery — and supports a **PIN** and **multiple
 files**, which the common third-party CLIs (e.g. localsend-go) do not.
 
+### MDRender protocol extensions
+
+```bash
+# Send files to a subfolder, auto-renaming on name conflicts
+./localsend-send.py --host 10.0.1.226 --pin 1964 --folder "Tax/2025" receipts.pdf
+
+# Replace any same-named files (no (1) suffix)
+./localsend-send.py --host 10.0.1.226 --pin 1964 --conflict replace notes.md
+
+# Skip files that already exist on the receiver
+./localsend-send.py --host 10.0.1.226 --pin 1964 --conflict skip *.jpg
+```
+
 ## Requirements
 
 Python 3.8+. No pip packages — standard library only.
@@ -35,6 +48,8 @@ Python 3.8+. No pip packages — standard library only.
 | `--http` | Use http instead of https |
 | `--insecure` | Accept self-signed certs (already the default for https) |
 | `--accept-timeout` | Seconds to wait for the receiver to accept (default 200) |
+| `--folder` | Destination folder path on receiver (MDRender extension), e.g. `Docs/Reports` |
+| `--conflict` | What to do on name conflict (MDRender extension): `replace`, `skip`, or `rename` (default) |
 
 TLS certificate verification is disabled by design: every LocalSend device
 uses a self-signed certificate, identified by fingerprint rather than a CA
@@ -49,7 +64,15 @@ chain.
 3. `POST /api/localsend/v2/upload?sessionId&fileId&token` streams each file.
 
 Files land in the app's auto-created **LocalSend** folder, encrypted, with
-`name (1).ext` auto-rename on conflicts.
+`name (1).ext` auto-rename on conflicts — unless the MDRender `--folder` and
+`--conflict` extensions are used, in which case:
+- `--folder "Docs/Reports"` creates or reuses the `Docs > Reports` subfolder tree.
+- `--conflict replace` overwrites existing files.
+- `--conflict skip` skips files that already exist (counted as received).
+
+These extensions are sent as an optional `"mds"` key in the
+`prepare-upload` JSON body. Vanilla LocalSend receivers ignore the unknown
+key and use their own defaults.
 
 ## Exit codes
 

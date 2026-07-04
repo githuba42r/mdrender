@@ -67,6 +67,10 @@ def main(argv=None):
                    help="(default for https) accept self-signed certs")
     p.add_argument("--accept-timeout", type=int, default=200,
                    help="seconds to wait for the receiver to accept (default 200)")
+    p.add_argument("--folder", default="",
+                   help="destination folder path on receiver, e.g. 'Docs/Reports' (MDRender extension)")
+    p.add_argument("--conflict", default="rename", choices=["replace", "skip", "rename"],
+                   help="what to do when a file name already exists (MDRender extension, default: rename)")
     args = p.parse_args(argv)
 
     paths = []
@@ -102,11 +106,23 @@ def main(argv=None):
     if args.pin:
         prepare_url += f"?pin={urllib.parse.quote(args.pin)}"
 
+    # MDRender protocol extension: destination folder and conflict strategy.
+    # Only sent when non-default so vanilla receivers are not bothered.
+    mds = {}
+    if args.folder:
+        mds["folder"] = args.folder
+    if args.conflict != "rename":
+        mds["conflict"] = args.conflict
+
+    body = {"info": _client_info(), "files": files_meta}
+    if mds:
+        body["mds"] = mds
+
     print(f"→ {args.host}:{args.port}  {len(paths)} file(s)  "
-          f"(waiting up to {args.accept_timeout}s for accept…)", flush=True)
+          f"(waiting up to {args.accept_timeout}s for accept…)"
+          + (f"  folder={args.folder!r}" if args.folder else ""), flush=True)
     try:
-        resp = _post(prepare_url, {"info": _client_info(), "files": files_meta},
-                     ctx, args.accept_timeout)
+        resp = _post(prepare_url, body, ctx, args.accept_timeout)
         grant = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         if e.code == 401:
