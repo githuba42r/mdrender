@@ -5,7 +5,6 @@ import android.app.Application
 import android.os.Bundle
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
-import com.a42r.mdrender.security.ScreenOffReceiver
 import com.a42r.mdrender.share.ShareOutManager
 import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
@@ -36,7 +35,6 @@ class MDRenderApplication : Application() {
     // Count of visible non-transient activities; 0 means the app is backgrounded.
     private var startedActivities = 0
     private var foregroundActivity: WeakReference<Activity>? = null
-    private lateinit var screenOffReceiver: ScreenOffReceiver
 
     override fun onCreate() {
         super.onCreate()
@@ -49,17 +47,6 @@ class MDRenderApplication : Application() {
         // NB: the LocalSend foreground service is started from MainActivity,
         // not here — startForegroundService() is illegal when the process is
         // created in the background (e.g. after a restart).
-
-        // On screen-off: lock and push the app behind the launcher, so
-        // unlocking the phone doesn't land on our lock gate. Re-opening the
-        // app then requests authentication.
-        screenOffReceiver = ScreenOffReceiver().also {
-            it.onScreenOff = {
-                appLock.onBackground()
-                foregroundActivity?.get()?.moveTaskToBack(true)
-            }
-        }
-        registerReceiver(screenOffReceiver, ScreenOffReceiver.FILTER)
 
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
@@ -78,11 +65,8 @@ class MDRenderApplication : Application() {
             override fun onActivityStopped(activity: Activity) {
                 if (!isTransient(activity)) {
                     startedActivities = (startedActivities - 1).coerceAtLeast(0)
-                    // Don't treat a configuration-change recreation (e.g. screen
-                    // rotation) as backgrounding — that would force a needless
-                    // re-authentication.
                     if (startedActivities == 0 && !activity.isChangingConfigurations) {
-                        // App fully backgrounded — re-lock so the next open re-auths.
+                        // App fully backgrounded — clear hidden-folder reveal.
                         appLock.onBackground()
                     }
                 }

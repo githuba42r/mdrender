@@ -54,8 +54,6 @@ fun ImportScreen(
     }
 
     val launchPicker: () -> Unit = {
-        // Opening the system picker backgrounds us; don't demand re-auth on return.
-        com.a42r.mdrender.MDRenderApplication.instance.appLock.suspendNextLock()
         filePickerLauncher.launch("*/*")
     }
 
