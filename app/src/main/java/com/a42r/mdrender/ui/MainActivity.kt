@@ -6,9 +6,16 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -16,12 +23,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.localsend.LocalSendSessionManager
 import com.a42r.mdrender.security.AppLock
+import com.a42r.mdrender.security.DeviceAuth
 import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import com.a42r.mdrender.ui.viewer.ViewerZoom
@@ -35,6 +45,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var localSendPrefs: LocalSendPrefs
     @Inject lateinit var appLock: AppLock
 
+    private var authInProgress = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -46,6 +58,8 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             MDRenderTheme {
+                val locked by appLock.isLocked.collectAsState()
+
                 // While a hidden folder/file is on screen, mark the window
                 // secure so the OS renders a blank app-switcher snapshot instead
                 // of the hidden content.
@@ -58,10 +72,60 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    MDRenderNavHost()
+                if (locked) {
+                    LockGate(onUnlockClick = { promptAuth(force = true) })
+                } else {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        MDRenderNavHost()
+                    }
+                    LocalSendOverlays()
                 }
-                LocalSendOverlays()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Request authentication whenever we come to the foreground locked.
+        if (appLock.isLocked.value) promptAuth()
+    }
+
+    /** Show the OS auth prompt. [force] restarts even if a prompt was thought
+     *  to be in progress — used by the manual Unlock button to recover from a
+     *  lost callback. */
+    private fun promptAuth(force: Boolean = false) {
+        if (authInProgress && !force) return
+        // No device lock at all → we can't gate; let the user in.
+        if (DeviceAuth.noCredentialConfigured(this)) {
+            appLock.unlock()
+            return
+        }
+        authInProgress = true
+        DeviceAuth.authenticate(
+            activity = this,
+            onSuccess = { authInProgress = false; appLock.unlock() },
+            onFailure = { authInProgress = false }
+        )
+    }
+
+    @Composable
+    private fun LockGate(onUnlockClick: () -> Unit) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text("MDRender is locked", style = MaterialTheme.typography.titleMedium)
+                Button(onClick = onUnlockClick, modifier = Modifier.padding(top = 24.dp)) {
+                    Text("Unlock")
+                }
             }
         }
     }
