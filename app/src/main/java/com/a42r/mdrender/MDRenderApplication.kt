@@ -3,6 +3,7 @@ package com.a42r.mdrender
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import android.view.WindowManager
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.ScreenOffReceiver
@@ -56,7 +57,10 @@ class MDRenderApplication : Application() {
         screenOffReceiver = ScreenOffReceiver().also {
             it.onScreenOff = {
                 appLock.onBackground()
-                foregroundActivity?.get()?.moveTaskToBack(true)
+                foregroundActivity?.get()?.apply {
+                    window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    moveTaskToBack(true)
+                }
             }
         }
         registerReceiver(screenOffReceiver, ScreenOffReceiver.FILTER)
@@ -73,18 +77,26 @@ class MDRenderApplication : Application() {
                 }
             }
             override fun onActivityPaused(activity: Activity) {
-                if (!isTransient(activity)) isForeground = false
+                if (!isTransient(activity)) {
+                    if (activity.isChangingConfigurations) {
+                        // Config change (rotation, etc.) — don't lock and
+                        // keep the app "foreground" for other consumers
+                        // (e.g. LocalSend dialog decision).
+                        return
+                    }
+                    // App going to background. Lock now so Compose has time
+                    // to recompose LockGate before the OS captures the
+                    // window surface buffer in onStop.
+                    if (isForeground && startedActivities <= 1) {
+                        appLock.onBackground()
+                        activity.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                    isForeground = false
+                }
             }
             override fun onActivityStopped(activity: Activity) {
                 if (!isTransient(activity)) {
                     startedActivities = (startedActivities - 1).coerceAtLeast(0)
-                    // Don't treat a configuration-change recreation (e.g. screen
-                    // rotation) as backgrounding — that would force a needless
-                    // re-authentication.
-                    if (startedActivities == 0 && !activity.isChangingConfigurations) {
-                        // App fully backgrounded — re-lock so the next open re-auths.
-                        appLock.onBackground()
-                    }
                 }
             }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}

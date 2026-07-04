@@ -1,21 +1,21 @@
 package com.a42r.mdrender.ui
 
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.Choreographer
 import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -23,9 +23,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.fragment.app.FragmentActivity
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
@@ -36,6 +35,8 @@ import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import com.a42r.mdrender.ui.viewer.ViewerZoom
 import dagger.hilt.android.AndroidEntryPoint
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -46,12 +47,13 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var appLock: AppLock
 
     private var authInProgress = false
+    private var authRetryCount = 0
+    private var shieldView: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Foreground-safe place to start the receiver (an activity is starting).
         if (localSendPrefs.enabled) {
             runCatching { LocalSendService.start(this) }
         }
@@ -60,20 +62,15 @@ class MainActivity : FragmentActivity() {
             MDRenderTheme {
                 val locked by appLock.isLocked.collectAsState()
 
-                // While a hidden folder/file is on screen, mark the window
-                // secure so the OS renders a blank app-switcher snapshot instead
-                // of the hidden content.
                 val displayingHidden by appLock.displayingHidden.collectAsState()
                 LaunchedEffect(displayingHidden) {
                     if (displayingHidden) {
                         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    } else {
-                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     }
                 }
 
                 if (locked) {
-                    LockGate(onUnlockClick = { promptAuth(force = true) })
+                    LockGate()
                 } else {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         MDRenderNavHost()
@@ -82,57 +79,95 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+
+        // Add a permanent black overlay on top of the ComposeView.
+        val content = window.findViewById<ViewGroup>(android.R.id.content)
+        if (content != null && shieldView == null) {
+            val shield = View(this).apply {
+                setBackgroundColor(AndroidColor.BLACK)
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                visibility = if (appLock.isLocked.value) View.VISIBLE else View.GONE
+            }
+            content.addView(shield)
+            shieldView = shield
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        // Request authentication whenever we come to the foreground locked.
-        if (appLock.isLocked.value) promptAuth()
+        authInProgress = false
+        if (appLock.isLocked.value) {
+            // Shield should be visible (set in onPause). Don't touch it
+            // until auth succeeds.
+            promptAuth()
+        } else {
+            shieldView?.visibility = View.GONE
+        }
     }
 
-    /** Show the OS auth prompt. [force] restarts even if a prompt was thought
-     *  to be in progress — used by the manual Unlock button to recover from a
-     *  lost callback. */
+    override fun onPause() {
+        if (appLock.isLocked.value) {
+            // 1. Show the shield synchronously
+            shieldView?.visibility = View.VISIBLE
+
+            // 2. Request invalidation so the shield gets drawn into the
+            //    window surface
+            shieldView?.invalidate()
+
+            // 3. Wait up to 50ms for the next Choreographer frame to fire.
+            //    This gives the RenderThread time to composite the shield
+            //    into the window buffer before the OS captures it.
+            val latch = CountDownLatch(1)
+            Choreographer.getInstance().postFrameCallback { latch.countDown() }
+            latch.await(50, TimeUnit.MILLISECONDS)
+        }
+        super.onPause()
+    }
+
+    private fun hideShieldAfterUnlock() {
+        shieldView?.post { shieldView?.visibility = View.GONE }
+    }
+
     private fun promptAuth(force: Boolean = false) {
         if (authInProgress && !force) return
-        // No device lock at all → we can't gate; let the user in.
         if (DeviceAuth.noCredentialConfigured(this)) {
+            hideShieldAfterUnlock()
             appLock.unlock()
             return
         }
+        if (!force) authRetryCount = 0
         authInProgress = true
         DeviceAuth.authenticate(
             activity = this,
-            onSuccess = { authInProgress = false; appLock.unlock() },
-            onFailure = { authInProgress = false }
+            onSuccess = {
+                hideShieldAfterUnlock()
+                authInProgress = false
+                authRetryCount = 0
+                appLock.unlock()
+            },
+            onFailure = {
+                authInProgress = false
+                if (authRetryCount < 2 && appLock.isLocked.value) {
+                    authRetryCount++
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (appLock.isLocked.value) promptAuth(force = true)
+                    }, 400)
+                }
+            }
         )
     }
 
     @Composable
-    private fun LockGate(onUnlockClick: () -> Unit) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = null,
-                    modifier = Modifier.padding(bottom = 16.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text("MDRender is locked", style = MaterialTheme.typography.titleMedium)
-                Button(onClick = onUnlockClick, modifier = Modifier.padding(top = 24.dp)) {
-                    Text("Unlock")
-                }
-            }
-        }
+    private fun LockGate() {
+        LaunchedEffect(Unit) { promptAuth(force = true) }
+        Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) { }
     }
 
     @Composable
     private fun LocalSendOverlays() {
-        // Incoming LocalSend transfer: in-app Accept/Reject dialog.
         val pending by localSendSessionManager.pendingTransfer.collectAsState()
         pending?.let { transfer ->
             AlertDialog(
@@ -159,7 +194,6 @@ class MainActivity : FragmentActivity() {
             )
         }
 
-        // Completion toast while the app is open.
         val completed by localSendSessionManager.lastCompleted.collectAsState()
         LaunchedEffect(completed) {
             completed?.let {
@@ -169,7 +203,6 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Volume keys adjust font size / zoom while a viewer screen is open. */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val delta = when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> 1
