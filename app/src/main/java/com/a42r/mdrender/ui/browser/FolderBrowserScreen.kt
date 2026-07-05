@@ -105,7 +105,20 @@ fun FolderBrowserScreen(
         selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
     }
 
-    // Back exits selection mode before leaving the screen.
+    // Back in a subfolder ascends to the parent folder instead of closing
+    // the app. When at Home (root) the system back exits normally.
+    // Only active when not in selection mode — selection mode takes priority
+    // (BackHandler dispatches LIFO, so this one is registered first).
+    val canAscend = uiState.currentFolderId != null && !selectionMode
+    BackHandler(enabled = canAscend) {
+        val parentId = uiState.breadcrumbPath
+            .dropLast(1)
+            .lastOrNull()
+            ?.id
+        viewModel.navigateToFolder(parentId)
+    }
+
+    // Back in selection mode clears the selection before navigating.
     BackHandler(enabled = selectionMode) { selectedIds = emptySet() }
 
     val openFile: (FileEntity) -> Unit = { file ->
