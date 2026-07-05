@@ -29,12 +29,12 @@ if (keystorePropertiesFile.exists()) keystorePropertiesFile.inputStream().use { 
 
 android {
     namespace = "com.a42r.mdrender"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.a42r.mdrender"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -100,6 +100,9 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.nanohttpd)
     implementation(libs.bouncycastle.bcpkix)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.common.ktx)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     testImplementation(libs.mockito.kotlin)

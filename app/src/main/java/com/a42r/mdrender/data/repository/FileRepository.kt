@@ -94,6 +94,8 @@ class FileRepository @Inject constructor(
 
     suspend fun saveScrollPosition(id: Long, pos: Int) = fileDao.updateScrollPosition(id, pos)
 
+    suspend fun savePlaybackPosition(id: Long, pos: Long) = fileDao.updatePlaybackPosition(id, pos)
+
     suspend fun getFileMetadata(id: Long): FileEntity? = fileDao.getById(id)
 
     /** The file named [name] in [folderId] (exact match), or null. */
@@ -109,6 +111,11 @@ class FileRepository @Inject constructor(
             filename.endsWith(".gif", ignoreCase = true) -> "image/gif"
             filename.endsWith(".webp", ignoreCase = true) -> "image/webp"
             filename.endsWith(".bmp", ignoreCase = true) -> "image/bmp"
+            filename.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
+            filename.endsWith(".aac", ignoreCase = true) -> "audio/aac"
+            filename.endsWith(".ogg", ignoreCase = true) -> "audio/ogg"
+            filename.endsWith(".wav", ignoreCase = true) -> "audio/wav"
+            filename.endsWith(".flac", ignoreCase = true) -> "audio/flac"
             else -> "application/octet-stream"
         }
     }

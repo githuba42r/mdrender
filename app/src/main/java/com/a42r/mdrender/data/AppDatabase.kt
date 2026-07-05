@@ -9,7 +9,7 @@ import com.a42r.mdrender.data.dao.FolderDao
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.entity.FolderEntity
 
-@Database(entities = [FolderEntity::class, FileEntity::class], version = 3, exportSchema = false)
+@Database(entities = [FolderEntity::class, FileEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun folderDao(): FolderDao
     abstract fun fileDao(): FileDao
@@ -26,6 +26,13 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE files ADD COLUMN scroll_position INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** v3 → v4: add files.playback_position for audio bookmarking. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE files ADD COLUMN playback_position INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

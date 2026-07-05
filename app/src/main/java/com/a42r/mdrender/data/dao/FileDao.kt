@@ -41,4 +41,7 @@ interface FileDao {
 
     @Query("UPDATE files SET scroll_position = :pos WHERE id = :id")
     suspend fun updateScrollPosition(id: Long, pos: Int)
+
+    @Query("UPDATE files SET playback_position = :pos WHERE id = :id")
+    suspend fun updatePlaybackPosition(id: Long, pos: Long)
 }
