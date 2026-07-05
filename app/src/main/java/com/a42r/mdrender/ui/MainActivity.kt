@@ -4,7 +4,6 @@ import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -35,8 +34,6 @@ import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import com.a42r.mdrender.ui.viewer.ViewerZoom
 import dagger.hilt.android.AndroidEntryPoint
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -113,19 +110,13 @@ class MainActivity : FragmentActivity() {
 
     override fun onPause() {
         if (appLock.isLocked.value) {
-            // 1. Show the shield synchronously
+            // Show the shield synchronously so the next layout pass draws it.
+            // We cannot synchronously wait for the GPU to render it (blocking
+            // the main thread prevents the draw from ever happening), but the
+            // visibility change + invalidate ensures the shield appears in the
+            // first frame after onPause returns.
             shieldView?.visibility = View.VISIBLE
-
-            // 2. Request invalidation so the shield gets drawn into the
-            //    window surface
             shieldView?.invalidate()
-
-            // 3. Wait up to 50ms for the next Choreographer frame to fire.
-            //    This gives the RenderThread time to composite the shield
-            //    into the window buffer before the OS captures it.
-            val latch = CountDownLatch(1)
-            Choreographer.getInstance().postFrameCallback { latch.countDown() }
-            latch.await(50, TimeUnit.MILLISECONDS)
         }
         super.onPause()
     }
