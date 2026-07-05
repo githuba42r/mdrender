@@ -1,6 +1,7 @@
 package com.a42r.mdrender.audio
 
 import android.content.Context
+import com.a42r.mdrender.MDRenderApplication
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,13 +12,11 @@ class AudioPlayerPrefs @Inject constructor() {
         private const val KEY_HEADPHONES_ONLY = "headphones_only"
     }
 
-    private var prefs: android.content.SharedPreferences? = null
-
-    fun init(context: Context) {
-        prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs by lazy {
+        MDRenderApplication.instance.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     var headphonesOnly: Boolean
-        get() = prefs?.getBoolean(KEY_HEADPHONES_ONLY, false) ?: false
-        set(value) { prefs?.edit()?.putBoolean(KEY_HEADPHONES_ONLY, value)?.apply() }
+        get() = prefs.getBoolean(KEY_HEADPHONES_ONLY, false)
+        set(value) { prefs.edit().putBoolean(KEY_HEADPHONES_ONLY, value).apply() }
 }

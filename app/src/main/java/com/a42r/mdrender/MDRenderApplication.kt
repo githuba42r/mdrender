@@ -7,7 +7,6 @@ import android.view.WindowManager
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.ScreenOffReceiver
-import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.share.ShareOutManager
 import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
@@ -21,8 +20,6 @@ class MDRenderApplication : Application() {
     @Inject lateinit var fileRepository: FileRepository
     @Inject lateinit var appLock: AppLock
     @Inject lateinit var shareOutManager: ShareOutManager
-    @Inject lateinit var audioPlayerPrefs: AudioPlayerPrefs
-
     /** True while a non-transient activity is resumed. Used by LocalSend to
      *  decide between an in-app dialog and a notification. */
     @Volatile
@@ -44,7 +41,6 @@ class MDRenderApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        audioPlayerPrefs.init(this)
 
         // Crash-safe plaintext cleanup: any decrypted share copies left by an
         // unexpected shutdown are removed before anything else runs.
