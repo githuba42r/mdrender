@@ -3,8 +3,11 @@ package com.a42r.mdrender.audio
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -104,8 +107,23 @@ class AudioPlayerService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: intent=$intent flags=$flags startId=$startId")
-        // Let Media3's MediaSessionService handle foreground notification.
+
+        // Must call startForeground immediately — Media3 only does this for
+        // its own media intents, not for our custom EXTRA_FILE_ID intent.
+        // Without it the system kills the service for the foreground timeout.
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("MDRender")
+            .setContentText("Audio")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
+
         val result = super.onStartCommand(intent, flags, startId)
+
         if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
             val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
             if (fileId != 0L) {
@@ -230,6 +248,7 @@ class AudioPlayerService : MediaSessionService() {
     companion object {
         private const val TAG = "AudioPlayerService"
         private const val CHANNEL_ID = "audio_playback"
+        private const val NOTIF_ID = 1001
         const val EXTRA_FILE_ID = "file_id"
     }
 }
