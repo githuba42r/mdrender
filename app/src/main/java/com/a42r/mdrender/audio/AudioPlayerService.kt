@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -102,17 +103,24 @@ class AudioPlayerService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand: intent=$intent flags=$flags startId=$startId")
+        // Let Media3's MediaSessionService handle foreground notification.
+        val result = super.onStartCommand(intent, flags, startId)
         if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
             val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
             if (fileId != 0L) {
                 serviceScope?.launch {
-                    val meta = fileRepository.getFileMetadata(fileId)
-                    val name = meta?.name ?: ""
-                    playFile(fileId, name)
+                    try {
+                        val meta = fileRepository.getFileMetadata(fileId)
+                        val name = meta?.name ?: "unknown"
+                        playFile(fileId, name)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "onStartCommand: failed", e)
+                    }
                 }
             }
         }
-        return START_NOT_STICKY
+        return result
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -189,6 +197,7 @@ class AudioPlayerService : MediaSessionService() {
                     }
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "playFile failed for fileId=$fileId", e)
                 withContext(Dispatchers.Main) {
                     playerState.setFileInfo(0, "")
                     playerState.setPlaying(false)
@@ -219,6 +228,7 @@ class AudioPlayerService : MediaSessionService() {
     }
 
     companion object {
+        private const val TAG = "AudioPlayerService"
         private const val CHANNEL_ID = "audio_playback"
         const val EXTRA_FILE_ID = "file_id"
     }
