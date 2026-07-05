@@ -26,7 +26,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.runtime.snapshotFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,9 +73,16 @@ fun MarkdownViewerScreen(
                     derivedStateOf { scrollState.value > 200 }
                 }
 
-                // Restore saved scroll position once content is loaded
+                // Restore saved scroll position once content is loaded and
+                // layout has completed (maxValue > 0 reflects real content height).
                 LaunchedEffect(uiState.isLoading) {
                     if (!uiState.isLoading && uiState.initialScrollPosition > 0) {
+                        if (scrollState.maxValue <= 0) {
+                            withTimeoutOrNull(500) {
+                                snapshotFlow { scrollState.maxValue }
+                                    .first { it > 0 }
+                            }
+                        }
                         scrollState.scrollTo(
                             uiState.initialScrollPosition.coerceAtMost(scrollState.maxValue)
                         )
