@@ -2,6 +2,8 @@ package com.a42r.mdrender.data.repository
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
+import com.a42r.mdrender.MDRenderApplication
 import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FileListItem
 import com.a42r.mdrender.data.dao.FileMetadata
@@ -56,13 +58,47 @@ class FileRepository @Inject constructor(
     suspend fun moveFile(id: Long, folderId: Long?) =
         fileDao.move(id, folderId, System.currentTimeMillis())
 
+    companion object {
+        private const val TAG = "FileRepository"
+    }
+
+    /** Read encrypted blob by chunking via SQL [substr], avoiding the ~2MB
+     *  CursorWindow per-row limit. Each chunk is 1MB. */
+    private fun readLargeBlob(id: Long): ByteArray? {
+        try {
+            val dbPath = MDRenderApplication.instance.getDatabasePath("mdrender.db").absolutePath
+            val rawDb = android.database.sqlite.SQLiteDatabase.openDatabase(
+                dbPath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            rawDb.use { db ->
+                val sizeStmt = db.compileStatement("SELECT length(encrypted_blob) FROM files WHERE id = ?")
+                sizeStmt.bindLong(1, id)
+                val totalSize = sizeStmt.simpleQueryForLong()
+                if (totalSize <= 0L) return null
+
+                val out = ByteArrayOutputStream(totalSize.toInt().coerceAtMost(256 * 1024 * 1024))
+                val chunk = 1_048_576 // 1MB
+                var offset = 1
+                while (offset <= totalSize) {
+                    val cursor = db.rawQuery(
+                        "SELECT substr(encrypted_blob, ?, ?) FROM files WHERE id = ?",
+                        arrayOf(offset.toString(), chunk.toString(), id.toString())
+                    )
+                    cursor.use { if (it.moveToFirst()) out.write(it.getBlob(0)) }
+                    offset += chunk
+                }
+                return out.toByteArray()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "readLargeBlob id=$id", e)
+            return null
+        }
+    }
+
     suspend fun getDecryptedContent(id: Long): Pair<ByteArray, String>? {
-        // Fetch blob and metadata separately so large blobs don't overflow
-        // the SQLite CursorWindow.
-        val bytes = fileDao.getEncryptedBlob(id) ?: return null
         val meta = fileDao.getFileMetadata(id) ?: return null
-        val decrypted = cryptoEngine.decrypt(bytes)
-        return Pair(decrypted, meta.mimeType)
+        val bytes = readLargeBlob(id) ?: return null
+        return Pair(cryptoEngine.decrypt(bytes), meta.mimeType)
     }
 
     suspend fun getDecryptedThumbnail(id: Long): ByteArray? {
