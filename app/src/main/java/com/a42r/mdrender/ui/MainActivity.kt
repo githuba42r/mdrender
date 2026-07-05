@@ -8,6 +8,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -21,6 +22,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.fragment.app.FragmentActivity
+import androidx.navigation.compose.rememberNavController
+import com.a42r.mdrender.audio.AudioMiniPlayerBar
+import com.a42r.mdrender.audio.AudioPlayerPrefs
+import com.a42r.mdrender.audio.AudioPlayerState
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.localsend.LocalSendSessionManager
@@ -38,6 +43,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var localSendSessionManager: LocalSendSessionManager
     @Inject lateinit var localSendPrefs: LocalSendPrefs
     @Inject lateinit var appLock: AppLock
+    @Inject lateinit var playerState: AudioPlayerState
+    @Inject lateinit var audioPlayerPrefs: AudioPlayerPrefs
 
     private var authInProgress = false
     private var authRetryCount = 0
@@ -63,13 +70,24 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                if (locked) {
-                    LockGate()
-                } else {
-                    Surface(modifier = Modifier.fillMaxSize()) {
-                        MDRenderNavHost()
+                val navController = rememberNavController()
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (locked) {
+                        LockGate()
+                    } else {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                MDRenderNavHost(navController = navController)
+                                AudioMiniPlayerBar(
+                                    navController = navController,
+                                    playerState = playerState,
+                                    prefs = audioPlayerPrefs
+                                )
+                            }
+                        }
+                        LocalSendOverlays()
                     }
-                    LocalSendOverlays()
                 }
             }
         }

@@ -17,4 +17,7 @@ sealed class Routes(val route: String) {
     data object Import : Routes("import/{folderId}") {
         fun createRoute(folderId: Long?): String = "import/${folderId ?: "root"}"
     }
+    data object AudioPlayer : Routes("audio_player/{fileId}") {
+        fun createRoute(fileId: Long): String = "audio_player/$fileId"
+    }
 }

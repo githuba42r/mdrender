@@ -4,10 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.a42r.mdrender.ui.browser.BrowserViewModel
 import com.a42r.mdrender.ui.browser.FolderBrowserScreen
@@ -18,9 +18,7 @@ import com.a42r.mdrender.ui.import.ImportScreen
 import com.a42r.mdrender.ui.settings.SettingsScreen
 
 @Composable
-fun MDRenderNavHost() {
-    val navController = rememberNavController()
-
+fun MDRenderNavHost(navController: NavHostController) {
     NavHost(
         navController = navController,
         startDestination = Routes.FolderBrowser.createRoute(null)
