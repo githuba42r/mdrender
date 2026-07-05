@@ -16,6 +16,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession
 import com.a42r.mdrender.data.repository.FileRepository
+import com.a42r.mdrender.data.repository.FolderRepository
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import javax.inject.Inject
@@ -25,6 +26,7 @@ import kotlinx.coroutines.*
 class AudioPlayerService : MediaSessionService() {
 
     @Inject lateinit var fileRepository: FileRepository
+    @Inject lateinit var folderRepository: FolderRepository
     @Inject lateinit var playerState: AudioPlayerState
     @Inject lateinit var prefs: AudioPlayerPrefs
 
@@ -36,6 +38,8 @@ class AudioPlayerService : MediaSessionService() {
     private var headphoneMonitor: HeadphoneMonitor? = null
     private var currentFileId: Long = 0L
     private var playJob: Job? = null
+    private var hiddenPauseJob: Job? = null
+    private var isHiddenFile: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -64,12 +68,24 @@ class AudioPlayerService : MediaSessionService() {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playerState.setPlaying(isPlaying)
                 updateNotification(isPlaying)
-                if (!isPlaying && exoPlayer.playbackState == Player.STATE_ENDED) {
+                if (isPlaying) {
+                    hiddenPauseJob?.cancel()
+                    hiddenPauseJob = null
+                } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
                     val id = currentFileId
                     if (id != 0L) {
                         serviceScope?.launch(Dispatchers.IO) { fileRepository.savePlaybackPosition(id, 0L) }
                     }
                     playerState.updatePosition(0L)
+                } else if (!isPlaying && isHiddenFile) {
+                    hiddenPauseJob?.cancel()
+                    hiddenPauseJob = serviceScope?.launch {
+                        delay(HIDDEN_PAUSE_TIMEOUT_MS)
+                        Log.d(TAG, "Hidden file pause timeout — stopping")
+                        savePosition()
+                        stopNow()
+                        stopSelf()
+                    }
                 }
             }
             override fun onPlaybackStateChanged(state: Int) {
@@ -95,7 +111,7 @@ class AudioPlayerService : MediaSessionService() {
                     is PlayerCommand.Pause -> exoPlayer.pause()
                     is PlayerCommand.Resume -> exoPlayer.play()
                     is PlayerCommand.SeekTo -> exoPlayer.seekTo(command.positionMs)
-                    is PlayerCommand.Stop -> stopPlayback()
+                    is PlayerCommand.Stop -> savePosition().also { stopNow() }
                 }
             }
         }
@@ -108,9 +124,15 @@ class AudioPlayerService : MediaSessionService() {
             Intent(this, AudioPlayerService::class.java).apply { action = ACTION_PLAY_PAUSE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val stopIntent = PendingIntent.getService(this, 1,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(playerState.info.value.fileName.ifEmpty { "MDRender" })
-            .setContentText(if (isPlaying) "Playing" else "Paused")
+            .setContentText(
+                if (isHiddenFile) "Hidden file" else if (isPlaying) "Playing" else "Paused"
+            )
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
@@ -119,7 +141,7 @@ class AudioPlayerService : MediaSessionService() {
                 if (isPlaying) "Pause" else "Play",
                 playPauseIntent
             )
-            /* stop action omitted — play/pause is sufficient */
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent)
     }
 
     private fun updateNotification(isPlaying: Boolean) {
@@ -128,19 +150,27 @@ class AudioPlayerService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_PLAY_PAUSE) {
-            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-            updateNotification(exoPlayer.isPlaying)
-        } else {
-            startForeground(NOTIF_ID, buildNotification(false).build())
-            super.onStartCommand(intent, flags, startId)
-            if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
-                val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
-                if (fileId != 0L) {
-                    serviceScope?.launch {
-                        try {
-                            playFile(fileId, fileRepository.getFileMetadata(fileId)?.name ?: "unknown")
-                        } catch (e: Exception) { Log.e(TAG, "onStartCommand failed", e) }
+        when (intent?.action) {
+            ACTION_PLAY_PAUSE -> {
+                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                updateNotification(exoPlayer.isPlaying)
+            }
+            ACTION_STOP -> {
+                savePosition()
+                stopNow()
+                stopSelf()
+            }
+            else -> {
+                startForeground(NOTIF_ID, buildNotification(false).build())
+                super.onStartCommand(intent, flags, startId)
+                if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
+                    val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
+                    if (fileId != 0L) {
+                        serviceScope?.launch {
+                            try {
+                                playFile(fileId, fileRepository.getFileMetadata(fileId)?.name ?: "unknown")
+                            } catch (e: Exception) { Log.e(TAG, "onStartCommand failed", e) }
+                        }
                     }
                 }
             }
@@ -150,18 +180,19 @@ class AudioPlayerService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         savePosition()
-        stopPlayback()
+        stopNow()
         stopSelf()
     }
 
     override fun onDestroy() {
         savePosition()
-        stopPlayback()
+        stopNow()
         headphoneMonitor?.unregister(this)
+        hiddenPauseJob?.cancel()
         playJob?.cancel()
         serviceScope?.cancel()
-        mediaSession.release()
-        exoPlayer.release()
+        if (::mediaSession.isInitialized) mediaSession.release()
+        if (::exoPlayer.isInitialized) exoPlayer.release()
         cleanCache()
         super.onDestroy()
     }
@@ -172,7 +203,8 @@ class AudioPlayerService : MediaSessionService() {
             return
         }
 
-        // Cancel any in-flight play request
+        hiddenPauseJob?.cancel()
+        hiddenPauseJob = null
         playJob?.cancel()
         savePosition()
 
@@ -196,6 +228,7 @@ class AudioPlayerService : MediaSessionService() {
                     currentTempFile = tempFile
                     val metadata = fileRepository.getFileMetadata(fileId)
                     val savedPos = metadata?.playbackPosition ?: 0L
+                    isHiddenFile = metadata?.folderId?.let { folderRepository.isInHiddenTree(it) } ?: false
 
                     val mediaItem = MediaItem.fromUri(Uri.fromFile(tempFile))
                     exoPlayer.setMediaItem(mediaItem)
@@ -242,10 +275,15 @@ class AudioPlayerService : MediaSessionService() {
         }
     }
 
-    private fun stopPlayback() {
+    private fun stopNow() {
         exoPlayer.stop()
         playerState.setPlaying(false)
+        playerState.stop()
         positionJob?.cancel()
+        hiddenPauseJob?.cancel()
+        hiddenPauseJob = null
+        isHiddenFile = false
+        NotificationManagerCompat.from(this).cancel(NOTIF_ID)
     }
 
     private fun cleanCache() {
@@ -257,7 +295,9 @@ class AudioPlayerService : MediaSessionService() {
         private const val TAG = "AudioPlayerService"
         private const val CHANNEL_ID = "audio_playback"
         private const val NOTIF_ID = 1001
+        private const val HIDDEN_PAUSE_TIMEOUT_MS = 120_000L
         const val EXTRA_FILE_ID = "file_id"
         private const val ACTION_PLAY_PAUSE = "com.a42r.mdrender.PLAY_PAUSE"
+        private const val ACTION_STOP = "com.a42r.mdrender.STOP"
     }
 }
