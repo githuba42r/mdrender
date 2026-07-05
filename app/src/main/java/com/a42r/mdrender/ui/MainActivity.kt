@@ -1,14 +1,10 @@
 package com.a42r.mdrender.ui
 
-import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
-import android.view.View
-import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -45,7 +41,6 @@ class MainActivity : FragmentActivity() {
 
     private var authInProgress = false
     private var authRetryCount = 0
-    private var shieldView: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,58 +73,22 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
-
-        // Add a permanent black overlay on top of the ComposeView.
-        val content = window.findViewById<ViewGroup>(android.R.id.content)
-        if (content != null && shieldView == null) {
-            val shield = View(this).apply {
-                setBackgroundColor(AndroidColor.BLACK)
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                visibility = if (appLock.isLocked.value) View.VISIBLE else View.GONE
-            }
-            content.addView(shield)
-            shieldView = shield
-        }
     }
 
     override fun onResume() {
         super.onResume()
         authInProgress = false
         if (appLock.isLocked.value) {
-            // Shield should be visible (set in onPause). Don't touch it
-            // until auth succeeds.
             promptAuth()
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            shieldView?.visibility = View.GONE
         }
-    }
-
-    override fun onPause() {
-        if (appLock.isLocked.value) {
-            // Show the shield synchronously so the next layout pass draws it.
-            // We cannot synchronously wait for the GPU to render it (blocking
-            // the main thread prevents the draw from ever happening), but the
-            // visibility change + invalidate ensures the shield appears in the
-            // first frame after onPause returns.
-            shieldView?.visibility = View.VISIBLE
-            shieldView?.invalidate()
-        }
-        super.onPause()
-    }
-
-    private fun hideShieldAfterUnlock() {
-        shieldView?.post { shieldView?.visibility = View.GONE }
     }
 
     private fun promptAuth(force: Boolean = false) {
         if (authInProgress && !force) return
         if (DeviceAuth.noCredentialConfigured(this)) {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            hideShieldAfterUnlock()
             appLock.unlock()
             return
         }
@@ -139,7 +98,6 @@ class MainActivity : FragmentActivity() {
             activity = this,
             onSuccess = {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                hideShieldAfterUnlock()
                 authInProgress = false
                 authRetryCount = 0
                 appLock.unlock()

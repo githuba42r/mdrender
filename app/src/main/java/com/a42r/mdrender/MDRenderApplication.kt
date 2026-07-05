@@ -57,9 +57,9 @@ class MDRenderApplication : Application() {
         screenOffReceiver = ScreenOffReceiver().also {
             it.onScreenOff = {
                 appLock.onBackground()
-                foregroundActivity?.get()?.apply {
-                    window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    moveTaskToBack(true)
+                foregroundActivity?.get()?.let { activity ->
+                    activity.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    activity.finishAndRemoveTask()
                 }
             }
         }
@@ -90,6 +90,11 @@ class MDRenderApplication : Application() {
                     if (isForeground && startedActivities <= 1) {
                         appLock.onBackground()
                         activity.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        // Destroy the activity + task to prevent the OS from
+                        // showing a stale window surface buffer during the
+                        // reopen animation. A fresh launch begins with a new
+                        // window surface that renders LockGate immediately.
+                        activity.finishAndRemoveTask()
                     }
                     isForeground = false
                 }
