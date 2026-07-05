@@ -20,7 +20,8 @@ import com.a42r.mdrender.ui.navigation.Routes
 fun AudioMiniPlayerBar(
     navController: NavController,
     playerState: AudioPlayerState,
-    prefs: AudioPlayerPrefs
+    prefs: AudioPlayerPrefs,
+    modifier: Modifier = Modifier
 ) {
     val info by playerState.info.collectAsState()
     val isPlaying by playerState.isPlaying.collectAsState()
@@ -32,7 +33,7 @@ fun AudioMiniPlayerBar(
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
     ) {
         Surface(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .clickable { navController.navigate(Routes.AudioPlayer.createRoute(info.fileId)) },
             tonalElevation = 3.dp,
