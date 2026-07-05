@@ -2,12 +2,12 @@ package com.a42r.mdrender.audio
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -17,9 +17,9 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession
 import com.a42r.mdrender.data.repository.FileRepository
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.*
 import java.io.File
 import javax.inject.Inject
+import kotlinx.coroutines.*
 
 @AndroidEntryPoint
 class AudioPlayerService : MediaSessionService() {
@@ -63,13 +63,11 @@ class AudioPlayerService : MediaSessionService() {
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playerState.setPlaying(isPlaying)
+                updateNotification(isPlaying)
                 if (!isPlaying && exoPlayer.playbackState == Player.STATE_ENDED) {
-                    // Save position and reset for the file that just ended.
                     val id = currentFileId
                     if (id != 0L) {
-                        serviceScope?.launch(Dispatchers.IO) {
-                            fileRepository.savePlaybackPosition(id, 0L)
-                        }
+                        serviceScope?.launch(Dispatchers.IO) { fileRepository.savePlaybackPosition(id, 0L) }
                     }
                     playerState.updatePosition(0L)
                 }
@@ -105,40 +103,49 @@ class AudioPlayerService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand: intent=$intent flags=$flags startId=$startId")
-
-        // Must call startForeground immediately — Media3 only does this for
-        // its own media intents, not for our custom EXTRA_FILE_ID intent.
-        // Without it the system kills the service for the foreground timeout.
-        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MDRender")
-            .setContentText("Audio")
+    private fun buildNotification(isPlaying: Boolean): NotificationCompat.Builder {
+        val playPauseIntent = PendingIntent.getService(this, 0,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_PLAY_PAUSE },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(playerState.info.value.fileName.ifEmpty { "MDRender" })
+            .setContentText(if (isPlaying) "Playing" else "Paused")
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .addAction(
+                if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (isPlaying) "Pause" else "Play",
+                playPauseIntent
+            )
+            /* stop action omitted — play/pause is sufficient */
+    }
+
+    private fun updateNotification(isPlaying: Boolean) {
+        val notif = buildNotification(isPlaying).build()
+        NotificationManagerCompat.from(this).notify(NOTIF_ID, notif)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_PLAY_PAUSE) {
+            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+            updateNotification(exoPlayer.isPlaying)
         } else {
-            startForeground(NOTIF_ID, notif)
-        }
-
-        val result = super.onStartCommand(intent, flags, startId)
-
-        if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
-            val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
-            if (fileId != 0L) {
-                serviceScope?.launch {
-                    try {
-                        val meta = fileRepository.getFileMetadata(fileId)
-                        val name = meta?.name ?: "unknown"
-                        playFile(fileId, name)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "onStartCommand: failed", e)
+            startForeground(NOTIF_ID, buildNotification(false).build())
+            super.onStartCommand(intent, flags, startId)
+            if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
+                val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
+                if (fileId != 0L) {
+                    serviceScope?.launch {
+                        try {
+                            playFile(fileId, fileRepository.getFileMetadata(fileId)?.name ?: "unknown")
+                        } catch (e: Exception) { Log.e(TAG, "onStartCommand failed", e) }
                     }
                 }
             }
         }
-        return result
+        return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -198,6 +205,7 @@ class AudioPlayerService : MediaSessionService() {
                     playerState.setFileInfo(fileId, fileName)
                     playerState.setDuration(if (exoPlayer.duration > 0) exoPlayer.duration else 0L)
                     playerState.updatePosition(savedPos)
+                    updateNotification(true)
 
                     exoPlayer.play()
                 }
@@ -250,5 +258,6 @@ class AudioPlayerService : MediaSessionService() {
         private const val CHANNEL_ID = "audio_playback"
         private const val NOTIF_ID = 1001
         const val EXTRA_FILE_ID = "file_id"
+        private const val ACTION_PLAY_PAUSE = "com.a42r.mdrender.PLAY_PAUSE"
     }
 }
