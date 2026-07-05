@@ -29,11 +29,12 @@ fun AudioMiniPlayerBar(
 
     AnimatedVisibility(
         visible = info.fileId != 0L,
+        modifier = modifier,
         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
     ) {
         Surface(
-            modifier = modifier
+            modifier = Modifier
                 .fillMaxWidth()
                 .clickable { navController.navigate(Routes.AudioPlayer.createRoute(info.fileId)) },
             tonalElevation = 3.dp,

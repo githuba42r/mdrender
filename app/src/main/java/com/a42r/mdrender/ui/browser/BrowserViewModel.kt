@@ -210,6 +210,19 @@ class BrowserViewModel @Inject constructor(
             }
             navigateToFolder(target)
         }
+        // Watch for revealHidden being revoked while in a hidden folder.
+        // This handles the case where the app re-locks while audio is playing
+        // (finishAndRemoveTask is skipped), then unlocks without reveal.
+        viewModelScope.launch {
+            appLock.revealHidden.collect { reveal ->
+                if (!reveal) {
+                    val currentFolderId = _uiState.value.currentFolderId
+                    if (currentFolderId != null && folderRepository.isInHiddenTree(currentFolderId)) {
+                        navigateToFolder(null)
+                    }
+                }
+            }
+        }
     }
 
     fun navigateToFolder(folderId: Long?) {
