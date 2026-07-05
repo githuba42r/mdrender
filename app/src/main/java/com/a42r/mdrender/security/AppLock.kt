@@ -48,13 +48,15 @@ class AppLock @Inject constructor() {
      *  the app doesn't demand re-authentication. */
     fun suspendNextLock() { suspendNextLock = true }
 
-    /** The app has gone to the background — re-lock unless suspended. */
-    fun onBackground() {
+    /** The app has gone to the background — re-lock unless suspended.
+     *  @return true if the app was actually locked, false when suspended. */
+    fun onBackground(): Boolean {
         if (suspendNextLock) {
             suspendNextLock = false
-            return
+            return false
         }
         _isLocked.value = true
         _revealHidden.value = false
+        return true
     }
 }

@@ -44,6 +44,7 @@ fun SettingsScreen(
                 ActivityResultContracts.RequestPermission()
             ) { /* transfer dialog still works in-app without it */ }
 
+            val appLock = com.a42r.mdrender.MDRenderApplication.instance.appLock
             ListItem(
                 headlineContent = { Text("LocalSend receiver") },
                 supportingContent = {
@@ -58,6 +59,9 @@ fun SettingsScreen(
                         checked = uiState.localSendEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                // Suspend next lock so the permission dialog
+                                // doesn't trigger finishAndRemoveTask().
+                                appLock.suspendNextLock()
                                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                             }
                             viewModel.setLocalSendEnabled(enabled)

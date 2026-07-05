@@ -91,13 +91,16 @@ class MDRenderApplication : Application() {
                     // to recompose LockGate before the OS captures the
                     // window surface buffer in onStop.
                     if (isForeground && startedActivities <= 1) {
-                        appLock.onBackground()
+                        // onBackground returns true when it actually locked
+                        // (false when suspendNextLock was set, e.g. system
+                        // permission dialog is showing).
+                        val didLock = appLock.onBackground()
                         activity.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                        // Destroy the activity + task to prevent the OS from
-                        // showing a stale window surface buffer during the
-                        // reopen animation. A fresh launch begins with a new
-                        // window surface that renders LockGate immediately.
-                        activity.finishAndRemoveTask()
+                        if (didLock) {
+                            // Destroy the task to prevent stale surface buffer
+                            // from being shown during the reopen animation.
+                            activity.finishAndRemoveTask()
+                        }
                     }
                     isForeground = false
                 }
