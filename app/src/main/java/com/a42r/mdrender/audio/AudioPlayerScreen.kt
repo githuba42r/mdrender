@@ -1,5 +1,6 @@
 package com.a42r.mdrender.audio
 
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
@@ -9,14 +10,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioPlayerScreen(
+    fileId: Long = 0,
     onBack: () -> Unit,
     viewModel: AudioPlayerViewModel = hiltViewModel()
 ) {
@@ -25,6 +29,17 @@ fun AudioPlayerScreen(
     val isPlaying by state.isPlaying.collectAsState()
     val position by state.currentPosition.collectAsState()
     val duration by state.duration.collectAsState()
+
+    val context = LocalContext.current
+    // Start the foreground service and begin playback when entering this screen.
+    LaunchedEffect(fileId) {
+        if (fileId != 0L) {
+            context.startForegroundService(Intent(context, AudioPlayerService::class.java))
+            // Give the service a moment to initialize its SharedFlow collector
+            delay(300)
+            state.play(fileId, "")
+        }
+    }
 
     Scaffold(
         topBar = {

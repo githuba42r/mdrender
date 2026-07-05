@@ -3,6 +3,8 @@ package com.a42r.mdrender.data.repository
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.a42r.mdrender.data.dao.FileDao
+import com.a42r.mdrender.data.dao.FileListItem
+import com.a42r.mdrender.data.dao.FileMetadata
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.security.CryptoEngine
 import kotlinx.coroutines.flow.Flow
@@ -15,7 +17,7 @@ class FileRepository @Inject constructor(
     private val fileDao: FileDao,
     private val cryptoEngine: CryptoEngine
 ) {
-    fun getFilesInFolder(folderId: Long?): Flow<List<FileEntity>> = fileDao.getFilesInFolder(folderId)
+    fun getFilesInFolder(folderId: Long?): Flow<List<FileListItem>> = fileDao.getFilesInFolder(folderId)
 
     suspend fun importFile(name: String, mimeType: String, rawBytes: ByteArray, folderId: Long? = null): Long {
         val encryptedBlob = cryptoEngine.encrypt(rawBytes)
@@ -55,21 +57,24 @@ class FileRepository @Inject constructor(
         fileDao.move(id, folderId, System.currentTimeMillis())
 
     suspend fun getDecryptedContent(id: Long): Pair<ByteArray, String>? {
-        val entity = fileDao.getById(id) ?: return null
-        val decrypted = cryptoEngine.decrypt(entity.encryptedBlob)
-        return Pair(decrypted, entity.mimeType)
+        // Fetch blob and metadata separately so large blobs don't overflow
+        // the SQLite CursorWindow.
+        val bytes = fileDao.getEncryptedBlob(id) ?: return null
+        val meta = fileDao.getFileMetadata(id) ?: return null
+        val decrypted = cryptoEngine.decrypt(bytes)
+        return Pair(decrypted, meta.mimeType)
     }
 
     suspend fun getDecryptedThumbnail(id: Long): ByteArray? {
-        val entity = fileDao.getById(id) ?: return null
-        return entity.encryptedThumbnail?.let { cryptoEngine.decrypt(it) }
+        val meta = fileDao.getFileMetadata(id) ?: return null
+        return meta.encryptedThumbnail?.let { if (it.isNotEmpty()) cryptoEngine.decrypt(it) else null }
     }
 
     /** Ordered image files in the same folder as [fileId], with the index of
      *  [fileId] itself. Used to page between sibling images in the viewer. */
     suspend fun getImageSiblings(fileId: Long): Pair<List<Long>, Int> {
-        val file = fileDao.getById(fileId) ?: return emptyList<Long>() to 0
-        val images = fileDao.getFilesInFolderList(file.folderId)
+        val meta = fileDao.getFileMetadata(fileId) ?: return emptyList<Long>() to 0
+        val images = fileDao.getFilesInFolderList(meta.folderId)
             .filter { it.mimeType.startsWith("image/") }
             .map { it.id }
         val index = images.indexOf(fileId).coerceAtLeast(0)
@@ -96,10 +101,10 @@ class FileRepository @Inject constructor(
 
     suspend fun savePlaybackPosition(id: Long, pos: Long) = fileDao.updatePlaybackPosition(id, pos)
 
-    suspend fun getFileMetadata(id: Long): FileEntity? = fileDao.getById(id)
+    suspend fun getFileMetadata(id: Long): FileMetadata? = fileDao.getFileMetadata(id)
 
     /** The file named [name] in [folderId] (exact match), or null. */
-    suspend fun findByName(folderId: Long?, name: String): FileEntity? =
+    suspend fun findByName(folderId: Long?, name: String): FileMetadata? =
         fileDao.findByName(folderId, name)
 
     fun mimeTypeFromExtension(filename: String): String {

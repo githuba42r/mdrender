@@ -1,6 +1,6 @@
 package com.a42r.mdrender.ui.browser
 
-import com.a42r.mdrender.data.entity.FileEntity
+import com.a42r.mdrender.data.dao.FileMetadata
 
 /** User's answer to a move name-conflict prompt. */
 sealed interface ConflictDecision {
@@ -14,16 +14,16 @@ sealed interface ConflictDecision {
  *  apply-to-all decision is active. Checking live state means two same-named
  *  files in one batch conflict with each other — intended. */
 class MoveConflictWalker(
-    private val findByName: suspend (folderId: Long?, name: String) -> FileEntity?,
+    private val findByName: suspend (folderId: Long?, name: String) -> FileMetadata?,
     private val moveFile: suspend (id: Long, folderId: Long?) -> Unit,
     private val deleteFile: suspend (id: Long) -> Unit,
 ) {
     data class Result(val moved: Int, val replaced: Int, val skipped: Int, val cancelled: Boolean)
 
     suspend fun run(
-        files: List<FileEntity>,
+        files: List<FileMetadata>,
         targetFolderId: Long?,
-        askUser: suspend (file: FileEntity, remaining: Int) -> ConflictDecision
+        askUser: suspend (file: FileMetadata, remaining: Int) -> ConflictDecision
     ): Result {
         var moved = 0
         var replaced = 0

@@ -52,11 +52,10 @@ fun MDRenderNavHost(navController: NavHostController) {
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
         ) { backStackEntry ->
             val fileId = backStackEntry.arguments?.getLong("fileId") ?: 0L
-            val viewModel: AudioPlayerViewModel = hiltViewModel()
-            LaunchedEffect(fileId) {
-                viewModel.playerState.play(fileId, "")
-            }
-            AudioPlayerScreen(onBack = { navController.popBackStack() })
+            AudioPlayerScreen(
+                fileId = fileId,
+                onBack = { navController.popBackStack() }
+            )
         }
         composable(Routes.Settings.route) {
             SettingsScreen(onBack = { navController.popBackStack() })

@@ -2,6 +2,8 @@ package com.a42r.mdrender.ui.browser
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.a42r.mdrender.data.dao.FileListItem
+import com.a42r.mdrender.data.dao.FileMetadata
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.entity.FolderEntity
 import android.content.Context
@@ -28,7 +30,7 @@ data class BrowserUiState(
     val currentFolderId: Long? = null,
     val breadcrumbPath: List<FolderEntity> = emptyList(),
     val folders: List<FolderEntity> = emptyList(),
-    val files: List<FileEntity> = emptyList(),
+    val files: List<FileListItem> = emptyList(),
     val isGridView: Boolean = true,
     val isLoading: Boolean = false
 )
@@ -46,7 +48,7 @@ data class MoveTarget(
 
 /** A move name-conflict currently awaiting the user's decision. */
 data class MoveConflict(
-    val file: FileEntity,
+    val file: FileMetadata,
     val targetFolderName: String,
     val remaining: Int
 )
@@ -110,9 +112,10 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             var handedOffToStaging = false
             try {
-                val files = ids.mapNotNull { fileRepository.getFileMetadata(it) }
-                val hiddenByFolder = files.map { it.folderId }.distinct()
+                val metas = ids.mapNotNull { fileRepository.getFileMetadata(it) }
+                val hiddenByFolder = metas.map { it.folderId }.distinct()
                     .associateWith { folderRepository.isInHiddenTree(it) }
+                val files = toEntities(metas)
                 when (val plan = SharePlan.of(files) { hiddenByFolder[it.folderId] == true }) {
                     is SharePlan.ShareNow -> {
                         handedOffToStaging = true
@@ -150,6 +153,16 @@ class BrowserViewModel @Inject constructor(
     fun cancelShare() {
         _pendingShare.value = null
     }
+
+    private fun toEntities(metas: List<FileMetadata>): List<FileEntity> =
+        metas.map { m ->
+            FileEntity(
+                id = m.id, folderId = m.folderId, name = m.name,
+                mimeType = m.mimeType, encryptedBlob = ByteArray(0), fileSize = m.fileSize,
+                createdAt = m.createdAt, updatedAt = m.updatedAt,
+                scrollPosition = m.scrollPosition, playbackPosition = m.playbackPosition
+            )
+        }
 
     private fun stageAndShare(files: List<FileEntity>) {
         if (files.isEmpty()) return

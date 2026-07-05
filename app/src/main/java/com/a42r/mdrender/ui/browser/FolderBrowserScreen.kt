@@ -23,7 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.a42r.mdrender.data.entity.FileEntity
+import com.a42r.mdrender.data.dao.FileListItem
 import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
@@ -42,12 +42,12 @@ fun FolderBrowserScreen(
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
     var showImportSheet by remember { mutableStateOf(false) }
-    var menuFile by remember { mutableStateOf<FileEntity?>(null) }
-    var renameFile by remember { mutableStateOf<FileEntity?>(null) }
+    var menuFile by remember { mutableStateOf<FileListItem?>(null) }
+    var renameFile by remember { mutableStateOf<FileListItem?>(null) }
     var renameText by remember { mutableStateOf("") }
-    var moveFile by remember { mutableStateOf<FileEntity?>(null) }
-    var confirmDeleteFile by remember { mutableStateOf<FileEntity?>(null) }
-    var propertiesFile by remember { mutableStateOf<FileEntity?>(null) }
+    var moveFile by remember { mutableStateOf<FileListItem?>(null) }
+    var confirmDeleteFile by remember { mutableStateOf<FileListItem?>(null) }
+    var propertiesFile by remember { mutableStateOf<FileListItem?>(null) }
     var folderMenu by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     var moveFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     var renameFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
@@ -121,7 +121,7 @@ fun FolderBrowserScreen(
     // Back in selection mode clears the selection before navigating.
     BackHandler(enabled = selectionMode) { selectedIds = emptySet() }
 
-    val openFile: (FileEntity) -> Unit = { file ->
+    val openFile: (FileListItem) -> Unit = { file ->
         val route = when {
             file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
             file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)

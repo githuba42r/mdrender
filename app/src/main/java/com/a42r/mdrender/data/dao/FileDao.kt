@@ -4,22 +4,58 @@ import androidx.room.*
 import com.a42r.mdrender.data.entity.FileEntity
 import kotlinx.coroutines.flow.Flow
 
+data class FileListItem(
+    val id: Long,
+    @ColumnInfo(name = "folder_id") val folderId: Long? = null,
+    val name: String,
+    @ColumnInfo(name = "mime_type") val mimeType: String,
+    @ColumnInfo(name = "file_size") val fileSize: Long,
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "scroll_position") val scrollPosition: Int = 0,
+    @ColumnInfo(name = "playback_position") val playbackPosition: Long = 0
+)
+
+data class FileMetadata(
+    val id: Long,
+    @ColumnInfo(name = "folder_id") val folderId: Long? = null,
+    val name: String,
+    @ColumnInfo(name = "mime_type") val mimeType: String,
+    @ColumnInfo(name = "encrypted_blob") val encryptedBlob: ByteArray? = null,
+    @ColumnInfo(name = "encrypted_thumbnail") val encryptedThumbnail: ByteArray? = null,
+    @ColumnInfo(name = "file_size") val fileSize: Long,
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "scroll_position") val scrollPosition: Int = 0,
+    @ColumnInfo(name = "playback_position") val playbackPosition: Long = 0
+)
+
 @Dao
 interface FileDao {
-    @Query("SELECT * FROM files WHERE id = :id")
-    suspend fun getById(id: Long): FileEntity?
+    /** Metadata plus encrypted_thumbnail, without the (potentially large) encrypted_blob. */
+    @Query("SELECT id, folder_id, name, mime_type, encrypted_thumbnail, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
+    suspend fun getById(id: Long): FileMetadata?
 
-    @Query("SELECT * FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
-    fun getFilesInFolder(folderId: Long?): Flow<List<FileEntity>>
+    /** Encrypted blob bytes only — avoids CursorWindow limit on large files. */
+    @Query("SELECT encrypted_blob FROM files WHERE id = :id")
+    suspend fun getEncryptedBlob(id: Long): ByteArray?
+
+    /** Metadata without encrypted blob — safe for large files. */
+    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
+    suspend fun getFileMetadata(id: Long): FileMetadata?
+
+    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
+    fun getFilesInFolder(folderId: Long?): Flow<List<FileListItem>>
 
     @Query("SELECT name FROM files WHERE folder_id IS :folderId")
     suspend fun getNamesInFolder(folderId: Long?): List<String>
 
-    @Query("SELECT * FROM files WHERE folder_id IS :folderId AND name = :name LIMIT 1")
-    suspend fun findByName(folderId: Long?, name: String): FileEntity?
+    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId AND name = :name LIMIT 1")
+    suspend fun findByName(folderId: Long?, name: String): FileMetadata?
 
-    @Query("SELECT * FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
-    suspend fun getFilesInFolderList(folderId: Long?): List<FileEntity>
+    /** Full rows for image sibling detection. Separate from listing to keep listing lightweight. */
+    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
+    suspend fun getFilesInFolderList(folderId: Long?): List<FileMetadata>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(file: FileEntity): Long

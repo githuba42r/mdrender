@@ -1,7 +1,7 @@
 package com.a42r.mdrender.data.repository
 
 import com.a42r.mdrender.data.dao.FileDao
-import com.a42r.mdrender.data.entity.FileEntity
+import com.a42r.mdrender.data.dao.FileMetadata
 import com.a42r.mdrender.security.CryptoEngine
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -11,21 +11,20 @@ import org.mockito.kotlin.whenever
 
 class FileRepositoryImageSiblingsTest {
 
-    private fun file(id: Long, folder: Long?, name: String, mime: String) =
-        FileEntity(id = id, folderId = folder, name = name, mimeType = mime,
-            encryptedBlob = ByteArray(0), fileSize = 0)
+    private fun meta(id: Long, folder: Long?, name: String, mime: String) =
+        FileMetadata(id = id, folderId = folder, name = name, mimeType = mime, fileSize = 0)
 
     @Test
     fun `getImageSiblings returns only images ordered with the correct index`() = runTest {
         val dao = mock<FileDao>()
         val crypto = mock<CryptoEngine>()
-        whenever(dao.getById(2)).thenReturn(file(2, 5, "b.png", "image/png"))
+        whenever(dao.getFileMetadata(2)).thenReturn(meta(2, 5, "b.png", "image/png"))
         whenever(dao.getFilesInFolderList(5)).thenReturn(
             listOf(
-                file(1, 5, "a.jpg", "image/jpeg"),
-                file(9, 5, "notes.md", "text/markdown"), // filtered out
-                file(2, 5, "b.png", "image/png"),
-                file(3, 5, "c.webp", "image/webp"),
+                meta(1, 5, "a.jpg", "image/jpeg"),
+                meta(9, 5, "notes.md", "text/markdown"), // filtered out
+                meta(2, 5, "b.png", "image/png"),
+                meta(3, 5, "c.webp", "image/webp"),
             )
         )
         val repo = FileRepository(dao, crypto)
