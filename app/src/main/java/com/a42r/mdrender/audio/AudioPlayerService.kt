@@ -1,5 +1,7 @@
 package com.a42r.mdrender.audio
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
@@ -28,9 +30,19 @@ class AudioPlayerService : MediaSessionService() {
     private var currentTempFile: File? = null
     private var positionJob: Job? = null
     private var headphoneMonitor: HeadphoneMonitor? = null
+    private var currentFileId: Long = 0L
+    private var playJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
+
+        // Create notification channel for media playback notification (API 26+)
+        val channel = NotificationChannel(
+            CHANNEL_ID, "Audio playback", NotificationManager.IMPORTANCE_LOW
+        ).apply { setShowBadge(false) }
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(channel)
+
         exoPlayer = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -43,6 +55,28 @@ class AudioPlayerService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, exoPlayer).build()
 
+        // Single permanent Player.Listener — no leak across file changes.
+        exoPlayer.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playerState.setPlaying(isPlaying)
+                if (!isPlaying && exoPlayer.playbackState == Player.STATE_ENDED) {
+                    // Save position and reset for the file that just ended.
+                    val id = currentFileId
+                    if (id != 0L) {
+                        serviceScope?.launch(Dispatchers.IO) {
+                            fileRepository.savePlaybackPosition(id, 0L)
+                        }
+                    }
+                    playerState.updatePosition(0L)
+                }
+            }
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY && exoPlayer.duration > 0) {
+                    playerState.setDuration(exoPlayer.duration)
+                }
+            }
+        })
+
         // Listen for headphone disconnection
         headphoneMonitor = HeadphoneMonitor { connected ->
             if (prefs.headphonesOnly && !connected && exoPlayer.isPlaying) {
@@ -51,7 +85,7 @@ class AudioPlayerService : MediaSessionService() {
         }
         headphoneMonitor?.register(this)
 
-        serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
         serviceScope?.launch {
             playerState.commands.collect { command ->
                 when (command) {
@@ -77,6 +111,7 @@ class AudioPlayerService : MediaSessionService() {
         savePosition()
         stopPlayback()
         headphoneMonitor?.unregister(this)
+        playJob?.cancel()
         serviceScope?.cancel()
         mediaSession.release()
         exoPlayer.release()
@@ -86,19 +121,22 @@ class AudioPlayerService : MediaSessionService() {
 
     private fun playFile(fileId: Long, fileName: String) {
         if (prefs.headphonesOnly && !AudioManagerUtil.isHeadphonesConnected(this)) {
-            // Can't play — show a toast via the activity
             playerState.setPlaying(false)
             return
         }
 
-        // Stop current, save position
-        if (playerState.info.value.fileId != 0L) {
-            savePosition()
+        // Cancel any in-flight play request
+        playJob?.cancel()
+        savePosition()
+
+        // Stop current playback on the main thread (ExoPlayer thread requirement)
+        if (currentFileId != 0L) {
             exoPlayer.stop()
         }
-        cleanCache() // remove previous temp file
+        cleanCache()
+        currentFileId = fileId
 
-        serviceScope?.launch {
+        playJob = serviceScope?.launch(Dispatchers.IO) {
             try {
                 val (bytes, _) = fileRepository.getDecryptedContent(fileId)
                     ?: throw Exception("File not found")
@@ -106,12 +144,12 @@ class AudioPlayerService : MediaSessionService() {
                 val tempFile = File(cacheDir, "audio/${fileId}_$ext")
                 tempFile.parentFile?.mkdirs()
                 tempFile.writeBytes(bytes)
-                currentTempFile = tempFile
-
-                val metadata = fileRepository.getFileMetadata(fileId)
-                val savedPos = metadata?.playbackPosition ?: 0L
 
                 withContext(Dispatchers.Main) {
+                    currentTempFile = tempFile
+                    val metadata = fileRepository.getFileMetadata(fileId)
+                    val savedPos = metadata?.playbackPosition ?: 0L
+
                     val mediaItem = MediaItem.fromUri(Uri.fromFile(tempFile))
                     exoPlayer.setMediaItem(mediaItem)
                     exoPlayer.prepare()
@@ -121,56 +159,35 @@ class AudioPlayerService : MediaSessionService() {
                     playerState.setDuration(if (exoPlayer.duration > 0) exoPlayer.duration else 0L)
                     playerState.updatePosition(savedPos)
 
-                    exoPlayer.addListener(object : Player.Listener {
-                        override fun onIsPlayingChanged(isPlaying: Boolean) {
-                            playerState.setPlaying(isPlaying)
-                            if (!isPlaying && exoPlayer.playbackState == Player.STATE_ENDED) {
-                                onPlaybackEnded()
-                            }
-                        }
-                        override fun onPlaybackStateChanged(state: Int) {
-                            if (state == Player.STATE_READY && exoPlayer.duration > 0) {
-                                playerState.setDuration(exoPlayer.duration)
-                            }
-                        }
-                    })
-
                     exoPlayer.play()
                 }
 
                 // Track position every 2 seconds
                 positionJob?.cancel()
-                positionJob = serviceScope?.launch {
+                positionJob = serviceScope?.launch(Dispatchers.Main) {
                     while (isActive) {
                         delay(2000)
-                        val pos = withContext(Dispatchers.Main) { exoPlayer.currentPosition }
+                        val pos = exoPlayer.currentPosition
                         playerState.updatePosition(pos)
-                        fileRepository.savePlaybackPosition(fileId, pos)
+                        withContext(Dispatchers.IO) {
+                            fileRepository.savePlaybackPosition(fileId, pos)
+                        }
                     }
                 }
             } catch (e: Exception) {
-                playerState.setFileInfo(0, "")
-                playerState.setPlaying(false)
+                withContext(Dispatchers.Main) {
+                    playerState.setFileInfo(0, "")
+                    playerState.setPlaying(false)
+                }
             }
         }
-    }
-
-    private fun onPlaybackEnded() {
-        savePosition()
-        // Reset position for next play
-        fileRepository.apply {
-            serviceScope?.launch {
-                savePlaybackPosition(playerState.info.value.fileId, 0L)
-            }
-        }
-        playerState.updatePosition(0L)
     }
 
     private fun savePosition() {
-        val id = playerState.info.value.fileId
+        val id = currentFileId
         val pos = playerState.currentPosition.value
         if (id != 0L) {
-            serviceScope?.launch {
+            serviceScope?.launch(Dispatchers.IO) {
                 fileRepository.savePlaybackPosition(id, pos)
             }
         }
@@ -188,7 +205,6 @@ class AudioPlayerService : MediaSessionService() {
     }
 
     companion object {
-        private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "audio_playback"
     }
 }
