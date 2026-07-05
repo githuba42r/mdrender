@@ -9,6 +9,8 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.a42r.mdrender.audio.AudioPlayerScreen
+import com.a42r.mdrender.audio.AudioPlayerViewModel
 import com.a42r.mdrender.ui.browser.BrowserViewModel
 import com.a42r.mdrender.ui.browser.FolderBrowserScreen
 import com.a42r.mdrender.ui.viewer.ImageViewerScreen
@@ -45,6 +47,17 @@ fun MDRenderNavHost(navController: NavHostController) {
             route = Routes.ImageViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
         ) { ImageViewerScreen(onBack = { navController.popBackStack() }) }
+        composable(
+            route = Routes.AudioPlayer.route,
+            arguments = listOf(navArgument("fileId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val fileId = backStackEntry.arguments?.getLong("fileId") ?: 0L
+            val viewModel: AudioPlayerViewModel = hiltViewModel()
+            LaunchedEffect(fileId) {
+                viewModel.playerState.play(fileId, "")
+            }
+            AudioPlayerScreen(onBack = { navController.popBackStack() })
+        }
         composable(Routes.Settings.route) {
             SettingsScreen(onBack = { navController.popBackStack() })
         }

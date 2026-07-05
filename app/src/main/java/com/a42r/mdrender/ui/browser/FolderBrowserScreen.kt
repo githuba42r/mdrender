@@ -126,6 +126,7 @@ fun FolderBrowserScreen(
             file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
             file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
             file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
+            file.mimeType.startsWith("audio/") -> Routes.AudioPlayer.createRoute(file.id)
             else -> Routes.TextViewer.createRoute(file.id)
         }
         navController.navigate(route)
