@@ -154,9 +154,18 @@ class LocalSendSessionManager @Inject constructor(
                 val mime = fileRepository.mimeTypeFromExtension(meta.fileName)
                     .takeIf { it != "application/octet-stream" } ?: meta.fileType
 
+                when (session.options.conflict) {
+                    ConflictStrategy.REPLACE -> {
+                        // Delete any existing file with the same name before importing.
+                        fileRepository.findByName(folderId, meta.fileName)
+                            ?.let { fileRepository.deleteFile(it.id) }
+                    }
+                    ConflictStrategy.SKIP -> { /* early-out above already handled this */ }
+                    ConflictStrategy.RENAME -> { /* handled below via uniqueNameInFolder */ }
+                }
                 val name = when (session.options.conflict) {
                     ConflictStrategy.REPLACE -> meta.fileName
-                    ConflictStrategy.SKIP -> meta.fileName // early-out above already handled this
+                    ConflictStrategy.SKIP -> meta.fileName
                     ConflictStrategy.RENAME -> fileRepository.uniqueNameInFolder(folderId, meta.fileName)
                 }
                 fileRepository.importFile(name, mime, bytes, folderId)

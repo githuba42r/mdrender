@@ -66,6 +66,8 @@ class MainActivity : FragmentActivity() {
                 LaunchedEffect(displayingHidden) {
                     if (displayingHidden) {
                         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     }
                 }
 
@@ -104,6 +106,7 @@ class MainActivity : FragmentActivity() {
             // until auth succeeds.
             promptAuth()
         } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             shieldView?.visibility = View.GONE
         }
     }
@@ -134,6 +137,7 @@ class MainActivity : FragmentActivity() {
     private fun promptAuth(force: Boolean = false) {
         if (authInProgress && !force) return
         if (DeviceAuth.noCredentialConfigured(this)) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             hideShieldAfterUnlock()
             appLock.unlock()
             return
@@ -143,6 +147,7 @@ class MainActivity : FragmentActivity() {
         DeviceAuth.authenticate(
             activity = this,
             onSuccess = {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 hideShieldAfterUnlock()
                 authInProgress = false
                 authRetryCount = 0
