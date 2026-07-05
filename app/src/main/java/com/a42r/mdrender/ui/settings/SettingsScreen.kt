@@ -112,6 +112,23 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            // Audio section
+            ListItem(
+                headlineContent = { Text("Headphones only") },
+                supportingContent = {
+                    Text("Require headphones or Bluetooth audio to play files. " +
+                         "Prevents private audio playing over the device speaker.")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.headphonesOnly,
+                        onCheckedChange = { viewModel.setHeadphonesOnly(it) }
+                    )
+                }
+            )
+
+            HorizontalDivider()
+
             // App info
             ListItem(
                 headlineContent = { Text("Version") },

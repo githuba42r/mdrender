@@ -2,6 +2,7 @@ package com.a42r.mdrender.ui.settings
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
+import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,12 +18,14 @@ data class SettingsUiState(
     val localSendEnabled: Boolean = false,
     val localSendAlias: String = "",
     val localSendPin: String = "",
-    val localSendAutoAccept: Boolean = false
+    val localSendAutoAccept: Boolean = false,
+    val headphonesOnly: Boolean = false
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val localSendPrefs: LocalSendPrefs,
+    private val audioPlayerPrefs: AudioPlayerPrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -30,7 +33,8 @@ class SettingsViewModel @Inject constructor(
         localSendEnabled = localSendPrefs.enabled,
         localSendAlias = localSendPrefs.alias,
         localSendPin = localSendPrefs.pin,
-        localSendAutoAccept = localSendPrefs.autoAccept
+        localSendAutoAccept = localSendPrefs.autoAccept,
+        headphonesOnly = audioPlayerPrefs.headphonesOnly
     ))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -60,6 +64,11 @@ class SettingsViewModel @Inject constructor(
         } else {
             _uiState.update { it.copy(localSendPin = trimmed) }
         }
+    }
+
+    fun setHeadphonesOnly(enabled: Boolean) {
+        audioPlayerPrefs.headphonesOnly = enabled
+        _uiState.update { it.copy(headphonesOnly = enabled) }
     }
 
     fun setLocalSendAutoAccept(enabled: Boolean) {
