@@ -101,6 +101,20 @@ class AudioPlayerService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.hasExtra(EXTRA_FILE_ID) == true) {
+            val fileId = intent.getLongExtra(EXTRA_FILE_ID, 0L)
+            if (fileId != 0L) {
+                serviceScope?.launch {
+                    val meta = fileRepository.getFileMetadata(fileId)
+                    val name = meta?.name ?: ""
+                    playFile(fileId, name)
+                }
+            }
+        }
+        return START_NOT_STICKY
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         savePosition()
         stopPlayback()
@@ -206,5 +220,6 @@ class AudioPlayerService : MediaSessionService() {
 
     companion object {
         private const val CHANNEL_ID = "audio_playback"
+        const val EXTRA_FILE_ID = "file_id"
     }
 }

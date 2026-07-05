@@ -15,7 +15,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,10 +33,10 @@ fun AudioPlayerScreen(
     // Start the foreground service and begin playback when entering this screen.
     LaunchedEffect(fileId) {
         if (fileId != 0L) {
-            context.startForegroundService(Intent(context, AudioPlayerService::class.java))
-            // Give the service a moment to initialize its SharedFlow collector
-            delay(300)
-            state.play(fileId, "")
+            val intent = Intent(context, AudioPlayerService::class.java).apply {
+                putExtra(AudioPlayerService.EXTRA_FILE_ID, fileId)
+            }
+            context.startForegroundService(intent)
         }
     }
 
