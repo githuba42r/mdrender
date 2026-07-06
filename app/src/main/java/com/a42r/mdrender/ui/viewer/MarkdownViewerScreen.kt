@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -16,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -273,32 +273,18 @@ fun MarkdownText(
         }
     }
 
-    // Text renders the annotated string. Link taps are detected via
-    // TextLayoutResult by mapping tap position to offset.
-    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-
-    Box(modifier = Modifier.pointerInput(onLinkTap, onTap) {
-        detectTapGestures { offset ->
-            val layout = textLayoutResult
-            if (layout != null) {
-                val textOffset = layout.getOffsetForPosition(offset)
-                val link = annotatedString.getStringAnnotations("link", textOffset, textOffset)
-                    .firstOrNull()
-                if (link != null) {
-                    onLinkTap?.invoke(link.item)
-                    return@detectTapGestures
-                }
+    ClickableText(
+        text = annotatedString,
+        style = MaterialTheme.typography.bodyMedium.copy(fontSize = bodySize, lineHeight = bodyLineHeight),
+        onClick = { offset ->
+            val link = annotatedString.getStringAnnotations("link", offset, offset).firstOrNull()
+            if (link != null) {
+                onLinkTap?.invoke(link.item)
+            } else {
+                onTap?.invoke()
             }
-            onTap?.invoke()
         }
-    }) {
-        Text(
-            text = annotatedString,
-            fontSize = bodySize,
-            lineHeight = bodyLineHeight,
-            onTextLayout = { textLayoutResult = it }
-        )
-    }
+    )
 }
 data class HeadingPos(
     val text: String,
