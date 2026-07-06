@@ -325,10 +325,19 @@ private fun HeadingScrollbar(
                 drawCircle(color = inactiveColor, radius = 3f, center = Offset(size.width / 2, y))
             }
 
-            // Drag thumb
+            // Drag thumb — large pill-shaped handle
             val thumbY = if (headingCount > 1) thumbIndex * dotSpacing else h / 2f
-            drawCircle(color = thumbColor, radius = 6f, center = Offset(size.width / 2, thumbY))
-            drawCircle(color = surfaceColor, radius = 2.5f, center = Offset(size.width / 2, thumbY))
+            val thumbOuterR = 10f
+            val thumbInnerR = 3f
+            // Shadow/outline ring
+            drawCircle(color = thumbColor.copy(alpha = 0.3f), radius = thumbOuterR + 2f,
+                center = Offset(size.width / 2, thumbY))
+            // Main handle
+            drawCircle(color = thumbColor, radius = thumbOuterR,
+                center = Offset(size.width / 2, thumbY))
+            // Inner dot
+            drawCircle(color = surfaceColor, radius = thumbInnerR,
+                center = Offset(size.width / 2, thumbY))
         }
     }
 }
