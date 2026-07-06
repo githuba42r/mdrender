@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -16,8 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -132,7 +135,28 @@ fun MarkdownViewerScreen(
                                 }
                                 .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
                         ) {
-                            MarkdownText(uiState.markdownContent, fontScale)
+                            MarkdownText(
+                                markdown = uiState.markdownContent,
+                                headings = headings,
+                                fontScale = fontScale,
+                                scrollState = scrollState,
+                                onLinkTap = { link ->
+                                    if (link.startsWith("#")) {
+                                        val target = link.removePrefix("#").lowercase()
+                                        val idx = headings.indexOfFirst {
+                                            it.text.lowercase().replace(" ", "-") == target
+                                        }
+                                        if (idx >= 0) {
+                                            val ratio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
+                                            coroutineScope.launch {
+                                                scrollState.animateScrollTo(
+                                                    (ratio * scrollState.maxValue).roundToInt()
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
                         }
                     }
 
@@ -203,43 +227,70 @@ fun MarkdownViewerScreen(
 }
 
 @Composable
-fun MarkdownText(markdown: String, fontScale: Float = 1f) {
-    // Simple MD renderer — headings, bold, italic, code, lists, links
-    val annotatedString = buildAnnotatedString {
-        val lines = markdown.split("\n")
-        for (line in lines) {
-            when {
-                line.startsWith("# ") -> withStyle(SpanStyle(fontSize = (24 * fontScale).sp, fontWeight = FontWeight.Bold)) {
-                    append(line.removePrefix("# "))
-                }
-                line.startsWith("## ") -> withStyle(SpanStyle(fontSize = (20 * fontScale).sp, fontWeight = FontWeight.Bold)) {
-                    append(line.removePrefix("## "))
-                }
-                line.startsWith("### ") -> withStyle(SpanStyle(fontSize = (18 * fontScale).sp, fontWeight = FontWeight.Bold)) {
-                    append(line.removePrefix("### "))
-                }
-                line.startsWith("- ") || line.startsWith("* ") -> {
-                    append("  • ")
-                    append(renderInlineMarkdown(line.removePrefix("- ").removePrefix("* ")))
-                }
-                line.startsWith("`") && line.endsWith("`") -> {
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = androidx.compose.ui.graphics.Color(0xFFEEEEEE))) {
-                        append(line.removeSurrounding("`", "`"))
+fun MarkdownText(
+    markdown: String,
+    headings: List<HeadingPos>,
+    fontScale: Float = 1f,
+    scrollState: androidx.compose.foundation.ScrollState? = null,
+    onLinkTap: ((String) -> Unit)? = null
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val bodySize = (16 * fontScale).sp
+    val bodyLineHeight = (24 * fontScale).sp
+    val h1Size = (24 * fontScale).sp
+    val h2Size = (20 * fontScale).sp
+    val h3Size = (18 * fontScale).sp
+    val codeBg = Color(0xFFEEEEEE)
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+
+    val annotatedString = remember(markdown, fontScale) {
+        buildAnnotatedString {
+            val lines = markdown.split("\n")
+            for (line in lines) {
+                when {
+                    line.startsWith("# ") -> withStyle(SpanStyle(fontSize = h1Size, fontWeight = FontWeight.Bold)) {
+                        append(line.removePrefix("# "))
                     }
+                    line.startsWith("## ") -> withStyle(SpanStyle(fontSize = h2Size, fontWeight = FontWeight.Bold)) {
+                        append(line.removePrefix("## "))
+                    }
+                    line.startsWith("### ") -> withStyle(SpanStyle(fontSize = h3Size, fontWeight = FontWeight.Bold)) {
+                        append(line.removePrefix("### "))
+                    }
+                    line.startsWith("- ") || line.startsWith("* ") -> {
+                        append("  \u2022 ")
+                        appendStyled(line.removePrefix("- ").removePrefix("* "), this, linkColor)
+                    }
+                    line.startsWith("`") && line.endsWith("`") -> {
+                        withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg)) {
+                            append(line.removeSurrounding("`", "`"))
+                        }
+                    }
+                    line.startsWith("> ") -> withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = onSurfaceVariant)) {
+                        append(line.removePrefix("> "))
+                    }
+                    else -> appendStyled(line, this, linkColor)
                 }
-                line.startsWith("> ") -> withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                    append(line.removePrefix("> "))
-                }
-                else -> append(renderInlineMarkdown(line))
+                append("\n")
             }
-            append("\n")
         }
     }
-    Text(text = annotatedString, fontSize = (16 * fontScale).sp, lineHeight = (24 * fontScale).sp)
-}
 
-/** A heading extracted from the markdown text. */
-private data class HeadingPos(
+    if (onLinkTap != null) {
+        ClickableText(
+            text = annotatedString,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = bodySize, lineHeight = bodyLineHeight),
+            onClick = { offset ->
+                annotatedString.getStringAnnotations("link", offset, offset).firstOrNull()?.let { a ->
+                    onLinkTap(a.item)
+                }
+            }
+        )
+    } else {
+        Text(text = annotatedString, fontSize = bodySize, lineHeight = bodyLineHeight)
+    }
+}
+data class HeadingPos(
     val text: String,
     val lineIndex: Int,
     val level: Int  // 2 for ##, 3 for ###
@@ -342,13 +393,29 @@ private fun HeadingScrollbar(
     }
 }
 
-private fun renderInlineMarkdown(text: String): String {
-    // For the viewer, simply strip common inline markers and return plain text.
-    // A full inline parser can be added later. This keeps the initial viewer simple
-    // and functional for the common case.
-    return text
-        .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1") // bold
-        .replace(Regex("\\*(.+?)\\*"), "$1")       // italic
-        .replace(Regex("`(.+?)`"), "$1")            // inline code
-        .replace(Regex("\\[(.+?)\\]\\(.+?\\)"), "$1") // links
+private fun appendStyled(raw: String, builder: AnnotatedString.Builder, linkColor: Color) {
+    val linkRegex = Regex("\\[(.+?)\\]\\((.+?)\\)")
+    var lastEnd = 0
+    for (match in linkRegex.findAll(raw)) {
+        if (match.range.first > lastEnd) {
+            builder.append(plainStyled(raw.substring(lastEnd, match.range.first)))
+        }
+        val text = match.groupValues[1]
+        val url = match.groupValues[2]
+        builder.pushStringAnnotation("link", url)
+        builder.withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
+            builder.append(text)
+        }
+        builder.pop()
+        lastEnd = match.range.last + 1
+    }
+    if (lastEnd < raw.length) {
+        builder.append(plainStyled(raw.substring(lastEnd)))
+    }
 }
+
+private fun plainStyled(text: String): String = text
+    .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
+    .replace(Regex("\\*(.+?)\\*"), "$1")
+    .replace(Regex("`(.+?)`"), "$1")
+
