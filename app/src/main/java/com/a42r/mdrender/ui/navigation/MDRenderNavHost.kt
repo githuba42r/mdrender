@@ -38,7 +38,14 @@ fun MDRenderNavHost(navController: NavHostController) {
         composable(
             route = Routes.MarkdownViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
-        ) { MarkdownViewerScreen(onBack = { navController.popBackStack() }) }
+        ) {
+            MarkdownViewerScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToFile = { fileId ->
+                    navController.navigate(Routes.MarkdownViewer.createRoute(fileId))
+                }
+            )
+        }
         composable(
             route = Routes.TextViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })

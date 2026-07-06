@@ -38,6 +38,9 @@ class ViewerViewModel @Inject constructor(
 
     private val fileId: Long = savedStateHandle.get<Long>("fileId") ?: 0L
 
+    /** The folder containing this file; used to resolve sibling-file links. */
+    var folderId: Long? = null
+
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
 
@@ -48,6 +51,11 @@ class ViewerViewModel @Inject constructor(
     init {
         loadContent()
         loadImageSiblings()
+    }
+
+    /** Resolve a filename (from a markdown link) to a file ID in the same folder, or null. */
+    suspend fun resolveFileLink(filename: String): Long? {
+        return fileRepository.findByName(folderId, filename)?.id
     }
 
     private fun loadImageSiblings() {
@@ -68,6 +76,7 @@ class ViewerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val metadata = fileRepository.getFileMetadata(fileId)
+                folderId = metadata?.folderId
                 val (bytes, mimeType) = fileRepository.getDecryptedContent(fileId)
                     ?: throw Exception("File not found")
 

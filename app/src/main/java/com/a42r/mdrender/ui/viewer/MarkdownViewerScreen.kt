@@ -33,6 +33,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import android.util.Log
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -43,6 +44,7 @@ import kotlin.math.roundToInt
 @Composable
 fun MarkdownViewerScreen(
     onBack: () -> Unit,
+    onNavigateToFile: (Long) -> Unit = {},
     viewModel: ViewerViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -148,6 +150,18 @@ fun MarkdownViewerScreen(
                                             scrollState.animateScrollTo(
                                                 (ratio * scrollState.maxValue).roundToInt()
                                             )
+                                        }
+                                    }
+                                } else if (!link.contains("://") && !link.startsWith("//")) {
+                                    // Local file link — resolve relative to the current file's folder.
+                                    Log.d("MarkdownLink", "Tap on local link: \"$link\"")
+                                    coroutineScope.launch {
+                                        val fileId = viewModel.resolveFileLink(link)
+                                        Log.d("MarkdownLink", "resolveFileLink(\"$link\") returned $fileId (folderId=${viewModel.folderId})")
+                                        if (fileId != null) {
+                                            onNavigateToFile(fileId)
+                                        } else {
+                                            Log.w("MarkdownLink", "No file found for link \"$link\" in folder ${viewModel.folderId}")
                                         }
                                     }
                                 }
@@ -293,12 +307,18 @@ fun MarkdownText(
                         val layout = textLayoutResult
                         if (layout != null) {
                             val textOffset = layout.getOffsetForPosition(offset)
+                            Log.v("MarkdownLink", "Tap at offset=$offset -> textOffset=$textOffset, annotatedString length=${annotatedString.length}")
                             val link = annotatedString.getStringAnnotations("link", textOffset, textOffset)
                                 .firstOrNull()
                             if (link != null) {
+                                Log.d("MarkdownLink", "Link annotation found: \"${link.item}\"")
                                 onLinkTap?.invoke(link.item)
                                 return@detectTapGestures
+                            } else {
+                                Log.v("MarkdownLink", "No link annotation at offset=$textOffset")
                             }
+                        } else {
+                            Log.w("MarkdownLink", "textLayoutResult is null on tap")
                         }
                         onTap?.invoke()
                     }
