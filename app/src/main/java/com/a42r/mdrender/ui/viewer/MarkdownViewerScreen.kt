@@ -5,8 +5,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.ClickableText
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,6 +16,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
@@ -273,18 +272,39 @@ fun MarkdownText(
         }
     }
 
-    ClickableText(
-        text = annotatedString,
-        style = MaterialTheme.typography.bodyMedium.copy(fontSize = bodySize, lineHeight = bodyLineHeight),
-        onClick = { offset ->
-            val link = annotatedString.getStringAnnotations("link", offset, offset).firstOrNull()
-            if (link != null) {
-                onLinkTap?.invoke(link.item)
-            } else {
-                onTap?.invoke()
-            }
-        }
-    )
+    // Use plain Text for reliable height rendering inside scroll containers.
+    // A transparent overlay Box captures taps and detects links by mapping
+    // the tap coordinate to a text position via TextLayoutResult.
+    var textLayoutResult by remember(annotatedString) { mutableStateOf<TextLayoutResult?>(null) }
+
+    Box {
+        Text(
+            text = annotatedString,
+            fontSize = bodySize,
+            lineHeight = bodyLineHeight,
+            onTextLayout = { textLayoutResult = it }
+        )
+        // Full-size transparent tap overlay
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .pointerInput(onLinkTap, onTap) {
+                    detectTapGestures { offset ->
+                        val layout = textLayoutResult
+                        if (layout != null) {
+                            val textOffset = layout.getOffsetForPosition(offset)
+                            val link = annotatedString.getStringAnnotations("link", textOffset, textOffset)
+                                .firstOrNull()
+                            if (link != null) {
+                                onLinkTap?.invoke(link.item)
+                                return@detectTapGestures
+                            }
+                        }
+                        onTap?.invoke()
+                    }
+                }
+        )
+    }
 }
 data class HeadingPos(
     val text: String,
