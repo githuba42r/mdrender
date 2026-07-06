@@ -1,5 +1,7 @@
 package com.a42r.mdrender.ui.viewer
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,7 +11,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -25,11 +31,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.ui.Alignment
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.snapshotFlow
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,9 +74,27 @@ fun MarkdownViewerScreen(
             else -> {
                 val scrollState = rememberScrollState()
                 val coroutineScope = rememberCoroutineScope()
+                val totalLines = remember(uiState.markdownContent) {
+                    uiState.markdownContent.count { it == '\n' } + 1
+                }
+                val headings = remember(uiState.markdownContent) {
+                    parseHeadings(uiState.markdownContent)
+                }
 
                 val showTopButton by remember {
                     derivedStateOf { scrollState.value > 200 }
+                }
+
+                val activeHeadingIdx by remember {
+                    derivedStateOf {
+                        if (headings.isEmpty()) -1 else {
+                            val scroll = scrollState.value.toFloat()
+                            val max = scrollState.maxValue.toFloat().coerceAtLeast(1f)
+                            val ratio = (scroll / max).coerceIn(0f, 1f)
+                            val idx = (ratio * headings.lastIndex).roundToInt()
+                            idx.coerceIn(0, headings.lastIndex)
+                        }
+                    }
                 }
 
                 // Restore saved scroll position once content is loaded and
@@ -106,9 +130,22 @@ fun MarkdownViewerScreen(
                                 .pointerInput(Unit) {
                                     detectTapGestures(onTap = { showAppBar = !showAppBar })
                                 }
-                                .padding(16.dp)
+                                .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
                         ) {
                             MarkdownText(uiState.markdownContent, fontScale)
+                        }
+                    }
+
+                    // Heading annotation scrollbar
+                    if (headings.size >= 2) {
+                        Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                            HeadingScrollbar(
+                                headings = headings,
+                                totalLines = totalLines,
+                                scrollState = scrollState,
+                                activeIndex = activeHeadingIdx,
+                                coroutineScope = coroutineScope
+                            )
                         }
                     }
 
@@ -172,6 +209,96 @@ fun MarkdownText(markdown: String, fontScale: Float = 1f) {
         }
     }
     Text(text = annotatedString, fontSize = (16 * fontScale).sp, lineHeight = (24 * fontScale).sp)
+}
+
+/** A heading extracted from the markdown text. */
+private data class HeadingPos(
+    val text: String,
+    val lineIndex: Int,
+    val level: Int  // 2 for ##, 3 for ###
+)
+
+/** Extract ## and ### headings from markdown source. */
+private fun parseHeadings(markdown: String): List<HeadingPos> {
+    val lines = markdown.split("\n")
+    return lines.mapIndexedNotNull { index, line ->
+        when {
+            line.startsWith("## ") -> HeadingPos(line.removePrefix("## ").trim(), index, 2)
+            line.startsWith("### ") -> HeadingPos(line.removePrefix("### ").trim(), index, 3)
+            else -> null
+        }
+    }
+}
+
+/** An overlay scrollbar on the right side showing document headings as draggable dots. */
+@Composable
+private fun HeadingScrollbar(
+    headings: List<HeadingPos>,
+    totalLines: Int,
+    scrollState: androidx.compose.foundation.ScrollState,
+    activeIndex: Int,
+    coroutineScope: kotlinx.coroutines.CoroutineScope
+) {
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val markerColor = MaterialTheme.colorScheme.primary
+    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(20.dp)
+            .padding(vertical = 16.dp)
+    ) {
+        Canvas(
+            modifier = Modifier.fillMaxSize()
+                .pointerInput(headings) {
+                    val headingCount = headings.size
+                    val targetLines = totalLines.coerceAtLeast(1)
+
+                    detectTapGestures { offset ->
+                        val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                        val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt()
+                            .coerceIn(0, headingCount - 1)
+                        val heading = headings[idx]
+                        val scrollRatio = heading.lineIndex.toFloat() / targetLines
+                        val target = (scrollRatio * scrollState.maxValue).roundToInt()
+                        coroutineScope.launch { scrollState.animateScrollTo(target) }
+                    }
+                }
+                .pointerInput(headings) {
+                    detectDragGestures { change, _ ->
+                        change.consume()
+                        val headingCount = headings.size
+                        val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                        val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt()
+                            .coerceIn(0, headingCount - 1)
+                        val heading = headings[idx]
+                        val scrollRatio = heading.lineIndex.toFloat() / totalLines.coerceAtLeast(1)
+                        val target = (scrollRatio * scrollState.maxValue).roundToInt()
+                        coroutineScope.launch { scrollState.scrollTo(target) }
+                    }
+                }
+        ) {
+            val h = size.height
+            val dotSpacing = if (headings.size > 1) h / (headings.size - 1) else h / 2f
+            val dotRadius = 3f
+            val trackWidth = 2f
+
+            // Track line
+            drawLine(trackColor, Offset(size.width / 2, 0f), Offset(size.width / 2, h), trackWidth)
+
+            // Dots for each heading
+            headings.forEachIndexed { i, _ ->
+                val y = if (headings.size > 1) i * dotSpacing else h / 2f
+                val isActive = i == activeIndex
+                drawCircle(
+                    color = if (isActive) markerColor else inactiveColor,
+                    radius = if (isActive) dotRadius + 2f else dotRadius,
+                    center = Offset(size.width / 2, y)
+                )
+            }
+        }
+    }
 }
 
 private fun renderInlineMarkdown(text: String): String {
