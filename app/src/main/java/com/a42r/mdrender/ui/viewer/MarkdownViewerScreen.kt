@@ -6,7 +6,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.ClickableText
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -274,19 +273,9 @@ fun MarkdownText(
         }
     }
 
-    if (onLinkTap != null) {
-        ClickableText(
-            text = annotatedString,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = bodySize, lineHeight = bodyLineHeight),
-            onClick = { offset ->
-                annotatedString.getStringAnnotations("link", offset, offset).firstOrNull()?.let { a ->
-                    onLinkTap(a.item)
-                }
-            }
-        )
-    } else {
-        Text(text = annotatedString, fontSize = bodySize, lineHeight = bodyLineHeight)
-    }
+    // Plain Text renders annotated strings reliably. The AnnotatedString
+    // carries link style (color + underline) via SpanStyle in appendStyled.
+    Text(text = annotatedString, fontSize = bodySize, lineHeight = bodyLineHeight)
 }
 data class HeadingPos(
     val text: String,
