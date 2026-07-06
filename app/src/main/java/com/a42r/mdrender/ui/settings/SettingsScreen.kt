@@ -133,6 +133,23 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            // INDEX.md table of contents
+            ListItem(
+                headlineContent = { Text("INDEX.md table of contents") },
+                supportingContent = {
+                    Text("Show INDEX.md files as a tappable chapter list " +
+                         "instead of raw markdown")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.indexTocEnabled,
+                        onCheckedChange = { viewModel.setIndexTocEnabled(it) }
+                    )
+                }
+            )
+
+            HorizontalDivider()
+
             // App info
             ListItem(
                 headlineContent = { Text("Version") },

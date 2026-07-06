@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
+import com.a42r.mdrender.ui.viewer.ViewerPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -19,13 +20,15 @@ data class SettingsUiState(
     val localSendAlias: String = "",
     val localSendPin: String = "",
     val localSendAutoAccept: Boolean = false,
-    val headphonesOnly: Boolean = false
+    val headphonesOnly: Boolean = false,
+    val indexTocEnabled: Boolean = true
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val localSendPrefs: LocalSendPrefs,
     private val audioPlayerPrefs: AudioPlayerPrefs,
+    private val viewerPrefs: ViewerPrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -34,7 +37,8 @@ class SettingsViewModel @Inject constructor(
         localSendAlias = localSendPrefs.alias,
         localSendPin = localSendPrefs.pin,
         localSendAutoAccept = localSendPrefs.autoAccept,
-        headphonesOnly = audioPlayerPrefs.headphonesOnly
+        headphonesOnly = audioPlayerPrefs.headphonesOnly,
+        indexTocEnabled = viewerPrefs.indexTocEnabled
     ))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -76,5 +80,10 @@ class SettingsViewModel @Inject constructor(
         val effective = enabled && localSendPrefs.pin.isNotEmpty()
         localSendPrefs.autoAccept = effective
         _uiState.update { it.copy(localSendAutoAccept = effective) }
+    }
+
+    fun setIndexTocEnabled(enabled: Boolean) {
+        viewerPrefs.indexTocEnabled = enabled
+        _uiState.update { it.copy(indexTocEnabled = enabled) }
     }
 }

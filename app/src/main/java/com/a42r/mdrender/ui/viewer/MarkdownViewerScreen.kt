@@ -76,6 +76,9 @@ fun MarkdownViewerScreen(
                 Text("Error: ${uiState.error}", color = MaterialTheme.colorScheme.error)
             }
             else -> {
+                val isIndex = uiState.fileName.equals("INDEX.md", ignoreCase = true)
+                val showIndexAsToc = isIndex && uiState.isIndexTocEnabled
+
                 val scrollState = rememberScrollState()
                 val coroutineScope = rememberCoroutineScope()
                 val totalLines = remember(uiState.markdownContent) {
@@ -124,53 +127,70 @@ fun MarkdownViewerScreen(
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(padding)
-                            .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
-                            .verticalScroll(scrollState)
-                            .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
-                    ) {
-                        MarkdownText(
-                            markdown = uiState.markdownContent,
-                            headings = headings,
-                            fontScale = fontScale,
-                            scrollState = scrollState,
-                            onTap = { showAppBar = !showAppBar },
-                            onLinkTap = { link ->
-                                if (link.startsWith("#")) {
-                                    val target = link.removePrefix("#").lowercase()
-                                    val idx = headings.indexOfFirst {
-                                        it.text.lowercase().replace(" ", "-") == target
-                                    }
-                                    if (idx >= 0) {
-                                        val ratio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
-                                        coroutineScope.launch {
-                                            scrollState.animateScrollTo(
-                                                (ratio * scrollState.maxValue).roundToInt()
-                                            )
+                    // Content — either INDEX TOC or normal markdown
+                    if (showIndexAsToc) {
+                        // TOC view has its own internal scroll
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(padding)
+                                .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
+                        ) {
+                            IndexTocView(
+                                markdown = uiState.markdownContent,
+                                onNavigateToFile = onNavigateToFile,
+                                resolveLink = viewModel::resolveFileLink
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(padding)
+                                .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
+                                .verticalScroll(scrollState)
+                                .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
+                        ) {
+                            MarkdownText(
+                                markdown = uiState.markdownContent,
+                                headings = headings,
+                                fontScale = fontScale,
+                                scrollState = scrollState,
+                                onTap = { showAppBar = !showAppBar },
+                                onLinkTap = { link ->
+                                    if (link.startsWith("#")) {
+                                        val target = link.removePrefix("#").lowercase()
+                                        val idx = headings.indexOfFirst {
+                                            it.text.lowercase().replace(" ", "-") == target
                                         }
-                                    }
-                                } else if (!link.contains("://") && !link.startsWith("//")) {
-                                    // Local file link — resolve relative to the current file's folder.
-                                    Log.d("MarkdownLink", "Tap on local link: \"$link\"")
-                                    coroutineScope.launch {
-                                        val fileId = viewModel.resolveFileLink(link)
-                                        Log.d("MarkdownLink", "resolveFileLink(\"$link\") returned $fileId (folderId=${viewModel.folderId})")
-                                        if (fileId != null) {
-                                            onNavigateToFile(fileId)
-                                        } else {
-                                            Log.w("MarkdownLink", "No file found for link \"$link\" in folder ${viewModel.folderId}")
+                                        if (idx >= 0) {
+                                            val ratio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
+                                            coroutineScope.launch {
+                                                scrollState.animateScrollTo(
+                                                    (ratio * scrollState.maxValue).roundToInt()
+                                                )
+                                            }
+                                        }
+                                    } else if (!link.contains("://") && !link.startsWith("//")) {
+                                        // Local file link — resolve relative to the current file's folder.
+                                        Log.d("MarkdownLink", "Tap on local link: \"$link\"")
+                                        coroutineScope.launch {
+                                            val fileId = viewModel.resolveFileLink(link)
+                                            Log.d("MarkdownLink", "resolveFileLink(\"$link\") returned $fileId (folderId=${viewModel.folderId})")
+                                            if (fileId != null) {
+                                                onNavigateToFile(fileId)
+                                            } else {
+                                                Log.w("MarkdownLink", "No file found for link \"$link\" in folder ${viewModel.folderId}")
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
 
-                    // Heading annotation scrollbar with label
-                    if (headings.size >= 2) {
+                    // Heading annotation scrollbar — only for normal markdown, not TOC
+                    if (!showIndexAsToc && headings.size >= 2) {
                         var dragTargetIdx by remember { mutableIntStateOf(-1) }
                         val thumbIndex = if (dragTargetIdx >= 0) dragTargetIdx else activeHeadingIdx
                         val label = if (thumbIndex in headings.indices) headings[thumbIndex].text else ""

@@ -16,6 +16,7 @@ import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.share.ShareOutManager
+import com.a42r.mdrender.ui.viewer.ViewerPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -32,7 +33,8 @@ data class BrowserUiState(
     val folders: List<FolderEntity> = emptyList(),
     val files: List<FileListItem> = emptyList(),
     val isGridView: Boolean = true,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val indexTocContent: String? = null
 )
 
 data class UndoDelete(
@@ -61,6 +63,7 @@ class BrowserViewModel @Inject constructor(
     private val appLock: AppLock,
     private val localSendPrefs: LocalSendPrefs,
     private val shareOutManager: ShareOutManager,
+    private val viewerPrefs: ViewerPrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -253,6 +256,22 @@ class BrowserViewModel @Inject constructor(
             launch {
                 fileRepository.getFilesInFolder(folderId).collect { files ->
                     _uiState.update { it.copy(files = files, isLoading = false) }
+                    // Check for INDEX.md to show as TOC when setting is enabled.
+                    if (viewerPrefs.indexTocEnabled) {
+                        val indexMd = fileRepository.findByName(folderId, "INDEX.md")
+                        if (indexMd != null) {
+                            val content = fileRepository.getDecryptedContent(indexMd.id)
+                            if (content != null) {
+                                _uiState.update {
+                                    it.copy(indexTocContent = String(content.first, Charsets.UTF_8))
+                                }
+                            }
+                        } else {
+                            _uiState.update { it.copy(indexTocContent = null) }
+                        }
+                    } else {
+                        _uiState.update { it.copy(indexTocContent = null) }
+                    }
                 }
             }
             val path = folderId?.let { folderRepository.getPathToFolder(it) } ?: emptyList()
@@ -441,6 +460,10 @@ class BrowserViewModel @Inject constructor(
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
         return if (opts.outWidth > 0) opts.outWidth to opts.outHeight else null
     }
+
+    /** Resolve a filename (from a markdown link) to a file ID in the current folder. */
+    suspend fun resolveFileLink(filename: String): Long? =
+        fileRepository.findByName(_uiState.value.currentFolderId, filename)?.id
 
     fun setFolderHidden(id: Long, hidden: Boolean) {
         viewModelScope.launch {

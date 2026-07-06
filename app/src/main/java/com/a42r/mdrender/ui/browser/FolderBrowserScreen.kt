@@ -27,6 +27,7 @@ import com.a42r.mdrender.data.dao.FileListItem
 import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
+import com.a42r.mdrender.ui.viewer.IndexTocView
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -242,7 +243,24 @@ fun FolderBrowserScreen(
             )
 
             // Content
-            if (uiState.isLoading) {
+            val indexToc = uiState.indexTocContent
+            if (indexToc != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    IndexTocView(
+                        markdown = indexToc,
+                        onNavigateToFile = { fileId ->
+                            navController.navigate(
+                                Routes.MarkdownViewer.createRoute(fileId)
+                            )
+                        },
+                        resolveLink = viewModel::resolveFileLink
+                    )
+                }
+            } else if (uiState.isLoading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }

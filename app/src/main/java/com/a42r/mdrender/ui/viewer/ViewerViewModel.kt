@@ -21,7 +21,8 @@ data class ViewerUiState(
     val imageBytes: ByteArray? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
-    val initialScrollPosition: Int = 0
+    val initialScrollPosition: Int = 0,
+    val isIndexTocEnabled: Boolean = false
 )
 
 /** Ordered sibling image ids in the folder plus the index of the opened one. */
@@ -33,6 +34,7 @@ data class ImagePagerState(
 @HiltViewModel
 class ViewerViewModel @Inject constructor(
     private val fileRepository: FileRepository,
+    private val viewerPrefs: ViewerPrefs,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -83,6 +85,7 @@ class ViewerViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         fileName = metadata?.name ?: "Unknown",
+                        isIndexTocEnabled = viewerPrefs.indexTocEnabled,
                         mimeType = mimeType,
                         isLoading = false,
                         initialScrollPosition = metadata?.scrollPosition ?: 0
