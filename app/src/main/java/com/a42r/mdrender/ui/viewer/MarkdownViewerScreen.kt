@@ -123,41 +123,39 @@ fun MarkdownViewerScreen(
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    SelectionContainer {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(padding)
-                                .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
-                                .verticalScroll(scrollState)
-                                .pointerInput(Unit) {
-                                    detectTapGestures(onTap = { showAppBar = !showAppBar })
-                                }
-                                .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
-                        ) {
-                            MarkdownText(
-                                markdown = uiState.markdownContent,
-                                headings = headings,
-                                fontScale = fontScale,
-                                scrollState = scrollState,
-                                onLinkTap = { link ->
-                                    if (link.startsWith("#")) {
-                                        val target = link.removePrefix("#").lowercase()
-                                        val idx = headings.indexOfFirst {
-                                            it.text.lowercase().replace(" ", "-") == target
-                                        }
-                                        if (idx >= 0) {
-                                            val ratio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
-                                            coroutineScope.launch {
-                                                scrollState.animateScrollTo(
-                                                    (ratio * scrollState.maxValue).roundToInt()
-                                                )
-                                            }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
+                            .verticalScroll(scrollState)
+                            .pointerInput(Unit) {
+                                detectTapGestures(onTap = { showAppBar = !showAppBar })
+                            }
+                            .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
+                    ) {
+                        MarkdownText(
+                            markdown = uiState.markdownContent,
+                            headings = headings,
+                            fontScale = fontScale,
+                            scrollState = scrollState,
+                            onLinkTap = { link ->
+                                if (link.startsWith("#")) {
+                                    val target = link.removePrefix("#").lowercase()
+                                    val idx = headings.indexOfFirst {
+                                        it.text.lowercase().replace(" ", "-") == target
+                                    }
+                                    if (idx >= 0) {
+                                        val ratio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
+                                        coroutineScope.launch {
+                                            scrollState.animateScrollTo(
+                                                (ratio * scrollState.maxValue).roundToInt()
+                                            )
                                         }
                                     }
                                 }
-                            )
-                        }
+                            }
+                        )
                     }
 
                     // Heading annotation scrollbar with label
