@@ -154,8 +154,8 @@ fun MarkdownViewerScreen(
                                 coroutineScope = coroutineScope
                             )
                         }
-                        // Label overlay to the left of the scrollbar
-                        if (label.isNotEmpty() && dragTargetIdx < 0) {
+                        // Label overlay — only visible while dragging
+                        if (label.isNotEmpty() && dragTargetIdx >= 0) {
                             Surface(
                                 modifier = Modifier
                                     .align(Alignment.CenterEnd)
