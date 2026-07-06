@@ -15,10 +15,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -136,16 +136,43 @@ fun MarkdownViewerScreen(
                         }
                     }
 
-                    // Heading annotation scrollbar
+                    // Heading annotation scrollbar with label
                     if (headings.size >= 2) {
+                        var dragTargetIdx by remember { mutableIntStateOf(-1) }
+                        val thumbIndex = if (dragTargetIdx >= 0) dragTargetIdx else activeHeadingIdx
+                        val label = if (thumbIndex in headings.indices) headings[thumbIndex].text else ""
+
                         Box(modifier = Modifier.align(Alignment.CenterEnd)) {
                             HeadingScrollbar(
                                 headings = headings,
                                 totalLines = totalLines,
                                 scrollState = scrollState,
                                 activeIndex = activeHeadingIdx,
+                                dragTargetIdx = dragTargetIdx,
+                                onDragChange = { idx -> dragTargetIdx = idx },
+                                onDragEnd = { dragTargetIdx = -1 },
                                 coroutineScope = coroutineScope
                             )
+                        }
+                        // Label overlay to the left of the scrollbar
+                        if (label.isNotEmpty() && dragTargetIdx < 0) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = 24.dp)
+                                    .widthIn(max = 200.dp),
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.inverseSurface
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
 
@@ -230,18 +257,25 @@ private fun parseHeadings(markdown: String): List<HeadingPos> {
     }
 }
 
-/** An overlay scrollbar on the right side showing document headings as draggable dots. */
+/** An overlay scrollbar on the right side showing document headings as draggable markers. */
 @Composable
 private fun HeadingScrollbar(
     headings: List<HeadingPos>,
     totalLines: Int,
     scrollState: androidx.compose.foundation.ScrollState,
     activeIndex: Int,
+    dragTargetIdx: Int,
+    onDragChange: (Int) -> Unit,
+    onDragEnd: () -> Unit,
     coroutineScope: kotlinx.coroutines.CoroutineScope
 ) {
+    val headingCount = headings.size
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    val markerColor = MaterialTheme.colorScheme.primary
-    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    val thumbColor = MaterialTheme.colorScheme.primary
+    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    val surfaceColor = MaterialTheme.colorScheme.surface
+
+    val thumbIndex = if (dragTargetIdx >= 0) dragTargetIdx else activeIndex
 
     Box(
         modifier = Modifier
@@ -250,53 +284,51 @@ private fun HeadingScrollbar(
             .padding(vertical = 16.dp)
     ) {
         Canvas(
-            modifier = Modifier.fillMaxSize()
-                .pointerInput(headings) {
-                    val headingCount = headings.size
-                    val targetLines = totalLines.coerceAtLeast(1)
-
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(headingCount) {
                     detectTapGestures { offset ->
                         val ratio = (offset.y / size.height).coerceIn(0f, 1f)
-                        val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt()
-                            .coerceIn(0, headingCount - 1)
-                        val heading = headings[idx]
-                        val scrollRatio = heading.lineIndex.toFloat() / targetLines
-                        val target = (scrollRatio * scrollState.maxValue).roundToInt()
-                        coroutineScope.launch { scrollState.animateScrollTo(target) }
+                        val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1)
+                        val scrollRatio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
+                        coroutineScope.launch { scrollState.animateScrollTo((scrollRatio * scrollState.maxValue).roundToInt()) }
                     }
                 }
-                .pointerInput(headings) {
-                    detectDragGestures { change, _ ->
-                        change.consume()
-                        val headingCount = headings.size
-                        val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
-                        val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt()
-                            .coerceIn(0, headingCount - 1)
-                        val heading = headings[idx]
-                        val scrollRatio = heading.lineIndex.toFloat() / totalLines.coerceAtLeast(1)
-                        val target = (scrollRatio * scrollState.maxValue).roundToInt()
-                        coroutineScope.launch { scrollState.scrollTo(target) }
-                    }
+                .pointerInput(headingCount) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                            onDragChange((ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1))
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                            val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1)
+                            onDragChange(idx)
+                            val scrollRatio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
+                            coroutineScope.launch { scrollState.scrollTo((scrollRatio * scrollState.maxValue).roundToInt()) }
+                        },
+                        onDragEnd = onDragEnd,
+                        onDragCancel = onDragEnd
+                    )
                 }
         ) {
             val h = size.height
-            val dotSpacing = if (headings.size > 1) h / (headings.size - 1) else h / 2f
-            val dotRadius = 3f
-            val trackWidth = 2f
+            val dotSpacing = if (headingCount > 1) h / (headingCount - 1) else h / 2f
 
             // Track line
-            drawLine(trackColor, Offset(size.width / 2, 0f), Offset(size.width / 2, h), trackWidth)
+            drawLine(trackColor, Offset(size.width / 2, 0f), Offset(size.width / 2, h), 2f)
 
             // Dots for each heading
             headings.forEachIndexed { i, _ ->
-                val y = if (headings.size > 1) i * dotSpacing else h / 2f
-                val isActive = i == activeIndex
-                drawCircle(
-                    color = if (isActive) markerColor else inactiveColor,
-                    radius = if (isActive) dotRadius + 2f else dotRadius,
-                    center = Offset(size.width / 2, y)
-                )
+                val y = if (headingCount > 1) i * dotSpacing else h / 2f
+                drawCircle(color = inactiveColor, radius = 3f, center = Offset(size.width / 2, y))
             }
+
+            // Drag thumb
+            val thumbY = if (headingCount > 1) thumbIndex * dotSpacing else h / 2f
+            drawCircle(color = thumbColor, radius = 6f, center = Offset(size.width / 2, thumbY))
+            drawCircle(color = surfaceColor, radius = 2.5f, center = Offset(size.width / 2, thumbY))
         }
     }
 }
