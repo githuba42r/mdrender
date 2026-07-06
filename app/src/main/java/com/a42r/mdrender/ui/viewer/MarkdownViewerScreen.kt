@@ -129,9 +129,6 @@ fun MarkdownViewerScreen(
                             .padding(padding)
                             .then(if (showAppBar) Modifier else Modifier.statusBarsPadding())
                             .verticalScroll(scrollState)
-                            .pointerInput(Unit) {
-                                detectTapGestures(onTap = { showAppBar = !showAppBar })
-                            }
                             .padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp)
                     ) {
                         MarkdownText(
@@ -139,6 +136,7 @@ fun MarkdownViewerScreen(
                             headings = headings,
                             fontScale = fontScale,
                             scrollState = scrollState,
+                            onTap = { showAppBar = !showAppBar },
                             onLinkTap = { link ->
                                 if (link.startsWith("#")) {
                                     val target = link.removePrefix("#").lowercase()
@@ -230,7 +228,8 @@ fun MarkdownText(
     headings: List<HeadingPos>,
     fontScale: Float = 1f,
     scrollState: androidx.compose.foundation.ScrollState? = null,
-    onLinkTap: ((String) -> Unit)? = null
+    onLinkTap: ((String) -> Unit)? = null,
+    onTap: (() -> Unit)? = null
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
     val bodySize = (16 * fontScale).sp
@@ -278,14 +277,19 @@ fun MarkdownText(
     // TextLayoutResult by mapping tap position to offset.
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-    Box(modifier = Modifier.pointerInput(onLinkTap) {
+    Box(modifier = Modifier.pointerInput(onLinkTap, onTap) {
         detectTapGestures { offset ->
             val layout = textLayoutResult
             if (layout != null) {
                 val textOffset = layout.getOffsetForPosition(offset)
-                annotatedString.getStringAnnotations("link", textOffset, textOffset)
-                    .firstOrNull()?.let { a -> onLinkTap?.invoke(a.item) }
+                val link = annotatedString.getStringAnnotations("link", textOffset, textOffset)
+                    .firstOrNull()
+                if (link != null) {
+                    onLinkTap?.invoke(link.item)
+                    return@detectTapGestures
+                }
             }
+            onTap?.invoke()
         }
     }) {
         Text(
