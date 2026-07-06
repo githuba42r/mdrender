@@ -263,7 +263,7 @@ fun MarkdownText(
                         }
                     }
                     line.startsWith("> ") -> withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = onSurfaceVariant)) {
-                        append(line.removePrefix("> "))
+                        appendStyled(line.removePrefix("> "), this, linkColor)
                     }
                     else -> appendStyled(line, this, linkColor)
                 }
