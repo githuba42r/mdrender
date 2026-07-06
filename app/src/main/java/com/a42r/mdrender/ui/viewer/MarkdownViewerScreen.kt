@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -273,9 +274,27 @@ fun MarkdownText(
         }
     }
 
-    // Plain Text renders annotated strings reliably. The AnnotatedString
-    // carries link style (color + underline) via SpanStyle in appendStyled.
-    Text(text = annotatedString, fontSize = bodySize, lineHeight = bodyLineHeight)
+    // Text renders the annotated string. Link taps are detected via
+    // TextLayoutResult by mapping tap position to offset.
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    Box(modifier = Modifier.pointerInput(onLinkTap) {
+        detectTapGestures { offset ->
+            val layout = textLayoutResult
+            if (layout != null) {
+                val textOffset = layout.getOffsetForPosition(offset)
+                annotatedString.getStringAnnotations("link", textOffset, textOffset)
+                    .firstOrNull()?.let { a -> onLinkTap?.invoke(a.item) }
+            }
+        }
+    }) {
+        Text(
+            text = annotatedString,
+            fontSize = bodySize,
+            lineHeight = bodyLineHeight,
+            onTextLayout = { textLayoutResult = it }
+        )
+    }
 }
 data class HeadingPos(
     val text: String,
