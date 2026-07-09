@@ -1,5 +1,6 @@
 package com.a42r.mdrender.data.repository
 
+import android.content.Context
 import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FileMetadata
 import com.a42r.mdrender.security.CryptoEngine
@@ -16,6 +17,7 @@ class FileRepositoryImageSiblingsTest {
 
     @Test
     fun `getImageSiblings returns only images ordered with the correct index`() = runTest {
+        val ctx = mock<Context>()
         val dao = mock<FileDao>()
         val crypto = mock<CryptoEngine>()
         whenever(dao.getFileMetadata(2)).thenReturn(meta(2, 5, "b.png", "image/png"))
@@ -27,7 +29,7 @@ class FileRepositoryImageSiblingsTest {
                 meta(3, 5, "c.webp", "image/webp"),
             )
         )
-        val repo = FileRepository(dao, crypto)
+        val repo = FileRepository(dao, crypto, ctx)
 
         val (ids, index) = repo.getImageSiblings(2)
 
@@ -37,10 +39,10 @@ class FileRepositoryImageSiblingsTest {
 
     @Test
     fun `getImageSiblings on missing file returns empty`() = runTest {
+        val ctx = mock<Context>()
         val dao = mock<FileDao>()
         val crypto = mock<CryptoEngine>()
-        whenever(dao.getById(99)).thenReturn(null)
-        val repo = FileRepository(dao, crypto)
+        val repo = FileRepository(dao, crypto, ctx)
 
         val (ids, index) = repo.getImageSiblings(99)
 

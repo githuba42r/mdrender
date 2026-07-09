@@ -217,12 +217,12 @@ class AudioPlayerService : MediaSessionService() {
 
         playJob = serviceScope?.launch(Dispatchers.IO) {
             try {
-                val (bytes, _) = fileRepository.getDecryptedContent(fileId)
+                val stream = fileRepository.getDecryptedStream(fileId)
                     ?: throw Exception("File not found")
                 val ext = fileName.substringAfterLast('.', "mp3")
                 val tempFile = File(cacheDir, "audio/${fileId}_$ext")
                 tempFile.parentFile?.mkdirs()
-                tempFile.writeBytes(bytes)
+                tempFile.outputStream().use { out -> stream.use { it.copyTo(out) } }
 
                 withContext(Dispatchers.Main) {
                     currentTempFile = tempFile

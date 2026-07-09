@@ -1,5 +1,6 @@
 package com.a42r.mdrender.data.repository
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
@@ -9,16 +10,28 @@ import com.a42r.mdrender.data.dao.FileListItem
 import com.a42r.mdrender.data.dao.FileMetadata
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.security.CryptoEngine
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class FileRepository @Inject constructor(
     private val fileDao: FileDao,
-    private val cryptoEngine: CryptoEngine
+    private val cryptoEngine: CryptoEngine,
+    @ApplicationContext private val context: Context
 ) {
+    /** Files above this threshold use file-backed storage instead of SQLite BLOB. */
+    private val FILE_STORAGE_THRESHOLD = 10L * 1024 * 1024 // 10 MB
+
+    /** Directory for file-backed encrypted blobs. */
+    private val encryptedDir: File = File(context.filesDir, "encrypted").also { it.mkdirs() }
+
     fun getFilesInFolder(folderId: Long?): Flow<List<FileListItem>> = fileDao.getFilesInFolder(folderId)
 
     suspend fun importFile(name: String, mimeType: String, rawBytes: ByteArray, folderId: Long? = null): Long {
@@ -38,7 +51,47 @@ class FileRepository @Inject constructor(
         return fileDao.insert(entity)
     }
 
-    suspend fun deleteFile(id: Long) = fileDao.delete(id)
+    /** Import a file from a temp file (typically from a network upload). Reads it
+     *  into memory for BLOB storage when the file is small; streams it to an
+     *  encrypted file on disk when it exceeds [FILE_STORAGE_THRESHOLD]. The
+     *  temp file is deleted after the import. */
+    suspend fun importFileFromTemp(
+        tempFile: File, name: String, mimeType: String, folderId: Long? = null
+    ): Long {
+        val fileSize = tempFile.length()
+        return if (fileSize <= FILE_STORAGE_THRESHOLD) {
+            // Small file — read into memory, encrypt as BLOB (existing path).
+            val rawBytes = tempFile.readBytes()
+            tempFile.delete()
+            importFile(name, mimeType, rawBytes, folderId)
+        } else {
+            // Large file — stream encrypt to file-backed storage.
+            val storageName = UUID.randomUUID().toString()
+            val dest = File(encryptedDir, storageName)
+            tempFile.inputStream().use { input ->
+                cryptoEngine.encryptStream(input, dest.outputStream())
+            }
+            tempFile.delete()
+            val entity = FileEntity(
+                folderId = folderId,
+                name = name,
+                mimeType = mimeType,
+                encryptedBlob = ByteArray(0),
+                fileSize = fileSize,
+                storageType = "file",
+                storagePath = storageName
+            )
+            fileDao.insert(entity)
+        }
+    }
+
+    suspend fun deleteFile(id: Long) {
+        val meta = fileDao.getFileMetadata(id)
+        if (meta?.storageType == "file" && meta.storagePath != null) {
+            File(encryptedDir, meta.storagePath).delete()
+        }
+        fileDao.delete(id)
+    }
 
     /** Returns [desired] or, when taken in [folderId], "name (1).ext"-style variant. */
     suspend fun uniqueNameInFolder(folderId: Long?, desired: String): String {
@@ -95,10 +148,55 @@ class FileRepository @Inject constructor(
         }
     }
 
+    /** Returns the full decrypted content as a ByteArray. For file-stored files,
+     *  the encrypted file is read and decrypted in a single pass. */
     suspend fun getDecryptedContent(id: Long): Pair<ByteArray, String>? {
         val meta = fileDao.getFileMetadata(id) ?: return null
-        val bytes = readLargeBlob(id) ?: return null
-        return Pair(cryptoEngine.decrypt(bytes), meta.mimeType)
+        return when (meta.storageType) {
+            "file" -> {
+                val storageFile = meta.storagePath?.let { File(encryptedDir, it) }
+                    ?: return null
+                if (!storageFile.exists()) return null
+                val bytes = storageFile.inputStream().use { input ->
+                    cryptoEngine.decryptStream(input).use { it.readBytes() }
+                }
+                Pair(bytes, meta.mimeType)
+            }
+            else -> {
+                val bytes = readLargeBlob(id) ?: return null
+                Pair(cryptoEngine.decrypt(bytes), meta.mimeType)
+            }
+        }
+    }
+
+    /** Streaming read — returns a decrypted InputStream. For BLOB storage the
+     *  full blob is still read into memory then wrapped; for file-backed storage
+     *  the encrypted file is stream-decrypted without holding the full plaintext
+     *  in memory. */
+    suspend fun getDecryptedStream(id: Long): InputStream? {
+        val meta = fileDao.getFileMetadata(id) ?: return null
+        return when (meta.storageType) {
+            "file" -> {
+                val storageFile = meta.storagePath?.let { File(encryptedDir, it) }
+                    ?: return null
+                if (!storageFile.exists()) return null
+                try {
+                    cryptoEngine.decryptStream(storageFile.inputStream())
+                } catch (e: Exception) {
+                    Log.e(TAG, "getDecryptedStream id=$id", e)
+                    null
+                }
+            }
+            else -> {
+                val bytes = readLargeBlob(id) ?: return null
+                try {
+                    ByteArrayInputStream(cryptoEngine.decrypt(bytes))
+                } catch (e: Exception) {
+                    Log.e(TAG, "getDecryptedStream id=$id", e)
+                    null
+                }
+            }
+        }
     }
 
     suspend fun getDecryptedThumbnail(id: Long): ByteArray? {

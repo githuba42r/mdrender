@@ -24,6 +24,8 @@ data class FileEntity(
     @ColumnInfo(name = "encrypted_blob") val encryptedBlob: ByteArray,
     @ColumnInfo(name = "encrypted_thumbnail") val encryptedThumbnail: ByteArray? = null,
     @ColumnInfo(name = "file_size") val fileSize: Long,
+    @ColumnInfo(name = "storage_type") val storageType: String = "blob",
+    @ColumnInfo(name = "storage_path") val storagePath: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "scroll_position") val scrollPosition: Int = 0,

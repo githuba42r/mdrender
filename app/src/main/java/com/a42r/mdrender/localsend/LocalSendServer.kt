@@ -3,18 +3,24 @@ package com.a42r.mdrender.localsend
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONObject
+import java.io.File
 
 /**
  * Embedded HTTP server implementing the receive side of the LocalSend v2
  * protocol on port 53317. One request thread per connection; prepare-upload
  * blocks until the user accepts or rejects the transfer.
+ *
+ * @param cacheDir directory used for temp files during upload streaming.
+ *   Pass [android.content.Context.cacheDir] from the hosting service.
  */
 class LocalSendServer(
     private val prefs: LocalSendPrefs,
     private val sessionManager: LocalSendSessionManager,
     port: Int = LocalSendProtocol.PORT,
-    private val certificate: LocalSendCertificate? = null
+    private val certificate: LocalSendCertificate? = null,
+    private val cacheDir: File = File(System.getProperty("java.io.tmpdir", "/tmp"))
 ) : NanoHTTPD(port) {
+    private val uploadDir = File(cacheDir, "uploads").also { it.mkdirs() }
 
     init {
         certificate?.let {
@@ -100,11 +106,30 @@ class LocalSendServer(
         val token = session.parameters["token"]?.firstOrNull()
             ?: return error(Response.Status.BAD_REQUEST, "Missing token")
 
+        // Read the full body into a buffer (handled by NanoHTTPD's internal body
+        // parsing) and write it to a temp file for streaming import. NanoHTTPD
+        // 2.3.1's getInputStream() can be unreliable for application/octet-stream
+        // content types, so readBody() — which reads from the parsed body buffer
+        // via content-length — is the reliable path.
         val bytes = readBody(session)
-        return if (sessionManager.receiveFile(sessionId, fileId, token, bytes)) {
-            json(Response.Status.OK, JSONObject())
-        } else {
-            error(Response.Status.FORBIDDEN, "Invalid session/token")
+        if (bytes.isEmpty())
+            return error(Response.Status.BAD_REQUEST, "Empty body")
+
+        val tempFile = File.createTempFile("upload_${sessionId}_${fileId}_", ".tmp", uploadDir)
+        return try {
+            tempFile.writeBytes(bytes)
+            sessionManager.reportUploadProgress(sessionId, fileId, bytes.size, bytes.size)
+            if (sessionManager.receiveFile(sessionId, fileId, token, tempFile)) {
+                json(Response.Status.OK, JSONObject())
+            } else {
+                sessionManager.cancel(sessionId)
+                error(Response.Status.FORBIDDEN, "Invalid session/token")
+            }
+        } catch (e: Exception) {
+            sessionManager.cancel(sessionId)
+            throw e
+        } finally {
+            tempFile.delete()
         }
     }
 

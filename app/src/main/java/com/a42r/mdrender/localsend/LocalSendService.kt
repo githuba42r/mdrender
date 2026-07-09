@@ -68,7 +68,7 @@ class LocalSendService : Service() {
         var started: LocalSendServer? = null
         for (port in LocalSendProtocol.PORT..LocalSendProtocol.PORT + 10) {
             try {
-                started = LocalSendServer(prefs, sessionManager, port, certificate).also { it.start() }
+                started = LocalSendServer(prefs, sessionManager, port, certificate, this.cacheDir).also { it.start() }
                 break
             } catch (e: Exception) {
                 Log.w(TAG, "Port $port unavailable: ${e.message}")
@@ -102,6 +102,17 @@ class LocalSendService : Service() {
             sessionManager.lastCompleted.collect { message ->
                 if (message != null && !MDRenderApplication.instance.isForeground && !prefs.autoAccept) {
                     postCompletedNotification(message)
+                }
+            }
+        }
+        // Upload progress notification — shows a progress bar and file name
+        // during active transfers.
+        scope.launch {
+            sessionManager.transferProgress.collect { progress ->
+                if (progress != null) {
+                    updateTransferProgressNotification(progress)
+                } else {
+                    NotificationManagerCompat.from(this@LocalSendService).cancel(NOTIF_ID_PROGRESS)
                 }
             }
         }
@@ -176,6 +187,24 @@ class LocalSendService : Service() {
         notifySafely(NOTIF_ID_COMPLETED, notification)
     }
 
+    private fun updateTransferProgressNotification(progress: TransferProgress) {
+        val pct = if (progress.totalBytes > 0)
+            ((progress.receivedBytes * 100) / progress.totalBytes).toInt() else 0
+        val body = if (progress.totalFiles > 1)
+            "File ${progress.fileIndex} of ${progress.totalFiles} — ${progress.fileName} ($pct%)"
+        else
+            "${progress.fileName} — ${formatSize(progress.receivedBytes)} / ${formatSize(progress.totalBytes)}"
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_TRANSFERS)
+            .setSmallIcon(R.drawable.ic_stat_localsend)
+            .setContentTitle("Receiving files")
+            .setContentText(body)
+            .setProgress(100, pct, false)
+            .setOngoing(true)
+            .build()
+        notifySafely(NOTIF_ID_PROGRESS, notification)
+    }
+
     private fun serviceAction(action: String, sessionId: String, requestCode: Int): PendingIntent =
         PendingIntent.getService(
             this, requestCode,
@@ -203,6 +232,17 @@ class LocalSendService : Service() {
         )
     }
 
+    private fun formatSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = arrayOf("KiB", "MiB", "GiB")
+        var value = bytes.toDouble() / 1024
+        for (unit in units) {
+            if (value < 1024) return "%.1f %s".format(value, unit)
+            value /= 1024
+        }
+        return "%.1f TiB".format(value)
+    }
+
     companion object {
         private const val TAG = "LocalSendService"
         private const val CHANNEL_STATUS = "localsend_status"
@@ -210,6 +250,7 @@ class LocalSendService : Service() {
         private const val NOTIF_ID_STATUS = 100
         private const val NOTIF_ID_REQUEST = 101
         private const val NOTIF_ID_COMPLETED = 102
+        private const val NOTIF_ID_PROGRESS = 103
         const val ACTION_ACCEPT = "com.a42r.mdrender.localsend.ACCEPT"
         const val ACTION_REJECT = "com.a42r.mdrender.localsend.REJECT"
         const val EXTRA_SESSION_ID = "session_id"

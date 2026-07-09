@@ -24,6 +24,8 @@ data class FileMetadata(
     @ColumnInfo(name = "encrypted_blob") val encryptedBlob: ByteArray? = null,
     @ColumnInfo(name = "encrypted_thumbnail") val encryptedThumbnail: ByteArray? = null,
     @ColumnInfo(name = "file_size") val fileSize: Long,
+    @ColumnInfo(name = "storage_type") val storageType: String = "blob",
+    @ColumnInfo(name = "storage_path") val storagePath: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "scroll_position") val scrollPosition: Int = 0,
@@ -33,7 +35,7 @@ data class FileMetadata(
 @Dao
 interface FileDao {
     /** Metadata plus encrypted_thumbnail, without the (potentially large) encrypted_blob. */
-    @Query("SELECT id, folder_id, name, mime_type, encrypted_thumbnail, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
+    @Query("SELECT id, folder_id, name, mime_type, encrypted_thumbnail, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
     suspend fun getById(id: Long): FileMetadata?
 
     /** Encrypted blob bytes only — avoids CursorWindow limit on large files. */
@@ -41,7 +43,7 @@ interface FileDao {
     suspend fun getEncryptedBlob(id: Long): ByteArray?
 
     /** Metadata without encrypted blob — safe for large files. */
-    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
     suspend fun getFileMetadata(id: Long): FileMetadata?
 
     @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
@@ -50,11 +52,11 @@ interface FileDao {
     @Query("SELECT name FROM files WHERE folder_id IS :folderId")
     suspend fun getNamesInFolder(folderId: Long?): List<String>
 
-    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId AND name = :name LIMIT 1")
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId AND name = :name LIMIT 1")
     suspend fun findByName(folderId: Long?, name: String): FileMetadata?
 
     /** Full rows for image sibling detection. Separate from listing to keep listing lightweight. */
-    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
     suspend fun getFilesInFolderList(folderId: Long?): List<FileMetadata>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

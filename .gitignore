@@ -23,3 +23,4 @@ play-service-account.json
 RELEASE_NOTES.txt
 secrets.properties
 *service-account*.json
+__pycache__/

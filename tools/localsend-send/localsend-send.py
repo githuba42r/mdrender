@@ -16,11 +16,13 @@ Exit codes: 0 ok, 2 usage, 3 rejected/timeout, 4 PIN required/wrong,
 5 receiver busy, 1 other error.
 """
 import argparse
+import http.client
 import json
 import mimetypes
 import os
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -50,10 +52,39 @@ def _post(url, body, ctx, timeout):
     return urllib.request.urlopen(req, context=ctx, timeout=timeout)
 
 
-def _post_bytes(url, raw, ctx, timeout):
-    req = urllib.request.Request(url, data=raw, method="POST")
-    req.add_header("Content-Type", "application/octet-stream")
-    return urllib.request.urlopen(req, context=ctx, timeout=timeout)
+def _upload_stream(url, path, ctx, timeout):
+    """Upload *path* to *url* using Content-Length, streaming 64 KB at a time.
+    Uses Content-Length (not chunked TE) because NanoHTTPD's chunked decoder
+    can produce 500 errors on large bodies."""
+    file_size = os.path.getsize(path)
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path_qs = parsed.path + ("?" + parsed.query if parsed.query else "")
+
+    if parsed.scheme == "https":
+        conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=timeout)
+    else:
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+
+    conn.connect()
+    conn.putrequest("POST", path_qs, skip_accept_encoding=False)
+    conn.putheader("Content-Type", "application/octet-stream")
+    conn.putheader("Content-Length", str(file_size))
+    conn.endheaders()
+
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(65536)  # 64 KB
+            if not chunk:
+                break
+            conn.send(chunk)
+
+    resp = conn.getresponse()
+    body = resp.read()
+    if resp.status != 200:
+        raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, resp)
+    return body
 
 
 def main(argv=None):
@@ -121,24 +152,56 @@ def main(argv=None):
     print(f"→ {args.host}:{args.port}  {len(paths)} file(s)  "
           f"(waiting up to {args.accept_timeout}s for accept…)"
           + (f"  folder={args.folder!r}" if args.folder else ""), flush=True)
-    try:
-        resp = _post(prepare_url, body, ctx, args.accept_timeout)
-        grant = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            print("rejected: PIN required or incorrect (use --pin)", file=sys.stderr)
-            return 4
-        if e.code == 403:
-            print("rejected: the receiver declined or timed out", file=sys.stderr)
-            return 3
-        if e.code == 409:
-            print("busy: the receiver is handling another transfer", file=sys.stderr)
-            return 5
-        print(f"error: prepare-upload failed: HTTP {e.code} {e.read().decode()[:200]}",
-              file=sys.stderr)
-        return 1
-    except (urllib.error.URLError, TimeoutError) as e:
-        print(f"error: cannot reach receiver: {e}", file=sys.stderr)
+
+    # Retry on 409 (receiver busy / stale session) with backoff up to deadline.
+    deadline = time.monotonic() + args.accept_timeout
+    resp = None
+    grant = None
+    last_err = None
+    while time.monotonic() < deadline:
+        try:
+            resp = _post(prepare_url, body, ctx, max(10, int(deadline - time.monotonic())))
+            grant = json.loads(resp.read().decode())
+            break
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 409:
+                remaining = int(deadline - time.monotonic())
+                if remaining <= 0:
+                    break
+                wait = min(30, max(3, remaining // 10))
+                print(f"\r  busy… retrying in {wait}s ({remaining}s left)  ", end="", flush=True)
+                time.sleep(wait)
+                continue
+            break
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            wait = min(10, max(2, remaining // 10))
+            print(f"\r  retrying ({remaining}s left)…  ", end="", flush=True)
+            time.sleep(wait)
+            continue
+
+    if grant is None:
+        if isinstance(last_err, urllib.error.HTTPError):
+            if last_err.code == 401:
+                print("rejected: PIN required or incorrect (use --pin)", file=sys.stderr)
+                return 4
+            if last_err.code == 403:
+                print("rejected: the receiver declined or timed out", file=sys.stderr)
+                return 3
+            if last_err.code == 409:
+                print("busy: the receiver is handling another transfer", file=sys.stderr)
+                return 5
+            print(f"error: prepare-upload failed: HTTP {last_err.code} "
+                  f"{last_err.read().decode()[:200]}", file=sys.stderr)
+            return 1
+        if isinstance(last_err, (urllib.error.URLError, TimeoutError)):
+            print(f"error: cannot reach receiver: {last_err}", file=sys.stderr)
+            return 1
+        print("error: no response from receiver", file=sys.stderr)
         return 1
 
     session_id = grant["sessionId"]
@@ -156,8 +219,7 @@ def main(argv=None):
         upload_url = (f"{base}/upload?sessionId={urllib.parse.quote(session_id)}"
                       f"&fileId={urllib.parse.quote(fid)}&token={urllib.parse.quote(token)}")
         try:
-            with open(path, "rb") as fh:
-                _post_bytes(upload_url, fh.read(), ctx, args.accept_timeout)
+            _upload_stream(upload_url, path, ctx, args.accept_timeout)
             ok += 1
             print(f"  ✓ {name}")
         except Exception as e:  # noqa: BLE001 - report and continue
