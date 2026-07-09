@@ -114,24 +114,37 @@ class MainActivity : FragmentActivity() {
         }
         if (!force) authRetryCount = 0
         authInProgress = true
-        DeviceAuth.authenticate(
-            activity = this,
-            onSuccess = {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                authInProgress = false
-                authRetryCount = 0
-                appLock.unlock()
-            },
-            onFailure = {
-                authInProgress = false
-                if (authRetryCount < 2 && appLock.isLocked.value) {
-                    authRetryCount++
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        if (appLock.isLocked.value) promptAuth(force = true)
-                    }, 400)
+        try {
+            DeviceAuth.authenticate(
+                activity = this,
+                onSuccess = {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    authInProgress = false
+                    authRetryCount = 0
+                    appLock.unlock()
+                },
+                onFailure = {
+                    authInProgress = false
+                    if (authRetryCount < 2 && appLock.isLocked.value) {
+                        authRetryCount++
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            if (appLock.isLocked.value) promptAuth(force = true)
+                        }, 400)
+                    }
                 }
+            )
+        } catch (_: Exception) {
+            // BiometricPrompt can throw (e.g. "Called after onSaveInstanceState")
+            // when the activity lifecycle hasn't stabilized after a cold restart
+            // following finishAndRemoveTask. Retry with delay instead of crashing.
+            authInProgress = false
+            if (authRetryCount < 2 && appLock.isLocked.value) {
+                authRetryCount++
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (appLock.isLocked.value) promptAuth(force = true)
+                }, 400)
             }
-        )
+        }
     }
 
     @Composable
