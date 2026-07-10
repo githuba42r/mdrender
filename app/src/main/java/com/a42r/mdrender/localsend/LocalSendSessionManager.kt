@@ -211,9 +211,15 @@ class LocalSendSessionManager @Inject constructor(
                 val mime = fileRepository.mimeTypeFromExtension(meta.fileName)
                     .takeIf { it != "application/octet-stream" } ?: meta.fileType
 
+                // Capture bookmarks before REPLACE deletes the existing file.
+                val oldBookmarks = if (session.options.conflict == ConflictStrategy.REPLACE) {
+                    fileRepository.findByName(folderId, meta.fileName)?.let {
+                        it.scrollPosition to it.playbackPosition
+                    }
+                } else null
+
                 when (session.options.conflict) {
                     ConflictStrategy.REPLACE -> {
-                        // Delete any existing file with the same name before importing.
                         fileRepository.findByName(folderId, meta.fileName)
                             ?.let { fileRepository.deleteFile(it.id) }
                     }
@@ -226,7 +232,12 @@ class LocalSendSessionManager @Inject constructor(
                     ConflictStrategy.RENAME -> fileRepository.uniqueNameInFolder(folderId, meta.fileName)
                 }
                 // importFileFromTemp deletes the temp file on success.
-                fileRepository.importFileFromTemp(tempFile, name, mime, folderId)
+                val newId = fileRepository.importFileFromTemp(tempFile, name, mime, folderId)
+                // Restore bookmarks from the replaced file onto the new file.
+                oldBookmarks?.let { (scrollPos, playbackPos) ->
+                    fileRepository.saveScrollPosition(newId, scrollPos)
+                    fileRepository.savePlaybackPosition(newId, playbackPos)
+                }
             }
             synchronized(session.received) { session.received.add(fileId) }
             if (session.received.size == session.files.size) {

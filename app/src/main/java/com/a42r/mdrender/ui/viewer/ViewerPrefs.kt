@@ -2,6 +2,9 @@ package com.a42r.mdrender.ui.viewer
 
 import android.content.Context
 import com.a42r.mdrender.MDRenderApplication
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -16,7 +19,16 @@ class ViewerPrefs @Inject constructor() {
         MDRenderApplication.instance.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
+    private val _indexTocEnabled = MutableStateFlow(indexTocEnabled)
+
+    /** Emits whenever [indexTocEnabled] changes, so observers
+     *  (e.g. the folder browser) can react immediately. */
+    val indexTocEnabledFlow: StateFlow<Boolean> = _indexTocEnabled.asStateFlow()
+
     var indexTocEnabled: Boolean
         get() = prefs.getBoolean(KEY_INDEX_TOC_ENABLED, true)
-        set(value) { prefs.edit().putBoolean(KEY_INDEX_TOC_ENABLED, value).apply() }
+        set(value) {
+            prefs.edit().putBoolean(KEY_INDEX_TOC_ENABLED, value).apply()
+            _indexTocEnabled.value = value
+        }
 }

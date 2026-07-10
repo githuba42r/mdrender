@@ -226,6 +226,14 @@ class BrowserViewModel @Inject constructor(
                 }
             }
         }
+        // React immediately when the INDEX.md toggle changes in Settings,
+        // without needing to navigate away and back.
+        viewModelScope.launch {
+            viewerPrefs.indexTocEnabledFlow.collect {
+                val folderId = _uiState.value.currentFolderId
+                refreshIndexToc(it, folderId)
+            }
+        }
     }
 
     fun navigateToFolder(folderId: Long?) {
@@ -257,21 +265,7 @@ class BrowserViewModel @Inject constructor(
                 fileRepository.getFilesInFolder(folderId).collect { files ->
                     _uiState.update { it.copy(files = files, isLoading = false) }
                     // Check for INDEX.md to show as TOC when setting is enabled.
-                    if (viewerPrefs.indexTocEnabled) {
-                        val indexMd = fileRepository.findByName(folderId, "INDEX.md")
-                        if (indexMd != null) {
-                            val content = fileRepository.getDecryptedContent(indexMd.id)
-                            if (content != null) {
-                                _uiState.update {
-                                    it.copy(indexTocContent = String(content.first, Charsets.UTF_8))
-                                }
-                            }
-                        } else {
-                            _uiState.update { it.copy(indexTocContent = null) }
-                        }
-                    } else {
-                        _uiState.update { it.copy(indexTocContent = null) }
-                    }
+                    refreshIndexToc(viewerPrefs.indexTocEnabled, folderId)
                 }
             }
             val path = folderId?.let { folderRepository.getPathToFolder(it) } ?: emptyList()
@@ -483,6 +477,25 @@ class BrowserViewModel @Inject constructor(
             if (current != null && folderRepository.isInHiddenTree(current)) {
                 navigateToRoot()
             }
+        }
+    }
+
+    /** Re-evaluate whether to show INDEX.md as a TOC for the given folder,
+     *  typically triggered by a change to [ViewerPrefs.indexTocEnabled].
+     *  Safe to call from any context — caller should already be in a coroutine. */
+    private suspend fun refreshIndexToc(enabled: Boolean, folderId: Long?) {
+        if (enabled) {
+            val indexMd = fileRepository.findByName(folderId, "INDEX.md")
+            if (indexMd != null) {
+                val content = fileRepository.getDecryptedContent(indexMd.id)
+                _uiState.update {
+                    it.copy(indexTocContent = if (content != null) String(content.first, Charsets.UTF_8) else null)
+                }
+            } else {
+                _uiState.update { it.copy(indexTocContent = null) }
+            }
+        } else {
+            _uiState.update { it.copy(indexTocContent = null) }
         }
     }
 
