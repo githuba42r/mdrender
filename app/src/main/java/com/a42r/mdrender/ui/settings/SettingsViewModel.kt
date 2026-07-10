@@ -3,6 +3,7 @@ package com.a42r.mdrender.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.a42r.mdrender.audio.AudioPlayerPrefs
+import com.a42r.mdrender.data.repository.StoragePrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.ui.viewer.ViewerPrefs
 import com.a42r.mdrender.localsend.LocalSendService
@@ -21,7 +22,8 @@ data class SettingsUiState(
     val localSendPin: String = "",
     val localSendAutoAccept: Boolean = false,
     val headphonesOnly: Boolean = false,
-    val indexTocEnabled: Boolean = true
+    val indexTocEnabled: Boolean = true,
+    val encryptLargeFiles: Boolean = true
 )
 
 @HiltViewModel
@@ -29,6 +31,7 @@ class SettingsViewModel @Inject constructor(
     private val localSendPrefs: LocalSendPrefs,
     private val audioPlayerPrefs: AudioPlayerPrefs,
     private val viewerPrefs: ViewerPrefs,
+    private val storagePrefs: StoragePrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -38,7 +41,8 @@ class SettingsViewModel @Inject constructor(
         localSendPin = localSendPrefs.pin,
         localSendAutoAccept = localSendPrefs.autoAccept,
         headphonesOnly = audioPlayerPrefs.headphonesOnly,
-        indexTocEnabled = viewerPrefs.indexTocEnabled
+        indexTocEnabled = viewerPrefs.indexTocEnabled,
+        encryptLargeFiles = storagePrefs.encryptLargeFiles
     ))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -85,5 +89,10 @@ class SettingsViewModel @Inject constructor(
     fun setIndexTocEnabled(enabled: Boolean) {
         viewerPrefs.indexTocEnabled = enabled
         _uiState.update { it.copy(indexTocEnabled = enabled) }
+    }
+
+    fun setEncryptLargeFiles(enabled: Boolean) {
+        storagePrefs.encryptLargeFiles = enabled
+        _uiState.update { it.copy(encryptLargeFiles = enabled) }
     }
 }

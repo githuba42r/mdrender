@@ -5,6 +5,7 @@ import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FolderDao
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
+import com.a42r.mdrender.data.repository.StoragePrefs
 import com.a42r.mdrender.security.CryptoEngine
 import dagger.Module
 import dagger.Provides
@@ -24,6 +25,6 @@ object RepositoryModule {
 
     @Provides
     @Singleton
-    fun provideFileRepository(fileDao: FileDao, cryptoEngine: CryptoEngine, @ApplicationContext context: Context): FileRepository =
-        FileRepository(fileDao, cryptoEngine, context)
+    fun provideFileRepository(fileDao: FileDao, cryptoEngine: CryptoEngine, storagePrefs: StoragePrefs, @ApplicationContext context: Context): FileRepository =
+        FileRepository(fileDao, cryptoEngine, storagePrefs, context)
 }

@@ -25,6 +25,12 @@ class AudioPlayerState @Inject constructor() {
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _isDecrypting = MutableStateFlow(false)
+    val isDecrypting: StateFlow<Boolean> = _isDecrypting.asStateFlow()
+
     val currentPosition = MutableStateFlow(0L)
     val duration = MutableStateFlow(0L)
 
@@ -44,6 +50,14 @@ class AudioPlayerState @Inject constructor() {
 
     fun setDuration(dur: Long) {
         duration.value = dur
+    }
+
+    fun setLoading(loading: Boolean) {
+        _isLoading.value = loading
+    }
+
+    fun setDecrypting(decrypting: Boolean) {
+        _isDecrypting.value = decrypting
     }
 
     fun updatePosition(pos: Long) {

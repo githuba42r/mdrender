@@ -37,6 +37,7 @@ class AudioPlayerService : MediaSessionService() {
     private var positionJob: Job? = null
     private var headphoneMonitor: HeadphoneMonitor? = null
     private var currentFileId: Long = 0L
+    private var currentFileSize: Long = 0L
     private var playJob: Job? = null
     private var hiddenPauseJob: Job? = null
     private var isHiddenFile: Boolean = false
@@ -150,6 +151,7 @@ class AudioPlayerService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand: action=${intent?.action} hasFileId=${intent?.hasExtra(EXTRA_FILE_ID)} fileId=${intent?.getLongExtra(EXTRA_FILE_ID, -1L)}")
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> {
                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -193,7 +195,7 @@ class AudioPlayerService : MediaSessionService() {
         serviceScope?.cancel()
         if (::mediaSession.isInitialized) mediaSession.release()
         if (::exoPlayer.isInitialized) exoPlayer.release()
-        cleanCache()
+        purgeCache()
         super.onDestroy()
     }
 
@@ -209,35 +211,55 @@ class AudioPlayerService : MediaSessionService() {
         savePosition()
 
         // Stop current playback on the main thread (ExoPlayer thread requirement)
-        if (currentFileId != 0L) {
-            exoPlayer.stop()
-        }
-        cleanCache()
+        if (currentFileId != 0L) exoPlayer.stop()
+        playerState.setLoading(true)
         currentFileId = fileId
+        currentFileSize = 0L
 
         playJob = serviceScope?.launch(Dispatchers.IO) {
             try {
-                val stream = fileRepository.getDecryptedStream(fileId)
-                    ?: throw Exception("File not found")
-                val ext = fileName.substringAfterLast('.', "mp3")
-                val tempFile = File(cacheDir, "audio/${fileId}_$ext")
-                tempFile.parentFile?.mkdirs()
-                tempFile.outputStream().use { out -> stream.use { it.copyTo(out) } }
+                val meta = fileRepository.getFileMetadata(fileId) ?: throw Exception("File metadata not found")
+                currentFileSize = meta.fileSize
+
+                val sourceFile: File = if (meta.storageType == "plain") {
+                    // Plain (unencrypted) file — play directly from disk, no decrypt needed.
+                    fileRepository.getPlainFile(fileId)
+                        ?: throw Exception("Plain file not found on disk")
+                } else {
+                    // Encrypted file — decrypt to cache then play.
+                    val ext = fileName.substringAfterLast('.', "mp3")
+                    val cacheFile = File(cacheDir, "audio/${fileId}_$ext")
+                    cacheFile.parentFile?.mkdirs()
+
+                    if (!cacheFile.exists() || cacheFile.length() != currentFileSize) {
+                        Log.d(TAG, "Decrypting file $fileId (${currentFileSize} bytes)")
+                        playerState.setDecrypting(true)
+
+                        val (decryptedBytes, _) = fileRepository.getDecryptedContent(fileId)
+                            ?: throw Exception("getDecryptedContent returned null")
+                        cacheFile.writeBytes(decryptedBytes)
+                        playerState.setDecrypting(false)
+                    } else {
+                        Log.d(TAG, "Using cached decrypted file $fileId")
+                    }
+                    cacheFile
+                }
 
                 withContext(Dispatchers.Main) {
-                    currentTempFile = tempFile
-                    val metadata = fileRepository.getFileMetadata(fileId)
-                    val savedPos = metadata?.playbackPosition ?: 0L
-                    isHiddenFile = metadata?.folderId?.let { folderRepository.isInHiddenTree(it) } ?: false
+                    currentTempFile = sourceFile
+                    val savedPos = meta.playbackPosition
+                    isHiddenFile = meta.folderId?.let { folderRepository.isInHiddenTree(it) } ?: false
 
-                    val mediaItem = MediaItem.fromUri(Uri.fromFile(tempFile))
+                    val mediaItem = MediaItem.fromUri(Uri.fromFile(sourceFile))
                     exoPlayer.setMediaItem(mediaItem)
                     exoPlayer.prepare()
+                    Log.d(TAG, "ExoPlayer prepared: duration=${exoPlayer.duration} state=${exoPlayer.playbackState}")
                     if (savedPos > 0) exoPlayer.seekTo(savedPos)
 
                     playerState.setFileInfo(fileId, fileName)
                     playerState.setDuration(if (exoPlayer.duration > 0) exoPlayer.duration else 0L)
                     playerState.updatePosition(savedPos)
+                    playerState.setLoading(false)
                     updateNotification(true)
 
                     exoPlayer.play()
@@ -257,6 +279,8 @@ class AudioPlayerService : MediaSessionService() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "playFile failed for fileId=$fileId", e)
+                playerState.setDecrypting(false)
+                playerState.setLoading(false)
                 withContext(Dispatchers.Main) {
                     playerState.setFileInfo(0, "")
                     playerState.setPlaying(false)
@@ -286,9 +310,11 @@ class AudioPlayerService : MediaSessionService() {
         NotificationManagerCompat.from(this).cancel(NOTIF_ID)
     }
 
-    private fun cleanCache() {
-        currentTempFile?.delete()
+    /** Delete ALL cached decrypted audio files. Called on service destroy. */
+    private fun purgeCache() {
         currentTempFile = null
+        val audioDir = File(cacheDir, "audio")
+        if (audioDir.exists()) audioDir.listFiles()?.forEach { it.delete() }
     }
 
     companion object {

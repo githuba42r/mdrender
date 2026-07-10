@@ -294,6 +294,7 @@ fun FolderBrowserScreen(
                             isGridView = true,
                             selected = file.id in selectedIds,
                             thumbnail = thumb,
+                            encryptedBadge = file.storageType != "plain",
                             onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
                             onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file }
                         )
@@ -325,6 +326,7 @@ fun FolderBrowserScreen(
                                 isGridView = false,
                                 selected = file.id in selectedIds,
                                 thumbnail = thumb,
+                                encryptedBadge = file.storageType != "plain",
                                 onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
                                 onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file },
                                 modifier = Modifier.animateItem()
@@ -433,6 +435,25 @@ fun FolderBrowserScreen(
                         menuFile = null
                     }
                 )
+                if (file.storageType == "plain") {
+                    ListItem(
+                        headlineContent = { Text("Encrypt") },
+                        leadingContent = { Icon(Icons.Filled.Lock, "Encrypt") },
+                        modifier = Modifier.clickable {
+                            menuFile = null
+                            viewModel.encryptFile(file.id)
+                        }
+                    )
+                } else if (file.storageType == "file") {
+                    ListItem(
+                        headlineContent = { Text("Decrypt") },
+                        leadingContent = { Icon(Icons.Filled.LockOpen, "Decrypt") },
+                        modifier = Modifier.clickable {
+                            menuFile = null
+                            viewModel.decryptFile(file.id)
+                        }
+                    )
+                }
                 ListItem(
                     headlineContent = { Text("Properties") },
                     leadingContent = { Icon(Icons.Filled.Info, "Properties") },
@@ -800,6 +821,10 @@ fun FolderBrowserScreen(
             text = {
                 Column {
                     PropertyRow("Name", file.name)
+                    PropertyRow(
+                        "Storage",
+                        if (file.storageType != "plain") "Encrypted (AES-256-GCM)" else "Plain"
+                    )
                     if (isImage) {
                         PropertyRow("Format", file.mimeType.substringAfter('/').uppercase())
                         PropertyRow(

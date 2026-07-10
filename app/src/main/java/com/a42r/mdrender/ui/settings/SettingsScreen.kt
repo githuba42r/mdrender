@@ -133,6 +133,23 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            // Storage / encryption
+            ListItem(
+                headlineContent = { Text("Encrypt large files") },
+                supportingContent = {
+                    Text("Large files are stored unencrypted for instant playback. " +
+                         "Only affects new uploads.")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.encryptLargeFiles,
+                        onCheckedChange = { viewModel.setEncryptLargeFiles(it) }
+                    )
+                }
+            )
+
+            HorizontalDivider()
+
             // INDEX.md table of contents
             ListItem(
                 headlineContent = { Text("INDEX.md table of contents") },

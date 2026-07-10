@@ -24,6 +24,7 @@ import javax.inject.Singleton
 class FileRepository @Inject constructor(
     private val fileDao: FileDao,
     private val cryptoEngine: CryptoEngine,
+    private val storagePrefs: StoragePrefs,
     @ApplicationContext private val context: Context
 ) {
     /** Files above this threshold use file-backed storage instead of SQLite BLOB. */
@@ -31,6 +32,9 @@ class FileRepository @Inject constructor(
 
     /** Directory for file-backed encrypted blobs. */
     private val encryptedDir: File = File(context.filesDir, "encrypted").also { it.mkdirs() }
+
+    /** Directory for file-backed unencrypted files. */
+    private val plainDir: File = File(context.filesDir, "plain").also { it.mkdirs() }
 
     fun getFilesInFolder(folderId: Long?): Flow<List<FileListItem>> = fileDao.getFilesInFolder(folderId)
 
@@ -64,6 +68,22 @@ class FileRepository @Inject constructor(
             val rawBytes = tempFile.readBytes()
             tempFile.delete()
             importFile(name, mimeType, rawBytes, folderId)
+        } else if (!storagePrefs.encryptLargeFiles) {
+            // Large file with encryption disabled — store unencrypted on disk.
+            val storageName = UUID.randomUUID().toString()
+            val dest = File(plainDir, storageName)
+            tempFile.copyTo(dest, overwrite = true)
+            tempFile.delete()
+            val entity = FileEntity(
+                folderId = folderId,
+                name = name,
+                mimeType = mimeType,
+                encryptedBlob = ByteArray(0),
+                fileSize = fileSize,
+                storageType = "plain",
+                storagePath = storageName
+            )
+            fileDao.insert(entity)
         } else {
             // Large file — stream encrypt to file-backed storage.
             val storageName = UUID.randomUUID().toString()
@@ -85,10 +105,54 @@ class FileRepository @Inject constructor(
         }
     }
 
+    /** Returns the on-disk File for a plain-stored file, or null if not applicable. */
+    suspend fun getPlainFile(id: Long): File? {
+        val meta = fileDao.getFileMetadata(id) ?: return null
+        if (meta.storageType != "plain" || meta.storagePath == null) return null
+        val file = File(plainDir, meta.storagePath)
+        return if (file.exists()) file else null
+    }
+
+    /** Convert a plain file to encrypted file-backed storage. */
+    suspend fun encryptFile(id: Long) {
+        val meta = fileDao.getFileMetadata(id) ?: return
+        if (meta.storageType != "plain" || meta.storagePath == null) return
+        val src = File(plainDir, meta.storagePath)
+        if (!src.exists()) return
+        val storageName = UUID.randomUUID().toString()
+        val dest = File(encryptedDir, storageName)
+        src.inputStream().use { input ->
+            cryptoEngine.encryptStream(input, dest.outputStream())
+        }
+        src.delete()
+        fileDao.updateStorageInfo(id, "file", storageName, meta.fileSize, System.currentTimeMillis())
+    }
+
+    /** Convert an encrypted file-backed file to plain (unencrypted) storage. */
+    suspend fun decryptFile(id: Long) {
+        val meta = fileDao.getFileMetadata(id) ?: return
+        if (meta.storageType != "file" || meta.storagePath == null) return
+        val src = File(encryptedDir, meta.storagePath)
+        if (!src.exists()) return
+        val storageName = UUID.randomUUID().toString()
+        val dest = File(plainDir, storageName)
+        try {
+            val decrypted = cryptoEngine.decryptFile(src)
+            dest.writeBytes(decrypted)
+        } catch (e: Exception) {
+            Log.e(TAG, "decryptFile id=$id", e)
+            return
+        }
+        src.delete()
+        fileDao.updateStorageInfo(id, "plain", storageName, meta.fileSize, System.currentTimeMillis())
+    }
+
     suspend fun deleteFile(id: Long) {
         val meta = fileDao.getFileMetadata(id)
         if (meta?.storageType == "file" && meta.storagePath != null) {
             File(encryptedDir, meta.storagePath).delete()
+        } else if (meta?.storageType == "plain" && meta.storagePath != null) {
+            File(plainDir, meta.storagePath).delete()
         }
         fileDao.delete(id)
     }
@@ -127,7 +191,10 @@ class FileRepository @Inject constructor(
                 val sizeStmt = db.compileStatement("SELECT length(encrypted_blob) FROM files WHERE id = ?")
                 sizeStmt.bindLong(1, id)
                 val totalSize = sizeStmt.simpleQueryForLong()
-                if (totalSize <= 0L) return null
+                if (totalSize <= 0L) {
+                    Log.w(TAG, "readLargeBlob: id=$id encrypted_blob length=$totalSize")
+                    return null
+                }
 
                 val out = ByteArrayOutputStream(totalSize.toInt().coerceAtMost(256 * 1024 * 1024))
                 val chunk = 1_048_576 // 1MB
@@ -137,10 +204,18 @@ class FileRepository @Inject constructor(
                         "SELECT substr(encrypted_blob, ?, ?) FROM files WHERE id = ?",
                         arrayOf(offset.toString(), chunk.toString(), id.toString())
                     )
-                    cursor.use { if (it.moveToFirst()) out.write(it.getBlob(0)) }
+                    cursor.use { if (it.moveToFirst()) {
+                        val data = it.getBlob(0)
+                        if (data == null) { Log.w(TAG, "readLargeBlob: null chunk at offset=$offset id=$id") }
+                        else out.write(data)
+                    } else {
+                        Log.w(TAG, "readLargeBlob: no cursor at offset=$offset id=$id")
+                    } }
                     offset += chunk
                 }
-                return out.toByteArray()
+                val result = out.toByteArray()
+                Log.d(TAG, "readLargeBlob: id=$id totalSize=$totalSize read=${result.size}")
+                return result
             }
         } catch (e: Exception) {
             Log.e(TAG, "readLargeBlob id=$id", e)
@@ -149,7 +224,7 @@ class FileRepository @Inject constructor(
     }
 
     /** Returns the full decrypted content as a ByteArray. For file-stored files,
-     *  the encrypted file is read and decrypted in a single pass. */
+     *  the encrypted file is read and decrypted in a single doFinal call. */
     suspend fun getDecryptedContent(id: Long): Pair<ByteArray, String>? {
         val meta = fileDao.getFileMetadata(id) ?: return null
         return when (meta.storageType) {
@@ -157,10 +232,19 @@ class FileRepository @Inject constructor(
                 val storageFile = meta.storagePath?.let { File(encryptedDir, it) }
                     ?: return null
                 if (!storageFile.exists()) return null
-                val bytes = storageFile.inputStream().use { input ->
-                    cryptoEngine.decryptStream(input).use { it.readBytes() }
+                try {
+                    val bytes = cryptoEngine.decryptFile(storageFile)
+                    Pair(bytes, meta.mimeType)
+                } catch (e: Exception) {
+                    Log.e(TAG, "getDecryptedContent id=$id", e)
+                    null
                 }
-                Pair(bytes, meta.mimeType)
+            }
+            "plain" -> {
+                val storageFile = meta.storagePath?.let { File(plainDir, it) }
+                    ?: return null
+                if (!storageFile.exists()) return null
+                Pair(storageFile.readBytes(), meta.mimeType)
             }
             else -> {
                 val bytes = readLargeBlob(id) ?: return null
@@ -174,25 +258,41 @@ class FileRepository @Inject constructor(
      *  the encrypted file is stream-decrypted without holding the full plaintext
      *  in memory. */
     suspend fun getDecryptedStream(id: Long): InputStream? {
-        val meta = fileDao.getFileMetadata(id) ?: return null
+        val meta = fileDao.getFileMetadata(id) ?: return null.also {
+            Log.w(TAG, "getDecryptedStream: no metadata for id=$id")
+        }
         return when (meta.storageType) {
             "file" -> {
                 val storageFile = meta.storagePath?.let { File(encryptedDir, it) }
-                    ?: return null
-                if (!storageFile.exists()) return null
+                    ?: return null.also { Log.w(TAG, "getDecryptedStream: no storagePath for id=$id") }
+                if (!storageFile.exists()) {
+                    Log.w(TAG, "getDecryptedStream: storageFile missing for id=$id path=$storageFile")
+                    return null
+                }
                 try {
                     cryptoEngine.decryptStream(storageFile.inputStream())
                 } catch (e: Exception) {
-                    Log.e(TAG, "getDecryptedStream id=$id", e)
+                    Log.e(TAG, "getDecryptedStream id=$id decryptStream failed", e)
                     null
                 }
             }
+            "plain" -> {
+                val storageFile = meta.storagePath?.let { File(plainDir, it) }
+                    ?: return null.also { Log.w(TAG, "getDecryptedStream: no storagePath for id=$id") }
+                if (!storageFile.exists()) {
+                    Log.w(TAG, "getDecryptedStream: storageFile missing for id=$id path=$storageFile")
+                    return null
+                }
+                storageFile.inputStream()
+            }
             else -> {
-                val bytes = readLargeBlob(id) ?: return null
+                val bytes = readLargeBlob(id) ?: return null.also {
+                    Log.w(TAG, "getDecryptedStream: readLargeBlob returned null for id=$id")
+                }
                 try {
                     ByteArrayInputStream(cryptoEngine.decrypt(bytes))
                 } catch (e: Exception) {
-                    Log.e(TAG, "getDecryptedStream id=$id", e)
+                    Log.e(TAG, "getDecryptedStream id=$id decrypt failed", e)
                     null
                 }
             }

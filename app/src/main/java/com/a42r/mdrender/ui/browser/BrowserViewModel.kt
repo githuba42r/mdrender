@@ -336,6 +336,22 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    fun encryptFile(id: Long) {
+        viewModelScope.launch {
+            fileRepository.encryptFile(id)
+            loadContent(_uiState.value.currentFolderId)
+            _userMessage.emit("File encrypted")
+        }
+    }
+
+    fun decryptFile(id: Long) {
+        viewModelScope.launch {
+            fileRepository.decryptFile(id)
+            loadContent(_uiState.value.currentFolderId)
+            _userMessage.emit("File decrypted")
+        }
+    }
+
     // --- Move with conflict resolution ------------------------------------
 
     /** Non-null while the Replace/Skip dialog should be showing. */

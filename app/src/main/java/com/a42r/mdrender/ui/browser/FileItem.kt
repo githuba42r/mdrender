@@ -30,6 +30,7 @@ fun FileItem(
     onLongClick: (() -> Unit)? = null,
     selected: Boolean = false,
     hiddenBadge: Boolean = false,
+    encryptedBadge: Boolean = false,
     thumbnail: ByteArray? = null
 ) {
     val showThumb = thumbnail != null && !selected
@@ -63,6 +64,14 @@ fun FileItem(
                             contentDescription = if (selected) "Selected" else fileType.label,
                             modifier = Modifier.size(40.dp),
                             tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    if (encryptedBadge) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = "Encrypted",
+                            modifier = Modifier.size(16.dp).align(Alignment.BottomStart),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     if (hiddenBadge) {
@@ -106,9 +115,17 @@ fun FileItem(
                     )
                 }
             },
-            trailingContent = if (hiddenBadge) {
-                { Icon(Icons.Filled.VisibilityOff, "Hidden", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-            } else null,
+            trailingContent = if (encryptedBadge || hiddenBadge) { {
+                Row {
+                    if (encryptedBadge) {
+                        Icon(Icons.Filled.Lock, "Encrypted", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    if (hiddenBadge) {
+                        Icon(Icons.Filled.VisibilityOff, "Hidden", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } } else null,
             colors = if (selected) ListItemDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.primaryContainer
             ) else ListItemDefaults.colors(),

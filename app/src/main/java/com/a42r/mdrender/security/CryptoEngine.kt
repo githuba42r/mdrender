@@ -50,6 +50,14 @@ class CryptoEngine @Inject constructor(
         }
     }
 
+    /** Read an entire encrypted file and decrypt it in a single [doFinal] call.
+     *  Much faster than [decryptStream] for hardware-backed keystores because
+     *  it avoids the per-chunk TEE round-trips of CipherInputStream. */
+    fun decryptFile(file: java.io.File): ByteArray {
+        val encryptedBytes = file.readBytes()
+        return decrypt(encryptedBytes)
+    }
+
     /** Streaming encrypt: reads [input], writes IV + ciphertext to [output].
      *  Both streams are closed after the operation. */
     fun encryptStream(input: InputStream, output: OutputStream) {

@@ -25,6 +25,7 @@ fun AudioMiniPlayerBar(
 ) {
     val info by playerState.info.collectAsState()
     val isPlaying by playerState.isPlaying.collectAsState()
+    val isLoading by playerState.isLoading.collectAsState()
     val position by playerState.currentPosition.collectAsState()
 
     AnimatedVisibility(
@@ -55,12 +56,15 @@ fun AudioMiniPlayerBar(
                         contentDescription = "No headphones",
                         tint = MaterialTheme.colorScheme.error
                     )
+                } else if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 3.dp
+                    )
                 } else {
                     IconButton(
                         onClick = {
-                            if (!blocked) {
-                                if (isPlaying) playerState.pause() else playerState.resume()
-                            }
+                            if (isPlaying) playerState.pause() else playerState.resume()
                         },
                         modifier = Modifier.size(36.dp)
                     ) {

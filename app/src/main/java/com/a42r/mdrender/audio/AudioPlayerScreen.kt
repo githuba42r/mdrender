@@ -26,6 +26,8 @@ fun AudioPlayerScreen(
     val state = viewModel.playerState
     val info by state.info.collectAsState()
     val isPlaying by state.isPlaying.collectAsState()
+    val isLoading by state.isLoading.collectAsState()
+    val isDecrypting by state.isDecrypting.collectAsState()
     val position by state.currentPosition.collectAsState()
     val duration by state.duration.collectAsState()
 
@@ -60,17 +62,21 @@ fun AudioPlayerScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(
-                Icons.Filled.MusicNote,
-                contentDescription = null,
-                modifier = Modifier.size(96.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
+            if (isDecrypting) {
+                CircularProgressIndicator(modifier = Modifier.size(64.dp))
+            } else {
+                Icon(
+                    Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    modifier = Modifier.size(96.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
 
             Text(
-                info.fileName,
+                if (isDecrypting) "Decrypting…" else info.fileName,
                 style = MaterialTheme.typography.headlineSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -84,60 +90,60 @@ fun AudioPlayerScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(Modifier.height(16.dp))
+            if (!isLoading) {
+                Spacer(Modifier.height(16.dp))
 
-            // Progress slider
-            Slider(
-                value = if (duration > 0) position.toFloat().coerceAtMost(duration.toFloat()) else 0f,
-                onValueChange = { state.seekTo(it.toLong()) },
-                valueRange = 0f..if (duration > 0) duration.toFloat() else 1f,
-                modifier = Modifier.fillMaxWidth()
-            )
+                // Progress slider
+                Slider(
+                    value = if (duration > 0) position.toFloat().coerceAtMost(duration.toFloat()) else 0f,
+                    onValueChange = { state.seekTo(it.toLong()) },
+                    valueRange = 0f..if (duration > 0) duration.toFloat() else 1f,
+                    modifier = Modifier.fillMaxWidth()
+                )
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
 
-            // Controls
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Skip back 15s
-                IconButton(onClick = {
-                    val newPos = (position - 15_000).coerceAtLeast(0)
-                    state.seekTo(newPos)
-                }) {
-                    Icon(Icons.Filled.Replay10, "Skip back 10s", modifier = Modifier.size(48.dp))
-                }
-
-                IconButton(
-                    onClick = {
-                        if (isPlaying) state.pause() else state.resume()
-                    },
-                    modifier = Modifier.size(72.dp)
+                // Controls
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        if (isPlaying) Icons.Filled.PauseCircle else Icons.Filled.PlayCircle,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    IconButton(onClick = {
+                        val newPos = (position - 15_000).coerceAtLeast(0)
+                        state.seekTo(newPos)
+                    }) {
+                        Icon(Icons.Filled.Replay10, "Skip back 10s", modifier = Modifier.size(48.dp))
+                    }
+
+                    IconButton(
+                        onClick = {
+                            if (isPlaying) state.pause() else state.resume()
+                        },
+                        modifier = Modifier.size(72.dp)
+                    ) {
+                        Icon(
+                            if (isPlaying) Icons.Filled.PauseCircle else Icons.Filled.PlayCircle,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    IconButton(onClick = {
+                        state.seekTo((position + 10_000).coerceAtMost(duration))
+                    }) {
+                        Icon(Icons.Filled.Forward10, "Skip forward 10s", modifier = Modifier.size(48.dp))
+                    }
                 }
 
-                IconButton(onClick = {
-                    state.seekTo((position + 10_000).coerceAtMost(duration))
-                }) {
-                    Icon(Icons.Filled.Forward10, "Skip forward 10s", modifier = Modifier.size(48.dp))
+                Spacer(Modifier.height(32.dp))
+
+                OutlinedButton(onClick = onBack) {
+                    Icon(Icons.Filled.Minimize, "Mini player")
+                    Spacer(Modifier.width(8.dp))
+                    Text("Mini Player")
                 }
-            }
-
-            Spacer(Modifier.height(32.dp))
-
-            // Collapse to mini player
-            OutlinedButton(onClick = onBack) {
-                Icon(Icons.Filled.Minimize, "Mini player")
-                Spacer(Modifier.width(8.dp))
-                Text("Mini Player")
             }
         }
     }

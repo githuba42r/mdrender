@@ -10,6 +10,7 @@ data class FileListItem(
     val name: String,
     @ColumnInfo(name = "mime_type") val mimeType: String,
     @ColumnInfo(name = "file_size") val fileSize: Long,
+    @ColumnInfo(name = "storage_type") val storageType: String = "blob",
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "scroll_position") val scrollPosition: Int = 0,
@@ -46,7 +47,7 @@ interface FileDao {
     @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE id = :id")
     suspend fun getFileMetadata(id: Long): FileMetadata?
 
-    @Query("SELECT id, folder_id, name, mime_type, file_size, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IS :folderId ORDER BY name ASC")
     fun getFilesInFolder(folderId: Long?): Flow<List<FileListItem>>
 
     @Query("SELECT name FROM files WHERE folder_id IS :folderId")
@@ -76,6 +77,9 @@ interface FileDao {
 
     @Query("DELETE FROM files WHERE folder_id = :folderId")
     suspend fun deleteByFolderId(folderId: Long)
+
+    @Query("UPDATE files SET storage_type = :storageType, storage_path = :storagePath, file_size = :fileSize, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateStorageInfo(id: Long, storageType: String, storagePath: String?, fileSize: Long, updatedAt: Long)
 
     @Query("UPDATE files SET scroll_position = :pos WHERE id = :id")
     suspend fun updateScrollPosition(id: Long, pos: Int)
