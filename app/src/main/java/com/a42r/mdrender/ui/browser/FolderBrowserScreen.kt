@@ -59,6 +59,7 @@ fun FolderBrowserScreen(
     val pendingShare by viewModel.pendingShare.collectAsStateWithLifecycle()
     val shareInProgress by viewModel.shareInProgress.collectAsStateWithLifecycle()
     val moveConflict by viewModel.moveConflict.collectAsStateWithLifecycle()
+    val processingFiles by viewModel.processingFiles.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -295,6 +296,7 @@ fun FolderBrowserScreen(
                             selected = file.id in selectedIds,
                             thumbnail = thumb,
                             encryptedBadge = file.storageType != "plain",
+                            processing = file.id in processingFiles,
                             onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
                             onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file }
                         )
@@ -327,6 +329,7 @@ fun FolderBrowserScreen(
                                 selected = file.id in selectedIds,
                                 thumbnail = thumb,
                                 encryptedBadge = file.storageType != "plain",
+                                processing = file.id in processingFiles,
                                 onClick = { if (selectionMode) toggleSelect(file.id) else openFile(file) },
                                 onLongClick = { if (selectionMode) toggleSelect(file.id) else menuFile = file },
                                 modifier = Modifier.animateItem()
@@ -435,7 +438,16 @@ fun FolderBrowserScreen(
                         menuFile = null
                     }
                 )
-                if (file.storageType == "plain") {
+                if (file.id in processingFiles) {
+                    ListItem(
+                        headlineContent = { Text("Processing…") },
+                        leadingContent = { Icon(Icons.Filled.HourglassEmpty, "Processing") },
+                        colors = ListItemDefaults.colors(
+                            headlineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                            leadingIconColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        )
+                    )
+                } else if (file.storageType == "plain") {
                     ListItem(
                         headlineContent = { Text("Encrypt") },
                         leadingContent = { Icon(Icons.Filled.Lock, "Encrypt") },
@@ -444,7 +456,7 @@ fun FolderBrowserScreen(
                             viewModel.encryptFile(file.id)
                         }
                     )
-                } else if (file.storageType == "file") {
+                } else {
                     ListItem(
                         headlineContent = { Text("Decrypt") },
                         leadingContent = { Icon(Icons.Filled.LockOpen, "Decrypt") },
@@ -812,8 +824,12 @@ fun FolderBrowserScreen(
     // Properties dialog
     propertiesFile?.let { file ->
         val isImage = file.mimeType.startsWith("image/")
+        val isAudio = file.mimeType.startsWith("audio/")
         val resolution by produceState<Pair<Int, Int>?>(null, file.id) {
             value = if (isImage) viewModel.getImageResolution(file.id) else null
+        }
+        val audioDuration by produceState<Long?>(null, file.id) {
+            value = if (isAudio) viewModel.getAudioDuration(file.id) else null
         }
         AlertDialog(
             onDismissRequest = { propertiesFile = null },
@@ -831,6 +847,10 @@ fun FolderBrowserScreen(
                             "Resolution",
                             resolution?.let { "${it.first} × ${it.second}" } ?: "…"
                         )
+                    } else if (isAudio) {
+                        PropertyRow("Duration", audioDuration?.let { formatDuration(it) } ?: "…")
+                        PropertyRow("Created", formatDateTime(file.createdAt))
+                        PropertyRow("Size", formatSize(file.fileSize))
                     } else {
                         PropertyRow("Created", formatDateTime(file.createdAt))
                         PropertyRow("Size", formatSize(file.fileSize))
@@ -839,6 +859,19 @@ fun FolderBrowserScreen(
             },
             confirmButton = {
                 TextButton(onClick = { propertiesFile = null }) { Text("Close") }
+            },
+            dismissButton = if (file.id in processingFiles) {
+                { TextButton(onClick = {}, enabled = false) { Text("Processing…") } }
+            } else if (file.storageType != "plain") {
+                { TextButton(onClick = {
+                    propertiesFile = null
+                    viewModel.decryptFile(file.id)
+                }) { Text("Decrypt", color = MaterialTheme.colorScheme.primary) } }
+            } else {
+                { TextButton(onClick = {
+                    propertiesFile = null
+                    viewModel.encryptFile(file.id)
+                }) { Text("Encrypt", color = MaterialTheme.colorScheme.primary) } }
             }
         )
     }
@@ -1000,4 +1033,11 @@ private fun formatSize(bytes: Long): String = when {
     bytes >= 1_048_576 -> String.format(Locale.getDefault(), "%.1f MB", bytes / 1_048_576.0)
     bytes >= 1024 -> String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0)
     else -> "$bytes B"
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val min = totalSec / 60
+    val sec = totalSec % 60
+    return "%d:%02d".format(min, sec)
 }

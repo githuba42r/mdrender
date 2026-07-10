@@ -76,6 +76,10 @@ class BrowserViewModel @Inject constructor(
     /** Whether the LocalSend receiver is on (drives the top-bar toggle). */
     val localSendEnabled: StateFlow<Boolean> = localSendPrefs.enabledFlow
 
+    /** File IDs currently being encrypted or decrypted. */
+    private val _processingFiles = MutableStateFlow<Set<Long>>(emptySet())
+    val processingFiles: StateFlow<Set<Long>> = _processingFiles.asStateFlow()
+
     fun setLocalSendEnabled(enabled: Boolean) {
         localSendPrefs.enabled = enabled
         if (enabled) LocalSendService.start(context) else LocalSendService.stop(context)
@@ -338,17 +342,27 @@ class BrowserViewModel @Inject constructor(
 
     fun encryptFile(id: Long) {
         viewModelScope.launch {
-            fileRepository.encryptFile(id)
-            loadContent(_uiState.value.currentFolderId)
-            _userMessage.emit("File encrypted")
+            _processingFiles.update { it + id }
+            try {
+                fileRepository.encryptFile(id)
+                loadContent(_uiState.value.currentFolderId)
+                _userMessage.emit("File encrypted")
+            } finally {
+                _processingFiles.update { it - id }
+            }
         }
     }
 
     fun decryptFile(id: Long) {
         viewModelScope.launch {
-            fileRepository.decryptFile(id)
-            loadContent(_uiState.value.currentFolderId)
-            _userMessage.emit("File decrypted")
+            _processingFiles.update { it + id }
+            try {
+                fileRepository.decryptFile(id)
+                loadContent(_uiState.value.currentFolderId)
+                _userMessage.emit("File decrypted")
+            } finally {
+                _processingFiles.update { it - id }
+            }
         }
     }
 
@@ -470,6 +484,10 @@ class BrowserViewModel @Inject constructor(
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
         return if (opts.outWidth > 0) opts.outWidth to opts.outHeight else null
     }
+
+    /** Audio duration in milliseconds for Properties. */
+    suspend fun getAudioDuration(id: Long): Long? =
+        fileRepository.getAudioDuration(id)
 
     /** Resolve a filename (from a markdown link) to a file ID in the current folder. */
     suspend fun resolveFileLink(filename: String): Long? =

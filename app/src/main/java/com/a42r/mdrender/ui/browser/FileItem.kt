@@ -31,6 +31,7 @@ fun FileItem(
     selected: Boolean = false,
     hiddenBadge: Boolean = false,
     encryptedBadge: Boolean = false,
+    processing: Boolean = false,
     thumbnail: ByteArray? = null
 ) {
     val showThumb = thumbnail != null && !selected
@@ -49,7 +50,12 @@ fun FileItem(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box {
-                    if (showThumb) {
+                    if (processing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp).align(Alignment.Center),
+                            strokeWidth = 3.dp
+                        )
+                    } else if (showThumb) {
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(thumbnail).crossfade(true).build(),
@@ -99,7 +105,12 @@ fun FileItem(
         ListItem(
             headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             leadingContent = {
-                if (showThumb) {
+                if (processing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 3.dp
+                    )
+                } else if (showThumb) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(thumbnail).crossfade(true).build(),

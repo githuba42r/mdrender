@@ -17,6 +17,6 @@ class StoragePrefs @Inject constructor() {
     }
 
     var encryptLargeFiles: Boolean
-        get() = prefs.getBoolean(KEY_ENCRYPT_LARGE_FILES, true)
+        get() = prefs.getBoolean(KEY_ENCRYPT_LARGE_FILES, false)
         set(value) { prefs.edit().putBoolean(KEY_ENCRYPT_LARGE_FILES, value).apply() }
 }

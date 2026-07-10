@@ -71,7 +71,11 @@ class CryptoEngine @Inject constructor(
 
     /** Streaming decrypt: returns an InputStream that reads IV from [input],
      *  then lazily decrypts the remaining bytes. The caller must close the
-     *  returned stream. GCM tag verification happens on close. */
+     *  returned stream. GCM tag verification happens on close.
+     *
+     *  NOTE: CipherInputStream reads 8KB chunks internally, causing ~8ms TEE
+     *  round-trips per chunk. For large files this is very slow. Prefer
+     *  [decryptChunked] when writing to an output stream — it uses 4MB chunks. */
     fun decryptStream(input: InputStream): InputStream {
         val iv = ByteArray(GCM_IV_LENGTH)
         DataInputStream(input).readFully(iv)
@@ -79,5 +83,30 @@ class CryptoEngine @Inject constructor(
         val spec = GCMParameterSpec(GCM_TAG_LENGTH, iv)
         cipher.init(Cipher.DECRYPT_MODE, getKey(), spec)
         return CipherInputStream(input, cipher)
+    }
+
+    /** Decrypt [input] (IV + ciphertext + GCM tag) and write plaintext to
+     *  [output], processing in 4MB chunks to minimize TEE round-trips.
+     *  Both streams are consumed and closed by this method. */
+    fun decryptChunked(input: InputStream, output: OutputStream) {
+        val iv = ByteArray(GCM_IV_LENGTH)
+        DataInputStream(input).readFully(iv)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, getKey(), GCMParameterSpec(GCM_TAG_LENGTH, iv))
+        val buf = ByteArray(4 * 1024 * 1024) // 4MB per TEE call
+        output.use { out ->
+            var bytesRead: Int
+            while (input.read(buf).also { bytesRead = it } >= 0) {
+                val plain = cipher.update(buf, 0, bytesRead)
+                if (plain != null) out.write(plain)
+            }
+            input.close()
+            try {
+                val finalPlain = cipher.doFinal()
+                if (finalPlain != null) out.write(finalPlain)
+            } catch (e: GeneralSecurityException) {
+                throw SecurityException("Decryption failed — invalid key or tampered data", e)
+            }
+        }
     }
 }

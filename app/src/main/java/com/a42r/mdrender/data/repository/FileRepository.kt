@@ -3,6 +3,7 @@ package com.a42r.mdrender.data.repository
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.util.Log
 import com.a42r.mdrender.MDRenderApplication
 import com.a42r.mdrender.data.dao.FileDao
@@ -11,7 +12,9 @@ import com.a42r.mdrender.data.dao.FileMetadata
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.security.CryptoEngine
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -28,7 +31,7 @@ class FileRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     /** Files above this threshold use file-backed storage instead of SQLite BLOB. */
-    private val FILE_STORAGE_THRESHOLD = 10L * 1024 * 1024 // 10 MB
+    private val FILE_STORAGE_THRESHOLD = 1L * 1024 * 1024 // 1 MB
 
     /** Directory for file-backed encrypted blobs. */
     private val encryptedDir: File = File(context.filesDir, "encrypted").also { it.mkdirs() }
@@ -114,11 +117,11 @@ class FileRepository @Inject constructor(
     }
 
     /** Convert a plain file to encrypted file-backed storage. */
-    suspend fun encryptFile(id: Long) {
-        val meta = fileDao.getFileMetadata(id) ?: return
-        if (meta.storageType != "plain" || meta.storagePath == null) return
+    suspend fun encryptFile(id: Long) = withContext(Dispatchers.IO) {
+        val meta = fileDao.getFileMetadata(id) ?: return@withContext
+        if (meta.storageType != "plain" || meta.storagePath == null) return@withContext
         val src = File(plainDir, meta.storagePath)
-        if (!src.exists()) return
+        if (!src.exists()) return@withContext
         val storageName = UUID.randomUUID().toString()
         val dest = File(encryptedDir, storageName)
         src.inputStream().use { input ->
@@ -128,23 +131,30 @@ class FileRepository @Inject constructor(
         fileDao.updateStorageInfo(id, "file", storageName, meta.fileSize, System.currentTimeMillis())
     }
 
-    /** Convert an encrypted file-backed file to plain (unencrypted) storage. */
-    suspend fun decryptFile(id: Long) {
-        val meta = fileDao.getFileMetadata(id) ?: return
-        if (meta.storageType != "file" || meta.storagePath == null) return
-        val src = File(encryptedDir, meta.storagePath)
-        if (!src.exists()) return
+    /** Convert a file-backed encrypted file or BLOB to plain (unencrypted) storage.
+     *  Uses streaming decrypt to avoid loading the entire file into memory. */
+    suspend fun decryptFile(id: Long) = withContext(Dispatchers.IO) {
+        val meta = fileDao.getFileMetadata(id) ?: return@withContext
+        if (meta.storageType == "plain") return@withContext
         val storageName = UUID.randomUUID().toString()
         val dest = File(plainDir, storageName)
         try {
-            val decrypted = cryptoEngine.decryptFile(src)
-            dest.writeBytes(decrypted)
+            when (meta.storageType) {
+                "file" -> {
+                    val src = meta.storagePath?.let { File(encryptedDir, it) } ?: return@withContext
+                    if (!src.exists()) return@withContext
+                    cryptoEngine.decryptChunked(src.inputStream(), dest.outputStream())
+                    src.delete()
+                }
+                else -> {
+                    val encrypted = fileDao.getEncryptedBlob(id) ?: return@withContext
+                    cryptoEngine.decryptChunked(ByteArrayInputStream(encrypted), dest.outputStream())
+                }
+            }
+            fileDao.updateStorageInfo(id, "plain", storageName, meta.fileSize, System.currentTimeMillis())
         } catch (e: Exception) {
             Log.e(TAG, "decryptFile id=$id", e)
-            return
         }
-        src.delete()
-        fileDao.updateStorageInfo(id, "plain", storageName, meta.fileSize, System.currentTimeMillis())
     }
 
     suspend fun deleteFile(id: Long) {
@@ -340,6 +350,51 @@ class FileRepository @Inject constructor(
     /** The file named [name] in [folderId] (exact match), or null. */
     suspend fun findByName(folderId: Long?, name: String): FileMetadata? =
         fileDao.findByName(folderId, name)
+
+    /** Extract audio duration in milliseconds. Returns null for non-audio or on failure. */
+    suspend fun getAudioDuration(id: Long): Long? {
+        val meta = fileDao.getFileMetadata(id) ?: return null
+        if (!meta.mimeType.startsWith("audio/")) return null
+        return withContext(Dispatchers.IO) {
+            try {
+                val retriever = MediaMetadataRetriever()
+                when (meta.storageType) {
+                    "plain" -> {
+                        val f = meta.storagePath?.let { File(plainDir, it) } ?: return@withContext null
+                        if (!f.exists()) return@withContext null
+                        retriever.setDataSource(f.absolutePath)
+                    }
+                    else -> {
+                        val tmp = File.createTempFile("dur_", ".tmp", context.cacheDir)
+                        try {
+                            when (meta.storageType) {
+                                "file" -> {
+                                    val src = meta.storagePath?.let { File(encryptedDir, it) }
+                                        ?: return@withContext null
+                                    if (!src.exists()) return@withContext null
+                                    cryptoEngine.decryptChunked(src.inputStream(), tmp.outputStream())
+                                }
+                                else -> {
+                                    val encrypted = fileDao.getEncryptedBlob(id)
+                                        ?: return@withContext null
+                                    cryptoEngine.decryptChunked(ByteArrayInputStream(encrypted), tmp.outputStream())
+                                }
+                            }
+                            retriever.setDataSource(tmp.absolutePath)
+                        } finally {
+                            tmp.delete()
+                        }
+                    }
+                }
+                val dur = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                retriever.release()
+                dur?.coerceAtLeast(0)
+            } catch (e: Exception) {
+                Log.w(TAG, "getAudioDuration id=$id", e)
+                null
+            }
+        }
+    }
 
     fun mimeTypeFromExtension(filename: String): String {
         return when {
