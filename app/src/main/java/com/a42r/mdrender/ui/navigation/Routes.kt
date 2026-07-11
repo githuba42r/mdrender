@@ -20,4 +20,5 @@ sealed class Routes(val route: String) {
     data object AudioPlayer : Routes("audio_player/{fileId}") {
         fun createRoute(fileId: Long): String = "audio_player/$fileId"
     }
+    data object UnhideSettings : Routes("unhide_settings")
 }

@@ -11,6 +11,9 @@ import android.content.Intent
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderNode
 import com.a42r.mdrender.data.repository.FolderRepository
+import com.a42r.mdrender.gesture.GestureRouter
+import com.a42r.mdrender.gesture.MultiTouchDetector
+import com.a42r.mdrender.gesture.UnhideGesturePrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.security.AppLock
@@ -64,6 +67,9 @@ class BrowserViewModel @Inject constructor(
     private val localSendPrefs: LocalSendPrefs,
     private val shareOutManager: ShareOutManager,
     private val viewerPrefs: ViewerPrefs,
+    private val gestureRouter: GestureRouter,
+    private val gesturePrefs: UnhideGesturePrefs,
+    private val multiTouchDetector: MultiTouchDetector,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -501,6 +507,31 @@ class BrowserViewModel @Inject constructor(
 
     /** Called by the secret title-tap gesture to reveal hidden folders. */
     fun revealHiddenFolders() = appLock.revealHiddenFolders()
+
+    /** Route a title tap (short or long) through all configured gesture detectors.
+     *  If any detector matches, hidden folders are revealed. */
+    fun onTitleTap(pressDurationMs: Long?) {
+        if (gestureRouter.onTitleTap(pressDurationMs)) {
+            appLock.revealHiddenFolders()
+        }
+    }
+
+    /** Feed a multi-touch pointer event to the detector. When the configured
+     *  sequence completes, hidden folders are revealed. */
+    fun onMultiTouchPointerEvent(
+        pointerId: Long, eventType: Int,
+        x: Float, y: Float,
+        width: Int, height: Int
+    ) {
+        if (multiTouchDetector.onPointerEvent(pointerId, eventType, x, y, width, height)) {
+            appLock.revealHiddenFolders()
+        }
+    }
+
+    /** Whether multi-touch gesture detection is currently enabled in the user's
+     *  configuration. Read at runtime so the event observer picks up changes
+     *  made in the unhide settings screen. */
+    fun isMultiTouchEnabled(): Boolean = gesturePrefs.config.multiTouch.enabled
 
     /** Turn reveal off. If currently inside a hidden tree, return to root
      *  immediately so no hidden content stays visible. */

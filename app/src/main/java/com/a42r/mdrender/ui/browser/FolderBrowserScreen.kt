@@ -5,7 +5,9 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -28,12 +30,14 @@ import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
 import com.a42r.mdrender.ui.navigation.Routes
 import com.a42r.mdrender.ui.viewer.IndexTocView
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FolderBrowserScreen(
     navController: androidx.navigation.NavController,
@@ -74,22 +78,10 @@ fun FolderBrowserScreen(
         viewModel.setLocalSendEnabled(newState)
     }
 
-    // Secret gesture: 12 taps on the title within 30s reveals hidden folders.
-    var titleTapCount by remember { mutableStateOf(0) }
-    var titleWindowStart by remember { mutableStateOf(0L) }
-    val onTitleTap = {
-        val now = System.currentTimeMillis()
-        if (now - titleWindowStart > 30_000L) {
-            titleWindowStart = now
-            titleTapCount = 1
-        } else {
-            titleTapCount++
-        }
-        if (titleTapCount >= 12) {
-            viewModel.revealHiddenFolders()
-            titleTapCount = 0
-        }
-    }
+    // Title gesture: routed through GestureRouter which handles 12-tap,
+    // tap-sequence, and multi-touch (multi-touch is its own pointerInput below).
+    val onTitleShortTap = { viewModel.onTitleTap(200L) }
+    val onTitleLongTap = { viewModel.onTitleTap(800L) }
 
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var confirmDeleteMulti by remember { mutableStateOf(false) }
@@ -190,7 +182,15 @@ fun FolderBrowserScreen(
                 )
             } else {
                 TopAppBar(
-                    title = { Text("MDRender", modifier = Modifier.clickable { onTitleTap() }) },
+                    title = {
+                        Text(
+                            "MDRender",
+                            modifier = Modifier.combinedClickable(
+                                onClick = onTitleShortTap,
+                                onLongClick = onTitleLongTap
+                            )
+                        )
+                    },
                     actions = {
                         if (revealHidden) {
                             IconButton(onClick = { viewModel.turnOffReveal() }) {
@@ -217,7 +217,16 @@ fun FolderBrowserScreen(
                                 contentDescription = "Toggle view"
                             )
                         }
-                        IconButton(onClick = { navController.navigate(Routes.Settings.route) }) {
+                        Box(
+                            modifier = Modifier
+                                .combinedClickable(
+                                    onClick = { navController.navigate(Routes.Settings.route) },
+                                    onLongClick = {
+                                        if (revealHidden) navController.navigate(Routes.UnhideSettings.route)
+                                    }
+                                )
+                                .padding(12.dp)
+                        ) {
                             Icon(Icons.Filled.Settings, contentDescription = "Settings")
                         }
                     }
@@ -233,7 +242,29 @@ fun FolderBrowserScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding)) {
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (!viewModel.isMultiTouchEnabled()) continue
+                            for (change in event.changes) {
+                                val id = change.id.value
+                                when {
+                                    change.pressed && !change.previousPressed ->
+                                        viewModel.onMultiTouchPointerEvent(id, 0, change.position.x, change.position.y, size.width, size.height)
+                                    !change.pressed && change.previousPressed ->
+                                        viewModel.onMultiTouchPointerEvent(id, 1, change.position.x, change.position.y, size.width, size.height)
+                                    change.pressed && change.position != change.previousPosition ->
+                                        viewModel.onMultiTouchPointerEvent(id, 2, change.position.x, change.position.y, size.width, size.height)
+                                }
+                            }
+                        }
+                    }
+                }
+        ) {
             if (shareInProgress) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
