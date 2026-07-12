@@ -33,8 +33,9 @@ fun AudioPlayerScreen(
 
     val context = LocalContext.current
     // Start the foreground service and begin playback when entering this screen.
+    // If the same file is already playing, skip — we only need to show the UI.
     LaunchedEffect(fileId) {
-        if (fileId != 0L) {
+        if (fileId != 0L && state.info.value.fileId != fileId) {
             val intent = Intent(context, AudioPlayerService::class.java).apply {
                 putExtra(AudioPlayerService.EXTRA_FILE_ID, fileId)
             }

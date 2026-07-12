@@ -130,6 +130,19 @@ fun SettingsScreen(
                     )
                 }
             )
+            ListItem(
+                headlineContent = { Text("Expanded media notification") },
+                supportingContent = {
+                    Text("Show full notification with progress bar and " +
+                         "extended playback controls in the notification shade.")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.fullNotification,
+                        onCheckedChange = { viewModel.setFullNotification(it) }
+                    )
+                }
+            )
 
             HorizontalDivider()
 

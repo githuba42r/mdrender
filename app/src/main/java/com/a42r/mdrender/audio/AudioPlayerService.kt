@@ -3,7 +3,9 @@ package com.a42r.mdrender.audio
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -13,8 +15,9 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaStyleNotificationHelper
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
 import dagger.hilt.android.AndroidEntryPoint
@@ -41,6 +44,11 @@ class AudioPlayerService : MediaSessionService() {
     private var playJob: Job? = null
     private var hiddenPauseJob: Job? = null
     private var isHiddenFile: Boolean = false
+    private var prefListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    private val audioSharedPrefs by lazy {
+        getSharedPreferences("audio_player", Context.MODE_PRIVATE)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -116,11 +124,19 @@ class AudioPlayerService : MediaSessionService() {
                 }
             }
         }
+
+        // Rebuild notification when expanded-notification pref changes
+        prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == AudioPlayerPrefs.KEY_FULL_NOTIFICATION && currentFileId != 0L) {
+                updateNotification(exoPlayer.isPlaying)
+            }
+        }
+        audioSharedPrefs.registerOnSharedPreferenceChangeListener(prefListener)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
-    private fun buildNotification(isPlaying: Boolean): NotificationCompat.Builder {
+    private fun buildCompactNotification(isPlaying: Boolean): NotificationCompat.Builder {
         val playPauseIntent = PendingIntent.getService(this, 0,
             Intent(this, AudioPlayerService::class.java).apply { action = ACTION_PLAY_PAUSE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -145,9 +161,61 @@ class AudioPlayerService : MediaSessionService() {
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent)
     }
 
+    private fun buildFullNotification(isPlaying: Boolean): NotificationCompat.Builder {
+        val durationMs = playerState.duration.value
+        val positionMs = playerState.currentPosition.value
+
+        val playPauseIntent = PendingIntent.getService(this, 0,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_PLAY_PAUSE },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val skipBackIntent = PendingIntent.getService(this, 2,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_SKIP_BACK },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val skipForwardIntent = PendingIntent.getService(this, 3,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_SKIP_FORWARD },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setStyle(MediaStyleNotificationHelper.MediaStyle(mediaSession)
+                .setShowActionsInCompactView(0, 1, 2))
+            .setContentTitle(playerState.info.value.fileName.ifEmpty { "MDRender" })
+            .setContentText(
+                formatDuration(positionMs) + " / " + formatDuration(durationMs)
+            )
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setProgress(durationMs.toInt(), positionMs.toInt(), false)
+            .addAction(android.R.drawable.ic_media_rew, "", skipBackIntent)
+            .addAction(
+                if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                "",
+                playPauseIntent
+            )
+            .addAction(android.R.drawable.ic_media_ff, "", skipForwardIntent)
+    }
+
+    private fun buildNotification(isPlaying: Boolean): NotificationCompat.Builder {
+        return if (prefs.fullNotification) {
+            buildFullNotification(isPlaying)
+        } else {
+            buildCompactNotification(isPlaying)
+        }
+    }
+
     private fun updateNotification(isPlaying: Boolean) {
-        val notif = buildNotification(isPlaying).build()
-        NotificationManagerCompat.from(this).notify(NOTIF_ID, notif)
+        startForeground(NOTIF_ID, buildNotification(isPlaying).build())
+    }
+
+    private fun formatDuration(ms: Long): String {
+        val totalSec = ms / 1000
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        return "%d:%02d".format(min, sec)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -156,6 +224,15 @@ class AudioPlayerService : MediaSessionService() {
             ACTION_PLAY_PAUSE -> {
                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                 updateNotification(exoPlayer.isPlaying)
+            }
+            ACTION_SKIP_BACK -> {
+                exoPlayer.seekTo(maxOf(0L, exoPlayer.currentPosition - 15000))
+                if (exoPlayer.playbackState == Player.STATE_READY) updateNotification(exoPlayer.isPlaying)
+            }
+            ACTION_SKIP_FORWARD -> {
+                val target = minOf(exoPlayer.duration.coerceAtLeast(0L), exoPlayer.currentPosition + 15000)
+                exoPlayer.seekTo(target)
+                if (exoPlayer.playbackState == Player.STATE_READY) updateNotification(exoPlayer.isPlaying)
             }
             ACTION_STOP -> {
                 savePosition()
@@ -187,6 +264,8 @@ class AudioPlayerService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        prefListener?.let { audioSharedPrefs.unregisterOnSharedPreferenceChangeListener(it) }
+        prefListener = null
         savePosition()
         stopNow()
         headphoneMonitor?.unregister(this)
@@ -276,6 +355,7 @@ class AudioPlayerService : MediaSessionService() {
                         withContext(Dispatchers.IO) {
                             fileRepository.savePlaybackPosition(fileId, pos)
                         }
+                        if (prefs.fullNotification) updateNotification(true)
                     }
                 }
             } catch (e: Exception) {
@@ -327,5 +407,7 @@ class AudioPlayerService : MediaSessionService() {
         const val EXTRA_FILE_ID = "file_id"
         private const val ACTION_PLAY_PAUSE = "com.a42r.mdrender.PLAY_PAUSE"
         private const val ACTION_STOP = "com.a42r.mdrender.STOP"
+        private const val ACTION_SKIP_BACK = "com.a42r.mdrender.SKIP_BACK"
+        private const val ACTION_SKIP_FORWARD = "com.a42r.mdrender.SKIP_FORWARD"
     }
 }

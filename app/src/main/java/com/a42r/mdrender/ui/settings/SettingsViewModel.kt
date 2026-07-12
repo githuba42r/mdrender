@@ -22,6 +22,7 @@ data class SettingsUiState(
     val localSendPin: String = "",
     val localSendAutoAccept: Boolean = false,
     val headphonesOnly: Boolean = false,
+    val fullNotification: Boolean = false,
     val indexTocEnabled: Boolean = true,
     val encryptLargeFiles: Boolean = true
 )
@@ -41,6 +42,7 @@ class SettingsViewModel @Inject constructor(
         localSendPin = localSendPrefs.pin,
         localSendAutoAccept = localSendPrefs.autoAccept,
         headphonesOnly = audioPlayerPrefs.headphonesOnly,
+        fullNotification = audioPlayerPrefs.fullNotification,
         indexTocEnabled = viewerPrefs.indexTocEnabled,
         encryptLargeFiles = storagePrefs.encryptLargeFiles
     ))
@@ -77,6 +79,11 @@ class SettingsViewModel @Inject constructor(
     fun setHeadphonesOnly(enabled: Boolean) {
         audioPlayerPrefs.headphonesOnly = enabled
         _uiState.update { it.copy(headphonesOnly = enabled) }
+    }
+
+    fun setFullNotification(enabled: Boolean) {
+        audioPlayerPrefs.fullNotification = enabled
+        _uiState.update { it.copy(fullNotification = enabled) }
     }
 
     fun setLocalSendAutoAccept(enabled: Boolean) {
