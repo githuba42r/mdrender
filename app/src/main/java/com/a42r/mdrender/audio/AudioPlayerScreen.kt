@@ -138,13 +138,6 @@ fun AudioPlayerScreen(
                     }
                 }
 
-                Spacer(Modifier.height(32.dp))
-
-                OutlinedButton(onClick = onBack) {
-                    Icon(Icons.Filled.Minimize, "Mini player")
-                    Spacer(Modifier.width(8.dp))
-                    Text("Mini Player")
-                }
             }
         }
     }
