@@ -15,12 +15,14 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.a42r.mdrender.ui.navigation.Routes
 
-/** Thin persistent bar at the bottom of every screen when an audio file is loaded. */
+/** Thin persistent bar at the bottom of every screen when an audio file is loaded.
+ *  Visibility is controlled by the caller. */
 @Composable
 fun AudioMiniPlayerBar(
     navController: NavController,
     playerState: AudioPlayerState,
     prefs: AudioPlayerPrefs,
+    visible: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val info by playerState.info.collectAsState()
@@ -29,7 +31,7 @@ fun AudioMiniPlayerBar(
     val position by playerState.currentPosition.collectAsState()
 
     AnimatedVisibility(
-        visible = info.fileId != 0L,
+        visible = visible,
         modifier = modifier,
         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
@@ -37,7 +39,7 @@ fun AudioMiniPlayerBar(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { navController.navigate(Routes.AudioPlayer.createRoute(info.fileId)) },
+                .clickable { navController.navigate(Routes.AudioPlayer.createRoute(playerState.info.value.fileId)) },
             tonalElevation = 3.dp,
             shadowElevation = 6.dp
         ) {

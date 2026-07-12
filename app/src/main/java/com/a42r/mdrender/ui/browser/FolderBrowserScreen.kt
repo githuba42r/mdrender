@@ -116,14 +116,23 @@ fun FolderBrowserScreen(
     BackHandler(enabled = selectionMode) { selectedIds = emptySet() }
 
     val openFile: (FileListItem) -> Unit = { file ->
-        val route = when {
-            file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
-            file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
-            file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
-            file.mimeType.startsWith("audio/") -> Routes.AudioPlayer.createRoute(file.id)
-            else -> Routes.TextViewer.createRoute(file.id)
+        if (file.mimeType.startsWith("audio/") && file.folderId != null) {
+            scope.launch {
+                if (viewModel.isFolderHidden(file.folderId)) {
+                    viewModel.playHiddenAudio(file.id)
+                } else {
+                    navController.navigate(Routes.AudioPlayer.createRoute(file.id))
+                }
+            }
+        } else {
+            val route = when {
+                file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
+                file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
+                file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
+                else -> Routes.TextViewer.createRoute(file.id)
+            }
+            navController.navigate(route)
         }
-        navController.navigate(route)
     }
 
     // Collect undo deletes

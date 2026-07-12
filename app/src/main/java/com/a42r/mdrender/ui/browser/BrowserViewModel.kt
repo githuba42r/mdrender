@@ -14,6 +14,7 @@ import com.a42r.mdrender.data.repository.FolderRepository
 import com.a42r.mdrender.gesture.GestureRouter
 import com.a42r.mdrender.gesture.MultiTouchDetector
 import com.a42r.mdrender.gesture.UnhideGesturePrefs
+import com.a42r.mdrender.audio.AudioPlayerService
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.security.AppLock
@@ -507,6 +508,19 @@ class BrowserViewModel @Inject constructor(
 
     /** Called by the secret title-tap gesture to reveal hidden folders. */
     fun revealHiddenFolders() = appLock.revealHiddenFolders()
+
+    /** Check if a folder is part of a hidden tree. */
+    suspend fun isFolderHidden(folderId: Long?): Boolean =
+        folderId?.let { folderRepository.isInHiddenTree(it) } ?: false
+
+    /** Start playing an audio file from a hidden folder without navigating to
+     *  the full-screen player (playback is background-only via notification). */
+    fun playHiddenAudio(fileId: Long) {
+        val intent = Intent(context, AudioPlayerService::class.java).apply {
+            putExtra(AudioPlayerService.EXTRA_FILE_ID, fileId)
+        }
+        context.startForegroundService(intent)
+    }
 
     /** Route a title tap (short or long) through all configured gesture detectors.
      *  If any detector matches, hidden folders are revealed. */

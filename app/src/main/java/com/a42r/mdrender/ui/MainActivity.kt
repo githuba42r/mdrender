@@ -19,6 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,6 +36,7 @@ import com.a42r.mdrender.localsend.LocalSendSessionManager
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.DeviceAuth
 import com.a42r.mdrender.ui.navigation.MDRenderNavHost
+import com.a42r.mdrender.ui.navigation.Routes
 import com.a42r.mdrender.ui.theme.MDRenderTheme
 import com.a42r.mdrender.ui.viewer.ViewerZoom
 import dagger.hilt.android.AndroidEntryPoint
@@ -73,8 +77,35 @@ class MainActivity : FragmentActivity() {
 
                 val navController = rememberNavController()
 
+                // Gate: when unlocking with audio playing, suppress content
+                // until the nav backstack has been cleaned up (no flash).
+                val info by playerState.info.collectAsState()
+                val needsCleanup = info.fileId != 0L
+                var contentReady by remember { mutableStateOf(!needsCleanup) }
+                val wasLocked = remember { mutableStateOf(true) }
+                LaunchedEffect(locked) {
+                    if (!locked && (wasLocked.value || !contentReady)) {
+                        if (needsCleanup) {
+                            navController.navigate(Routes.FolderBrowser.createRoute(null)) {
+                                popUpTo(0) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                        contentReady = true
+                    }
+                    wasLocked.value = locked
+                }
+
+                val isHiddenFile by playerState.isHiddenFile.collectAsState()
+                val revealHidden by appLock.revealHidden.collectAsState()
+                val currentBackStackEntry by navController.currentBackStackEntryFlow.collectAsState(null)
+                val currentRoute = currentBackStackEntry?.destination?.route
+                val showMiniPlayer = info.fileId != 0L &&
+                    currentRoute?.startsWith("audio_player/") != true &&
+                    (!isHiddenFile || revealHidden)
+
                 Box(modifier = Modifier.fillMaxSize()) {
-                    if (locked) {
+                    if (locked || !contentReady) {
                         LockGate()
                     } else {
                         Surface(modifier = Modifier.fillMaxSize()) {
@@ -84,6 +115,7 @@ class MainActivity : FragmentActivity() {
                                     navController = navController,
                                     playerState = playerState,
                                     prefs = audioPlayerPrefs,
+                                    visible = showMiniPlayer,
                                     modifier = Modifier.align(Alignment.BottomCenter)
                                 )
                             }

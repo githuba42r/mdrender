@@ -249,6 +249,7 @@ class AudioPlayerService : MediaSessionService() {
                     currentTempFile = sourceFile
                     val savedPos = meta.playbackPosition
                     isHiddenFile = meta.folderId?.let { folderRepository.isInHiddenTree(it) } ?: false
+                    playerState.setHiddenFile(isHiddenFile)
 
                     val mediaItem = MediaItem.fromUri(Uri.fromFile(sourceFile))
                     exoPlayer.setMediaItem(mediaItem)
@@ -281,6 +282,7 @@ class AudioPlayerService : MediaSessionService() {
                 Log.e(TAG, "playFile failed for fileId=$fileId", e)
                 playerState.setDecrypting(false)
                 playerState.setLoading(false)
+                playerState.setHiddenFile(false)
                 withContext(Dispatchers.Main) {
                     playerState.setFileInfo(0, "")
                     playerState.setPlaying(false)

@@ -31,6 +31,9 @@ class AudioPlayerState @Inject constructor() {
     private val _isDecrypting = MutableStateFlow(false)
     val isDecrypting: StateFlow<Boolean> = _isDecrypting.asStateFlow()
 
+    private val _isHiddenFile = MutableStateFlow(false)
+    val isHiddenFile: StateFlow<Boolean> = _isHiddenFile.asStateFlow()
+
     val currentPosition = MutableStateFlow(0L)
     val duration = MutableStateFlow(0L)
 
@@ -60,6 +63,10 @@ class AudioPlayerState @Inject constructor() {
         _isDecrypting.value = decrypting
     }
 
+    fun setHiddenFile(hidden: Boolean) {
+        _isHiddenFile.value = hidden
+    }
+
     fun updatePosition(pos: Long) {
         currentPosition.value = pos
     }
@@ -67,6 +74,7 @@ class AudioPlayerState @Inject constructor() {
     fun stop() {
         _info.value = AudioFileInfo()
         _isPlaying.value = false
+        _isHiddenFile.value = false
         currentPosition.value = 0L
         duration.value = 0L
     }
@@ -90,7 +98,10 @@ class AudioPlayerState @Inject constructor() {
 
     fun stopPlayback() {
         _commands.tryEmit(PlayerCommand.Stop)
-        stop()
+        // Deliberately NOT calling stop() here — the service reads
+        // currentPosition.value during savePosition() before it calls
+        // stopNow() → stop(). If we reset position to 0 here, the save
+        // always writes 0 and the bookmark is lost.
     }
 }
 
