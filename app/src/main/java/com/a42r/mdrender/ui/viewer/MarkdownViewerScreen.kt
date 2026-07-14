@@ -30,14 +30,21 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import android.util.Log
+import androidx.compose.ui.draw.alpha
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -189,42 +196,49 @@ fun MarkdownViewerScreen(
                         }
                     }
 
-                    // Heading annotation scrollbar — only for normal markdown, not TOC
-                    if (!showIndexAsToc && headings.size >= 2) {
+                    // Scroll position indicator — heading scrollbar if sections exist, plain otherwise
+                    if (!showIndexAsToc) {
                         var dragTargetIdx by remember { mutableIntStateOf(-1) }
                         val thumbIndex = if (dragTargetIdx >= 0) dragTargetIdx else activeHeadingIdx
                         val label = if (thumbIndex in headings.indices) headings[thumbIndex].text else ""
 
-                        Box(modifier = Modifier.align(Alignment.CenterEnd)) {
-                            HeadingScrollbar(
-                                headings = headings,
-                                totalLines = totalLines,
-                                scrollState = scrollState,
-                                activeIndex = activeHeadingIdx,
-                                dragTargetIdx = dragTargetIdx,
-                                onDragChange = { idx -> dragTargetIdx = idx },
-                                onDragEnd = { dragTargetIdx = -1 },
-                                coroutineScope = coroutineScope
-                            )
-                        }
-                        // Label overlay — only visible while dragging
-                        if (label.isNotEmpty() && dragTargetIdx >= 0) {
-                            Surface(
-                                modifier = Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .padding(end = 24.dp)
-                                    .widthIn(max = 200.dp),
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.inverseSurface
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.inverseOnSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        if (headings.size >= 2) {
+                            Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                                HeadingScrollbar(
+                                    headings = headings,
+                                    totalLines = totalLines,
+                                    scrollState = scrollState,
+                                    activeIndex = activeHeadingIdx,
+                                    dragTargetIdx = dragTargetIdx,
+                                    onDragChange = { idx -> dragTargetIdx = idx },
+                                    onDragEnd = { dragTargetIdx = -1 },
+                                    coroutineScope = coroutineScope
                                 )
+                            }
+                            // Label overlay — only visible while dragging
+                            if (label.isNotEmpty() && dragTargetIdx >= 0) {
+                                Surface(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterEnd)
+                                        .padding(end = 44.dp)
+                                        .widthIn(max = 200.dp),
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.inverseSurface
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            // Plain scroll position indicator for files without headings
+                            Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                                PositionScrollbar(scrollState = scrollState)
                             }
                         }
                     }
@@ -364,7 +378,8 @@ private fun parseHeadings(markdown: String): List<HeadingPos> {
     }
 }
 
-/** An overlay scrollbar on the right side showing document headings as draggable markers. */
+/** An overlay scrollbar on the right side showing document headings as draggable markers
+ * and continuous scroll position. */
 @Composable
 private fun HeadingScrollbar(
     headings: List<HeadingPos>,
@@ -384,11 +399,45 @@ private fun HeadingScrollbar(
 
     val thumbIndex = if (dragTargetIdx >= 0) dragTargetIdx else activeIndex
 
+    // Only show on fast scroll or direct scrollbar interaction
+    var showScrollbar by remember { mutableStateOf(false) }
+    var lastPos by remember { mutableIntStateOf(scrollState.value) }
+    var lastTimeMs by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(scrollState.value) {
+        if (scrollState.maxValue > 0) {
+            val now = System.currentTimeMillis()
+            if (lastTimeMs > 0) {
+                val dt = now - lastTimeMs
+                if (dt in 1..400) {
+                    val dist = abs(scrollState.value - lastPos)
+                    val vel = dist.toFloat() / dt * 1000f // px/s
+                    if (vel > 800f) showScrollbar = true
+                }
+            }
+            lastPos = scrollState.value
+            lastTimeMs = now
+
+            // Keep visible while dragging the scrollbar thumb directly
+            if (dragTargetIdx >= 0) showScrollbar = true
+
+            delay(2500L)
+            showScrollbar = false
+        }
+    }
+
+    val alpha by animateFloatAsState(
+        targetValue = if (showScrollbar || dragTargetIdx >= 0) 1f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "scrollbarAlpha"
+    )
+
     Box(
         modifier = Modifier
             .fillMaxHeight()
-            .width(20.dp)
+            .width(40.dp)
             .padding(vertical = 16.dp)
+            .alpha(alpha)
     ) {
         Canvas(
             modifier = Modifier
@@ -424,27 +473,140 @@ private fun HeadingScrollbar(
             val dotSpacing = if (headingCount > 1) h / (headingCount - 1) else h / 2f
 
             // Track line
-            drawLine(trackColor, Offset(size.width / 2, 0f), Offset(size.width / 2, h), 2f)
+            drawLine(trackColor, Offset(size.width / 2, 0f), Offset(size.width / 2, h), 5f)
 
-            // Dots for each heading
+            // Section marker dots — 3x larger
             headings.forEachIndexed { i, _ ->
                 val y = if (headingCount > 1) i * dotSpacing else h / 2f
-                drawCircle(color = inactiveColor, radius = 3f, center = Offset(size.width / 2, y))
+                drawCircle(color = inactiveColor, radius = 12f, center = Offset(size.width / 2, y))
             }
 
-            // Drag thumb — large pill-shaped handle
-            val thumbY = if (headingCount > 1) thumbIndex * dotSpacing else h / 2f
-            val thumbOuterR = 10f
-            val thumbInnerR = 3f
-            // Shadow/outline ring
-            drawCircle(color = thumbColor.copy(alpha = 0.3f), radius = thumbOuterR + 2f,
-                center = Offset(size.width / 2, thumbY))
-            // Main handle
-            drawCircle(color = thumbColor, radius = thumbOuterR,
-                center = Offset(size.width / 2, thumbY))
-            // Inner dot
-            drawCircle(color = surfaceColor, radius = thumbInnerR,
-                center = Offset(size.width / 2, thumbY))
+            // Scroll progress pill — thick, easy to grab
+            val scrollProgress = if (scrollState.maxValue > 0)
+                scrollState.value.toFloat() / scrollState.maxValue else 0f
+            val thumbY = scrollProgress * h
+            val thumbWidth = 48f
+            val thumbHeight = 120f
+            val left = (size.width - thumbWidth) / 2f
+            val top = (thumbY - thumbHeight / 2f).coerceIn(0f, h - thumbHeight)
+            val cornerR = CornerRadius(thumbWidth / 2f)
+
+            // Shadow ring
+            drawRoundRect(
+                color = thumbColor.copy(alpha = 0.3f),
+                topLeft = Offset(left - 1f, top - 1f),
+                size = Size(thumbWidth + 2f, thumbHeight + 2f),
+                cornerRadius = cornerR
+            )
+            // Main pill
+            drawRoundRect(
+                color = thumbColor,
+                topLeft = Offset(left, top),
+                size = Size(thumbWidth, thumbHeight),
+                cornerRadius = cornerR
+            )
+            // Inner accent line
+            drawRoundRect(
+                color = surfaceColor,
+                topLeft = Offset(left + thumbWidth * 0.3f, top + thumbHeight * 0.2f),
+                size = Size(thumbWidth * 0.4f, thumbHeight * 0.6f),
+                cornerRadius = CornerRadius(2f)
+            )
+        }
+    }
+}
+
+/** Plain scroll position indicator with drag-to-scroll and wide touch target. */
+@Composable
+private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollState) {
+    if (scrollState.maxValue > 0) {
+        val trackColor = MaterialTheme.colorScheme.surfaceVariant
+        val thumbColor = MaterialTheme.colorScheme.primary
+        val coroutineScope = rememberCoroutineScope()
+        val h = scrollState.maxValue.toFloat()
+
+        var showScrollbar by remember { mutableStateOf(false) }
+        var lastPos by remember { mutableIntStateOf(scrollState.value) }
+        var lastTimeMs by remember { mutableLongStateOf(0L) }
+
+        LaunchedEffect(scrollState.value) {
+            if (scrollState.maxValue > 0) {
+                val now = System.currentTimeMillis()
+                if (lastTimeMs > 0) {
+                    val dt = now - lastTimeMs
+                    if (dt in 1..400) {
+                        val dist = abs(scrollState.value - lastPos)
+                        val vel = dist.toFloat() / dt * 1000f
+                        if (vel > 800f) showScrollbar = true
+                    }
+                }
+                lastPos = scrollState.value
+                lastTimeMs = now
+
+                delay(2500L)
+                showScrollbar = false
+            }
+        }
+
+        val alpha by animateFloatAsState(
+            targetValue = if (showScrollbar) 1f else 0f,
+            animationSpec = tween(durationMillis = 200),
+            label = "scrollbarAlpha"
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(72.dp)
+                .alpha(alpha)
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 32.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                            coroutineScope.launch {
+                                scrollState.animateScrollTo((ratio * h).roundToInt())
+                            }
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { _ -> },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                                coroutineScope.launch {
+                                    scrollState.scrollTo((ratio * h).roundToInt())
+                                }
+                            }
+                        )
+                    }
+            ) {
+                val tw = 40f
+                val trackWidth = 5f
+                val visibleRatio = size.height / (size.height + h)
+                val thumbHeight = (size.height * visibleRatio).coerceAtLeast(80f)
+                val scrollProgress = (scrollState.value.toFloat() / h).coerceIn(0f, 1f)
+                val thumbTop = (size.height - thumbHeight) * scrollProgress
+                val centerX = size.width / 2
+
+                drawLine(
+                    color = trackColor,
+                    start = Offset(centerX, 0f),
+                    end = Offset(centerX, size.height),
+                    strokeWidth = trackWidth
+                )
+
+                drawRoundRect(
+                    color = thumbColor,
+                    topLeft = Offset(centerX - tw / 2, thumbTop),
+                    size = Size(tw, thumbHeight),
+                    cornerRadius = CornerRadius(tw / 2)
+                )
+            }
         }
     }
 }

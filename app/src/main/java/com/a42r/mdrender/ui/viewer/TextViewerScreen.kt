@@ -1,5 +1,6 @@
 package com.a42r.mdrender.ui.viewer
 
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,14 +18,24 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.runtime.snapshotFlow
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +120,98 @@ fun TextViewerScreen(
                                 fontSize = (14 * fontScale).sp,
                                 lineHeight = (20 * fontScale).sp
                             )
+                        }
+                    }
+
+                    // Scroll position indicator — fades in on fast scroll, fades out after pause
+                    if (scrollState.maxValue > 0) {
+                        val trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        val thumbColor = MaterialTheme.colorScheme.primary
+
+                        var showScrollbar by remember { mutableStateOf(false) }
+                        var lastPos by remember { mutableIntStateOf(scrollState.value) }
+                        var lastTimeMs by remember { mutableLongStateOf(0L) }
+
+                        LaunchedEffect(scrollState.value) {
+                            if (scrollState.maxValue > 0) {
+                                val now = System.currentTimeMillis()
+                                if (lastTimeMs > 0) {
+                                    val dt = now - lastTimeMs
+                                    if (dt in 1..400) {
+                                        val dist = abs(scrollState.value - lastPos)
+                                        val vel = dist.toFloat() / dt * 1000f
+                                        if (vel > 800f) showScrollbar = true
+                                    }
+                                }
+                                lastPos = scrollState.value
+                                lastTimeMs = now
+
+                                delay(2500L)
+                                showScrollbar = false
+                            }
+                        }
+
+                        val alpha by animateFloatAsState(
+                            targetValue = if (showScrollbar) 1f else 0f,
+                            animationSpec = tween(durationMillis = 200),
+                            label = "scrollbarAlpha"
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .fillMaxHeight()
+                                .width(72.dp)
+                                .alpha(alpha)
+                        ) {
+                            Canvas(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(start = 32.dp)
+                                    .pointerInput(Unit) {
+                                        detectTapGestures { offset ->
+                                            val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                                            coroutineScope.launch {
+                                                scrollState.animateScrollTo((ratio * scrollState.maxValue).roundToInt())
+                                            }
+                                        }
+                                    }
+                                    .pointerInput(Unit) {
+                                        detectDragGestures(
+                                            onDragStart = { _ -> },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                                                coroutineScope.launch {
+                                                    scrollState.scrollTo((ratio * scrollState.maxValue).roundToInt())
+                                                }
+                                            }
+                                        )
+                                    }
+                            ) {
+                                val tw = 40f
+                                val trackWidth = 5f
+                                val h = scrollState.maxValue.toFloat()
+                                val visibleRatio = size.height / (size.height + h)
+                                val thumbHeight = (size.height * visibleRatio).coerceAtLeast(80f)
+                                val scrollProgress = (scrollState.value.toFloat() / h).coerceIn(0f, 1f)
+                                val thumbTop = (size.height - thumbHeight) * scrollProgress
+                                val centerX = size.width / 2
+
+                                drawLine(
+                                    color = trackColor,
+                                    start = Offset(centerX, 0f),
+                                    end = Offset(centerX, size.height),
+                                    strokeWidth = trackWidth
+                                )
+
+                                drawRoundRect(
+                                    color = thumbColor,
+                                    topLeft = Offset(centerX - tw / 2, thumbTop),
+                                    size = Size(tw, thumbHeight),
+                                    cornerRadius = CornerRadius(tw / 2)
+                                )
+                            }
                         }
                     }
 
