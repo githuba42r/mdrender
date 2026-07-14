@@ -83,6 +83,7 @@ fun TextViewerScreen(
 
                 // Restore saved scroll position once content is loaded and
                 // layout has completed (maxValue > 0 reflects real content height).
+                val initialRestoreDone = remember { mutableStateOf(false) }
                 LaunchedEffect(uiState.isLoading) {
                     if (!uiState.isLoading && uiState.initialScrollPosition > 0) {
                         if (scrollState.maxValue <= 0) {
@@ -95,6 +96,7 @@ fun TextViewerScreen(
                             uiState.initialScrollPosition.coerceAtMost(scrollState.maxValue)
                         )
                     }
+                    initialRestoreDone.value = true
                 }
 
                 // Save scroll position when leaving the screen
@@ -139,7 +141,7 @@ fun TextViewerScreen(
                         }
 
                         LaunchedEffect(scrollState.value) {
-                            if (scrollState.maxValue > 0) {
+                            if (scrollState.maxValue > 0 && initialRestoreDone.value) {
                                 val now = System.currentTimeMillis()
                                 val dt = lastTimeMs.takeIf { it > 0 }?.let { now - it } ?: 0L
                                 val dist = abs(scrollState.value - lastPos)

@@ -86,4 +86,10 @@ interface FileDao {
 
     @Query("UPDATE files SET playback_position = :pos WHERE id = :id")
     suspend fun updatePlaybackPosition(id: Long, pos: Long)
+
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files ORDER BY last_opened_at DESC LIMIT 1")
+    suspend fun getLastOpenedFile(): FileMetadata?
+
+    @Query("UPDATE files SET last_opened_at = :timestamp WHERE id = :id")
+    suspend fun updateLastOpenedAt(id: Long, timestamp: Long)
 }

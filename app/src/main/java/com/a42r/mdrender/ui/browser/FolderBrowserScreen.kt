@@ -64,6 +64,8 @@ fun FolderBrowserScreen(
     val shareInProgress by viewModel.shareInProgress.collectAsStateWithLifecycle()
     val moveConflict by viewModel.moveConflict.collectAsStateWithLifecycle()
     val processingFiles by viewModel.processingFiles.collectAsStateWithLifecycle()
+    val lastOpenedFile by viewModel.lastOpenedFile.collectAsStateWithLifecycle()
+    val lastOpenedFileHidden by viewModel.lastOpenedFileHidden.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -201,6 +203,26 @@ fun FolderBrowserScreen(
                         )
                     },
                     actions = {
+                        // Last-opened file shortcut — hidden when the file is in a
+                        // hidden folder that is not currently revealed.
+                        val lastFile = lastOpenedFile
+                        if (lastFile != null && (!lastOpenedFileHidden || revealHidden)) {
+                            IconButton(onClick = {
+                                val route = when {
+                                    lastFile.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(lastFile.id)
+                                    lastFile.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(lastFile.id)
+                                    lastFile.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(lastFile.id)
+                                    else -> Routes.TextViewer.createRoute(lastFile.id)
+                                }
+                                navController.navigate(route)
+                            }) {
+                                Icon(
+                                    Icons.Filled.History,
+                                    contentDescription = "Open last file",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                         if (revealHidden) {
                             IconButton(onClick = { viewModel.turnOffReveal() }) {
                                 Icon(

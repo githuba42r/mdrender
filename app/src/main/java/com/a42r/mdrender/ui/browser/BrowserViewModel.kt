@@ -83,6 +83,23 @@ class BrowserViewModel @Inject constructor(
     /** Whether the LocalSend receiver is on (drives the top-bar toggle). */
     val localSendEnabled: StateFlow<Boolean> = localSendPrefs.enabledFlow
 
+    /** The file that was most recently opened, or null. */
+    private val _lastOpenedFile = MutableStateFlow<FileMetadata?>(null)
+    val lastOpenedFile: StateFlow<FileMetadata?> = _lastOpenedFile.asStateFlow()
+
+    /** Whether the last opened file lives in a hidden folder tree. */
+    private val _lastOpenedFileHidden = MutableStateFlow(false)
+    val lastOpenedFileHidden: StateFlow<Boolean> = _lastOpenedFileHidden.asStateFlow()
+
+    /** Refresh [lastOpenedFile] from the database. */
+    fun refreshLastOpenedFile() {
+        viewModelScope.launch {
+            val file = fileRepository.getLastOpenedFile()
+            _lastOpenedFile.value = file
+            _lastOpenedFileHidden.value = file?.folderId?.let { folderRepository.isInHiddenTree(it) } ?: false
+        }
+    }
+
     /** File IDs currently being encrypted or decrypted. */
     private val _processingFiles = MutableStateFlow<Set<Long>>(emptySet())
     val processingFiles: StateFlow<Set<Long>> = _processingFiles.asStateFlow()
@@ -245,6 +262,8 @@ class BrowserViewModel @Inject constructor(
                 refreshIndexToc(it, folderId)
             }
         }
+        // Load the last-opened file info for the shortcut icon.
+        refreshLastOpenedFile()
     }
 
     fun navigateToFolder(folderId: Long?) {
@@ -281,6 +300,8 @@ class BrowserViewModel @Inject constructor(
             }
             val path = folderId?.let { folderRepository.getPathToFolder(it) } ?: emptyList()
             _uiState.update { it.copy(breadcrumbPath = path) }
+            // Refresh last-opened file info so the shortcut icon is current.
+            refreshLastOpenedFile()
         }
     }
 

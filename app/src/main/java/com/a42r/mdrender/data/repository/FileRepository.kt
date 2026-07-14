@@ -345,6 +345,10 @@ class FileRepository @Inject constructor(
 
     suspend fun savePlaybackPosition(id: Long, pos: Long) = fileDao.updatePlaybackPosition(id, pos)
 
+    suspend fun getLastOpenedFile(): FileMetadata? = fileDao.getLastOpenedFile()
+
+    suspend fun saveLastOpenedAt(id: Long) = fileDao.updateLastOpenedAt(id, System.currentTimeMillis())
+
     suspend fun getFileMetadata(id: Long): FileMetadata? = fileDao.getFileMetadata(id)
 
     /** The file named [name] in [folderId] (exact match), or null. */

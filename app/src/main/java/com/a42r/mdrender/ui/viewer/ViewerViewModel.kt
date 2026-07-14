@@ -105,6 +105,9 @@ class ViewerViewModel @Inject constructor(
                         _uiState.update { it.copy(imageBytes = bytes) }
                     }
                 }
+
+                // Record this as the last opened file
+                fileRepository.saveLastOpenedAt(fileId)
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }

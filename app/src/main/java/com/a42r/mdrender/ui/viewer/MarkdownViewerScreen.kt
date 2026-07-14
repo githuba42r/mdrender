@@ -113,6 +113,7 @@ fun MarkdownViewerScreen(
 
                 // Restore saved scroll position once content is loaded and
                 // layout has completed (maxValue > 0 reflects real content height).
+                val initialRestoreDone = remember { mutableStateOf(false) }
                 LaunchedEffect(uiState.isLoading) {
                     if (!uiState.isLoading && uiState.initialScrollPosition > 0) {
                         if (scrollState.maxValue <= 0) {
@@ -125,6 +126,7 @@ fun MarkdownViewerScreen(
                             uiState.initialScrollPosition.coerceAtMost(scrollState.maxValue)
                         )
                     }
+                    initialRestoreDone.value = true
                 }
 
                 // Save scroll position when leaving the screen
@@ -212,7 +214,8 @@ fun MarkdownViewerScreen(
                                     dragTargetIdx = dragTargetIdx,
                                     onDragChange = { idx -> dragTargetIdx = idx },
                                     onDragEnd = { dragTargetIdx = -1 },
-                                    coroutineScope = coroutineScope
+                                    coroutineScope = coroutineScope,
+                                    initialRestoreDone = initialRestoreDone
                                 )
                             }
                             // Label overlay — only visible while dragging
@@ -238,7 +241,7 @@ fun MarkdownViewerScreen(
                         } else {
                             // Plain scroll position indicator for files without headings
                             Box(modifier = Modifier.align(Alignment.CenterEnd)) {
-                                PositionScrollbar(scrollState = scrollState)
+                                PositionScrollbar(scrollState = scrollState, initialRestoreDone = initialRestoreDone)
                             }
                         }
                     }
@@ -389,7 +392,8 @@ private fun HeadingScrollbar(
     dragTargetIdx: Int,
     onDragChange: (Int) -> Unit,
     onDragEnd: () -> Unit,
-    coroutineScope: kotlinx.coroutines.CoroutineScope
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    initialRestoreDone: androidx.compose.runtime.MutableState<Boolean>
 ) {
     val headingCount = headings.size
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
@@ -409,7 +413,7 @@ private fun HeadingScrollbar(
     val threeViewportsPx = with(androidx.compose.ui.platform.LocalDensity.current) { (screenH * 3).dp.toPx().toInt() }
 
     LaunchedEffect(scrollState.value) {
-        if (scrollState.maxValue > 0) {
+        if (scrollState.maxValue > 0 && initialRestoreDone.value) {
             val now = System.currentTimeMillis()
             val dt = lastTimeMs.takeIf { it > 0 }?.let { now - it } ?: 0L
             val dist = abs(scrollState.value - lastPos)
@@ -530,7 +534,7 @@ private fun HeadingScrollbar(
 
 /** Plain scroll position indicator with drag-to-scroll and wide touch target. */
 @Composable
-private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollState) {
+private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollState, initialRestoreDone: androidx.compose.runtime.MutableState<Boolean>) {
     if (scrollState.maxValue > 0) {
         val trackColor = MaterialTheme.colorScheme.surfaceVariant
         val thumbColor = MaterialTheme.colorScheme.primary
@@ -546,7 +550,7 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
         }
 
         LaunchedEffect(scrollState.value) {
-            if (scrollState.maxValue > 0) {
+            if (scrollState.maxValue > 0 && initialRestoreDone.value) {
                 val now = System.currentTimeMillis()
                 val dt = lastTimeMs.takeIf { it > 0 }?.let { now - it } ?: 0L
                 val dist = abs(scrollState.value - lastPos)
