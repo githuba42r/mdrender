@@ -399,22 +399,23 @@ private fun HeadingScrollbar(
 
     val thumbIndex = if (dragTargetIdx >= 0) dragTargetIdx else activeIndex
 
-    // Only show on fast scroll or direct scrollbar interaction
+    // Only show on sustained long-distance scroll or direct scrollbar interaction
     var showScrollbar by remember { mutableStateOf(false) }
+    var accumulatedDist by remember { mutableIntStateOf(0) }
     var lastPos by remember { mutableIntStateOf(scrollState.value) }
     var lastTimeMs by remember { mutableLongStateOf(0L) }
+    // Trigger after scrolling roughly 3 viewport heights in under 1 second
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+    val threeViewportsPx = with(androidx.compose.ui.platform.LocalDensity.current) { (screenH * 3).dp.toPx().toInt() }
 
     LaunchedEffect(scrollState.value) {
         if (scrollState.maxValue > 0) {
             val now = System.currentTimeMillis()
-            if (lastTimeMs > 0) {
-                val dt = now - lastTimeMs
-                if (dt in 1..400) {
-                    val dist = abs(scrollState.value - lastPos)
-                    val vel = dist.toFloat() / dt * 1000f // px/s
-                    if (vel > 800f) showScrollbar = true
-                }
-            }
+            val dt = lastTimeMs.takeIf { it > 0 }?.let { now - it } ?: 0L
+            val dist = abs(scrollState.value - lastPos)
+            if (dt > 500) accumulatedDist = 0  // fresh gesture window
+            accumulatedDist += dist
+            if (accumulatedDist > threeViewportsPx && dt <= 1000) showScrollbar = true
             lastPos = scrollState.value
             lastTimeMs = now
 
@@ -436,7 +437,6 @@ private fun HeadingScrollbar(
         modifier = Modifier
             .fillMaxHeight()
             .width(40.dp)
-            .padding(vertical = 16.dp)
             .alpha(alpha)
     ) {
         Canvas(
@@ -444,7 +444,10 @@ private fun HeadingScrollbar(
                 .fillMaxSize()
                 .pointerInput(headingCount) {
                     detectTapGestures { offset ->
-                        val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                        val canvasH = size.height.toFloat()
+                        val topM = canvasH * 0.10f
+                        val trackH = canvasH * 0.85f
+                        val ratio = ((offset.y - topM) / trackH).coerceIn(0f, 1f)
                         val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1)
                         val scrollRatio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
                         coroutineScope.launch { scrollState.animateScrollTo((scrollRatio * scrollState.maxValue).roundToInt()) }
@@ -453,12 +456,18 @@ private fun HeadingScrollbar(
                 .pointerInput(headingCount) {
                     detectDragGestures(
                         onDragStart = { offset ->
-                            val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                            val canvasH = size.height.toFloat()
+                            val topM = canvasH * 0.10f
+                            val trackH = canvasH * 0.85f
+                            val ratio = ((offset.y - topM) / trackH).coerceIn(0f, 1f)
                             onDragChange((ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1))
                         },
                         onDrag = { change, _ ->
                             change.consume()
-                            val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                            val canvasH = size.height.toFloat()
+                            val topM = canvasH * 0.10f
+                            val trackH = canvasH * 0.85f
+                            val ratio = ((change.position.y - topM) / trackH).coerceIn(0f, 1f)
                             val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1)
                             onDragChange(idx)
                             val scrollRatio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
@@ -470,25 +479,28 @@ private fun HeadingScrollbar(
                 }
         ) {
             val h = size.height
-            val dotSpacing = if (headingCount > 1) h / (headingCount - 1) else h / 2f
+            val topMargin = h * 0.10f
+            val bottomMargin = h * 0.05f
+            val trackH = h - topMargin - bottomMargin
 
             // Track line
-            drawLine(trackColor, Offset(size.width / 2, 0f), Offset(size.width / 2, h), 5f)
+            drawLine(trackColor, Offset(size.width / 2, topMargin), Offset(size.width / 2, h - bottomMargin), 5f)
 
-            // Section marker dots — 3x larger
+            // Section marker dots
             headings.forEachIndexed { i, _ ->
-                val y = if (headingCount > 1) i * dotSpacing else h / 2f
+                val t = if (headingCount > 1) i.toFloat() / (headingCount - 1) else 0.5f
+                val y = topMargin + t * trackH
                 drawCircle(color = inactiveColor, radius = 12f, center = Offset(size.width / 2, y))
             }
 
             // Scroll progress pill — thick, easy to grab
             val scrollProgress = if (scrollState.maxValue > 0)
                 scrollState.value.toFloat() / scrollState.maxValue else 0f
-            val thumbY = scrollProgress * h
+            val thumbY = topMargin + scrollProgress * trackH
             val thumbWidth = 48f
             val thumbHeight = 120f
             val left = (size.width - thumbWidth) / 2f
-            val top = (thumbY - thumbHeight / 2f).coerceIn(0f, h - thumbHeight)
+            val top = (thumbY - thumbHeight / 2f).coerceIn(topMargin, h - bottomMargin - thumbHeight)
             val cornerR = CornerRadius(thumbWidth / 2f)
 
             // Shadow ring
@@ -526,20 +538,21 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
         val h = scrollState.maxValue.toFloat()
 
         var showScrollbar by remember { mutableStateOf(false) }
+        var accumulatedDist by remember { mutableIntStateOf(0) }
         var lastPos by remember { mutableIntStateOf(scrollState.value) }
         var lastTimeMs by remember { mutableLongStateOf(0L) }
+        val threeViewportsPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+            (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 3).dp.toPx().toInt()
+        }
 
         LaunchedEffect(scrollState.value) {
             if (scrollState.maxValue > 0) {
                 val now = System.currentTimeMillis()
-                if (lastTimeMs > 0) {
-                    val dt = now - lastTimeMs
-                    if (dt in 1..400) {
-                        val dist = abs(scrollState.value - lastPos)
-                        val vel = dist.toFloat() / dt * 1000f
-                        if (vel > 800f) showScrollbar = true
-                    }
-                }
+                val dt = lastTimeMs.takeIf { it > 0 }?.let { now - it } ?: 0L
+                val dist = abs(scrollState.value - lastPos)
+                if (dt > 500) accumulatedDist = 0
+                accumulatedDist += dist
+                if (accumulatedDist > threeViewportsPx && dt <= 1000) showScrollbar = true
                 lastPos = scrollState.value
                 lastTimeMs = now
 
@@ -566,7 +579,10 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
                     .padding(start = 32.dp)
                     .pointerInput(Unit) {
                         detectTapGestures { offset ->
-                            val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                            val canvasH = size.height
+                            val topM = canvasH * 0.10f
+                            val trackH = canvasH * 0.85f
+                            val ratio = ((offset.y - topM) / trackH).coerceIn(0f, 1f)
                             coroutineScope.launch {
                                 scrollState.animateScrollTo((ratio * h).roundToInt())
                             }
@@ -577,7 +593,10 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
                             onDragStart = { _ -> },
                             onDrag = { change, _ ->
                                 change.consume()
-                                val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                                val canvasH = size.height
+                                val topM = canvasH * 0.10f
+                                val trackH = canvasH * 0.85f
+                                val ratio = ((change.position.y - topM) / trackH).coerceIn(0f, 1f)
                                 coroutineScope.launch {
                                     scrollState.scrollTo((ratio * h).roundToInt())
                                 }
@@ -585,20 +604,22 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
                         )
                     }
             ) {
+                val canvasH = size.height
+                val topM = canvasH * 0.10f
+                val bottomM = canvasH * 0.05f
+                val trackH = canvasH - topM - bottomM
+                val centerX = size.width / 2
                 val tw = 40f
                 val trackWidth = 5f
-                val visibleRatio = size.height / (size.height + h)
-                val thumbHeight = (size.height * visibleRatio).coerceAtLeast(80f)
-                val scrollProgress = (scrollState.value.toFloat() / h).coerceIn(0f, 1f)
-                val thumbTop = (size.height - thumbHeight) * scrollProgress
-                val centerX = size.width / 2
 
-                drawLine(
-                    color = trackColor,
-                    start = Offset(centerX, 0f),
-                    end = Offset(centerX, size.height),
-                    strokeWidth = trackWidth
-                )
+                // Track line
+                drawLine(trackColor, Offset(centerX, topM), Offset(centerX, canvasH - bottomM), trackWidth)
+
+                // Thumb
+                val visibleRatio = canvasH / (canvasH + h)
+                val thumbHeight = (canvasH * visibleRatio).coerceAtLeast(80f)
+                val scrollProgress = (scrollState.value.toFloat() / h).coerceIn(0f, 1f)
+                val thumbTop = topM + (trackH - thumbHeight) * scrollProgress
 
                 drawRoundRect(
                     color = thumbColor,

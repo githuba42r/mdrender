@@ -25,6 +25,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -129,20 +131,21 @@ fun TextViewerScreen(
                         val thumbColor = MaterialTheme.colorScheme.primary
 
                         var showScrollbar by remember { mutableStateOf(false) }
+                        var accumulatedDist by remember { mutableIntStateOf(0) }
                         var lastPos by remember { mutableIntStateOf(scrollState.value) }
                         var lastTimeMs by remember { mutableLongStateOf(0L) }
+                        val threeViewportsPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+                            (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 3).dp.toPx().toInt()
+                        }
 
                         LaunchedEffect(scrollState.value) {
                             if (scrollState.maxValue > 0) {
                                 val now = System.currentTimeMillis()
-                                if (lastTimeMs > 0) {
-                                    val dt = now - lastTimeMs
-                                    if (dt in 1..400) {
-                                        val dist = abs(scrollState.value - lastPos)
-                                        val vel = dist.toFloat() / dt * 1000f
-                                        if (vel > 800f) showScrollbar = true
-                                    }
-                                }
+                                val dt = lastTimeMs.takeIf { it > 0 }?.let { now - it } ?: 0L
+                                val dist = abs(scrollState.value - lastPos)
+                                if (dt > 500) accumulatedDist = 0
+                                accumulatedDist += dist
+                                if (accumulatedDist > threeViewportsPx && dt <= 1000) showScrollbar = true
                                 lastPos = scrollState.value
                                 lastTimeMs = now
 
@@ -170,7 +173,10 @@ fun TextViewerScreen(
                                     .padding(start = 32.dp)
                                     .pointerInput(Unit) {
                                         detectTapGestures { offset ->
-                                            val ratio = (offset.y / size.height).coerceIn(0f, 1f)
+                                            val canvasH = size.height
+                                            val topM = canvasH * 0.10f
+                                            val trackH = canvasH * 0.85f
+                                            val ratio = ((offset.y - topM) / trackH).coerceIn(0f, 1f)
                                             coroutineScope.launch {
                                                 scrollState.animateScrollTo((ratio * scrollState.maxValue).roundToInt())
                                             }
@@ -181,7 +187,10 @@ fun TextViewerScreen(
                                             onDragStart = { _ -> },
                                             onDrag = { change, _ ->
                                                 change.consume()
-                                                val ratio = (change.position.y / size.height).coerceIn(0f, 1f)
+                                                val canvasH = size.height
+                                                val topM = canvasH * 0.10f
+                                                val trackH = canvasH * 0.85f
+                                                val ratio = ((change.position.y - topM) / trackH).coerceIn(0f, 1f)
                                                 coroutineScope.launch {
                                                     scrollState.scrollTo((ratio * scrollState.maxValue).roundToInt())
                                                 }
@@ -189,21 +198,21 @@ fun TextViewerScreen(
                                         )
                                     }
                             ) {
+                                val canvasH = size.height
+                                val topM = canvasH * 0.10f
+                                val bottomM = canvasH * 0.05f
+                                val trackH = canvasH - topM - bottomM
+                                val centerX = size.width / 2
                                 val tw = 40f
                                 val trackWidth = 5f
                                 val h = scrollState.maxValue.toFloat()
-                                val visibleRatio = size.height / (size.height + h)
-                                val thumbHeight = (size.height * visibleRatio).coerceAtLeast(80f)
-                                val scrollProgress = (scrollState.value.toFloat() / h).coerceIn(0f, 1f)
-                                val thumbTop = (size.height - thumbHeight) * scrollProgress
-                                val centerX = size.width / 2
 
-                                drawLine(
-                                    color = trackColor,
-                                    start = Offset(centerX, 0f),
-                                    end = Offset(centerX, size.height),
-                                    strokeWidth = trackWidth
-                                )
+                                drawLine(trackColor, Offset(centerX, topM), Offset(centerX, canvasH - bottomM), trackWidth)
+
+                                val visibleRatio = canvasH / (canvasH + h)
+                                val thumbHeight = (canvasH * visibleRatio).coerceAtLeast(80f)
+                                val scrollProgress = (scrollState.value.toFloat() / h).coerceIn(0f, 1f)
+                                val thumbTop = topM + (trackH - thumbHeight) * scrollProgress
 
                                 drawRoundRect(
                                     color = thumbColor,
