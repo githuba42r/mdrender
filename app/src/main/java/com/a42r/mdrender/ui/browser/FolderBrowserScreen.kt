@@ -207,15 +207,19 @@ fun FolderBrowserScreen(
                         // hidden folder that is not currently revealed.
                         val lastFile = lastOpenedFile
                         if (lastFile != null && (!lastOpenedFileHidden || revealHidden)) {
-                            IconButton(onClick = {
-                                val route = when {
-                                    lastFile.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(lastFile.id)
-                                    lastFile.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(lastFile.id)
-                                    lastFile.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(lastFile.id)
-                                    else -> Routes.TextViewer.createRoute(lastFile.id)
-                                }
-                                navController.navigate(route)
-                            }) {
+                            Box(
+                                modifier = Modifier
+                                    .clickable(onClick = {
+                                        val route = when {
+                                            lastFile.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(lastFile.id)
+                                            lastFile.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(lastFile.id)
+                                            lastFile.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(lastFile.id)
+                                            else -> Routes.TextViewer.createRoute(lastFile.id)
+                                        }
+                                        navController.navigate(route)
+                                    })
+                                    .padding(8.dp)
+                            ) {
                                 Icon(
                                     Icons.Filled.History,
                                     contentDescription = "Open last file",
@@ -224,7 +228,11 @@ fun FolderBrowserScreen(
                             }
                         }
                         if (revealHidden) {
-                            IconButton(onClick = { viewModel.turnOffReveal() }) {
+                            Box(
+                                modifier = Modifier
+                                    .clickable(onClick = { viewModel.turnOffReveal() })
+                                    .padding(8.dp)
+                            ) {
                                 Icon(
                                     Icons.Filled.Visibility,
                                     contentDescription = "Hidden folders visible — tap to hide",
@@ -232,7 +240,11 @@ fun FolderBrowserScreen(
                                 )
                             }
                         }
-                        IconButton(onClick = { toggleLocalSend() }) {
+                        Box(
+                            modifier = Modifier
+                                .clickable(onClick = { toggleLocalSend() })
+                                .padding(8.dp)
+                        ) {
                             Icon(
                                 if (localSendEnabled) Icons.Filled.Sensors else Icons.Filled.SensorsOff,
                                 contentDescription = if (localSendEnabled)
@@ -242,7 +254,11 @@ fun FolderBrowserScreen(
                                     MaterialTheme.colorScheme.primary else LocalContentColor.current
                             )
                         }
-                        IconButton(onClick = { viewModel.toggleGridView() }) {
+                        Box(
+                            modifier = Modifier
+                                .clickable(onClick = { viewModel.toggleGridView() })
+                                .padding(8.dp)
+                        ) {
                             Icon(
                                 if (uiState.isGridView) Icons.Filled.ViewList else Icons.Filled.GridView,
                                 contentDescription = "Toggle view"
@@ -256,7 +272,7 @@ fun FolderBrowserScreen(
                                         if (revealHidden) navController.navigate(Routes.UnhideSettings.route)
                                     }
                                 )
-                                .padding(12.dp)
+                                .padding(8.dp)
                         ) {
                             Icon(Icons.Filled.Settings, contentDescription = "Settings")
                         }

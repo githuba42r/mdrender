@@ -87,9 +87,17 @@ interface FileDao {
     @Query("UPDATE files SET playback_position = :pos WHERE id = :id")
     suspend fun updatePlaybackPosition(id: Long, pos: Long)
 
-    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files ORDER BY last_opened_at DESC LIMIT 1")
-    suspend fun getLastOpenedFile(): FileMetadata?
+    /** Guarded by last_opened_at > 0 so files that were never opened (default 0,
+     *  including freshly re-imported/replaced files) never tie for "most recent".
+     *  A live Flow (not a one-shot suspend query) so it re-emits automatically on
+     *  any write to the files table — including a background LocalSend replace
+     *  that deletes and reinserts the currently-last-opened file under a new id. */
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE last_opened_at > 0 ORDER BY last_opened_at DESC LIMIT 1")
+    fun getLastOpenedFile(): Flow<FileMetadata?>
 
     @Query("UPDATE files SET last_opened_at = :timestamp WHERE id = :id")
     suspend fun updateLastOpenedAt(id: Long, timestamp: Long)
+
+    @Query("SELECT last_opened_at FROM files WHERE id = :id")
+    suspend fun getLastOpenedAt(id: Long): Long?
 }

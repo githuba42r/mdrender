@@ -214,7 +214,7 @@ class LocalSendSessionManager @Inject constructor(
                 // Capture bookmarks before REPLACE deletes the existing file.
                 val oldBookmarks = if (session.options.conflict == ConflictStrategy.REPLACE) {
                     fileRepository.findByName(folderId, meta.fileName)?.let {
-                        it.scrollPosition to it.playbackPosition
+                        Triple(it.scrollPosition, it.playbackPosition, fileRepository.getLastOpenedAt(it.id) ?: 0L)
                     }
                 } else null
 
@@ -234,9 +234,10 @@ class LocalSendSessionManager @Inject constructor(
                 // importFileFromTemp deletes the temp file on success.
                 val newId = fileRepository.importFileFromTemp(tempFile, name, mime, folderId)
                 // Restore bookmarks from the replaced file onto the new file.
-                oldBookmarks?.let { (scrollPos, playbackPos) ->
+                oldBookmarks?.let { (scrollPos, playbackPos, lastOpenedAt) ->
                     fileRepository.saveScrollPosition(newId, scrollPos)
                     fileRepository.savePlaybackPosition(newId, playbackPos)
+                    if (lastOpenedAt > 0) fileRepository.restoreLastOpenedAt(newId, lastOpenedAt)
                 }
             }
             synchronized(session.received) { session.received.add(fileId) }

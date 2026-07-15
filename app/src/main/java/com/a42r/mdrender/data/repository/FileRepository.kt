@@ -345,9 +345,15 @@ class FileRepository @Inject constructor(
 
     suspend fun savePlaybackPosition(id: Long, pos: Long) = fileDao.updatePlaybackPosition(id, pos)
 
-    suspend fun getLastOpenedFile(): FileMetadata? = fileDao.getLastOpenedFile()
+    fun getLastOpenedFile(): Flow<FileMetadata?> = fileDao.getLastOpenedFile()
 
     suspend fun saveLastOpenedAt(id: Long) = fileDao.updateLastOpenedAt(id, System.currentTimeMillis())
+
+    suspend fun getLastOpenedAt(id: Long): Long? = fileDao.getLastOpenedAt(id)
+
+    /** Restore an explicit last-opened timestamp — used when a file is replaced
+     *  (delete + reinsert under a new id) so the "last opened" status carries over. */
+    suspend fun restoreLastOpenedAt(id: Long, timestamp: Long) = fileDao.updateLastOpenedAt(id, timestamp)
 
     suspend fun getFileMetadata(id: Long): FileMetadata? = fileDao.getFileMetadata(id)
 
