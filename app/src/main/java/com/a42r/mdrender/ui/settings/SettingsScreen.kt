@@ -13,9 +13,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.a42r.mdrender.security.DeviceAuth
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +41,52 @@ fun SettingsScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).verticalScroll(rememberScrollState())) {
+
+            // Security
+            val context = LocalContext.current
+            val activity = context as? FragmentActivity
+            val noCredential = remember { DeviceAuth.noCredentialConfigured(context) }
+            ListItem(
+                headlineContent = { Text("Require unlock authentication") },
+                supportingContent = {
+                    Text(
+                        if (noCredential)
+                            "No device PIN, pattern, or biometric is set up — MDRender can't " +
+                            "require unlock authentication regardless of this setting."
+                        else
+                            "Ask for your device biometric or PIN each time MDRender opens or " +
+                            "resumes. Hidden folders are unaffected: they're always re-hidden and " +
+                            "require the reveal gesture again after every backgrounding, whether " +
+                            "this is on or off."
+                    )
+                },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.requireSystemAuth,
+                        enabled = !noCredential,
+                        onCheckedChange = { enabling ->
+                            if (enabling) {
+                                // Tightening security never needs proof of identity.
+                                viewModel.setRequireSystemAuth(true)
+                            } else if (activity != null) {
+                                // Loosening security requires proving identity first.
+                                try {
+                                    DeviceAuth.authenticate(
+                                        activity = activity,
+                                        onSuccess = { viewModel.setRequireSystemAuth(false) },
+                                        onFailure = { /* leave enabled, no state change */ }
+                                    )
+                                } catch (_: Exception) {
+                                    // Mirrors MainActivity's defensive handling of BiometricPrompt
+                                    // throwing on an unstable lifecycle state.
+                                }
+                            }
+                        }
+                    )
+                }
+            )
+
+            HorizontalDivider()
 
             // LocalSend receiver
             val notificationPermission = rememberLauncherForActivityResult(

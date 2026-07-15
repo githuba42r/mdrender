@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.data.repository.StoragePrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
+import com.a42r.mdrender.security.SecurityPrefs
 import com.a42r.mdrender.ui.viewer.ViewerPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,7 +25,8 @@ data class SettingsUiState(
     val headphonesOnly: Boolean = false,
     val fullNotification: Boolean = false,
     val indexTocEnabled: Boolean = true,
-    val encryptLargeFiles: Boolean = true
+    val encryptLargeFiles: Boolean = true,
+    val requireSystemAuth: Boolean = true
 )
 
 @HiltViewModel
@@ -33,6 +35,7 @@ class SettingsViewModel @Inject constructor(
     private val audioPlayerPrefs: AudioPlayerPrefs,
     private val viewerPrefs: ViewerPrefs,
     private val storagePrefs: StoragePrefs,
+    private val securityPrefs: SecurityPrefs,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -44,7 +47,8 @@ class SettingsViewModel @Inject constructor(
         headphonesOnly = audioPlayerPrefs.headphonesOnly,
         fullNotification = audioPlayerPrefs.fullNotification,
         indexTocEnabled = viewerPrefs.indexTocEnabled,
-        encryptLargeFiles = storagePrefs.encryptLargeFiles
+        encryptLargeFiles = storagePrefs.encryptLargeFiles,
+        requireSystemAuth = securityPrefs.requireSystemAuth
     ))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -101,5 +105,12 @@ class SettingsViewModel @Inject constructor(
     fun setEncryptLargeFiles(enabled: Boolean) {
         storagePrefs.encryptLargeFiles = enabled
         _uiState.update { it.copy(encryptLargeFiles = enabled) }
+    }
+
+    /** Does not itself gate on biometrics — the caller (SettingsScreen) is
+     *  responsible for running a DeviceAuth challenge before disabling. */
+    fun setRequireSystemAuth(enabled: Boolean) {
+        securityPrefs.requireSystemAuth = enabled
+        _uiState.update { it.copy(requireSystemAuth = enabled) }
     }
 }

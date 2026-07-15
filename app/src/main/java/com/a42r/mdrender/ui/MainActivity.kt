@@ -35,6 +35,7 @@ import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.localsend.LocalSendSessionManager
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.DeviceAuth
+import com.a42r.mdrender.security.SecurityPrefs
 import com.a42r.mdrender.ui.navigation.MDRenderNavHost
 import com.a42r.mdrender.ui.navigation.Routes
 import com.a42r.mdrender.ui.theme.MDRenderTheme
@@ -48,6 +49,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var localSendSessionManager: LocalSendSessionManager
     @Inject lateinit var localSendPrefs: LocalSendPrefs
     @Inject lateinit var appLock: AppLock
+    @Inject lateinit var securityPrefs: SecurityPrefs
     @Inject lateinit var playerState: AudioPlayerState
     @Inject lateinit var audioPlayerPrefs: AudioPlayerPrefs
 
@@ -139,6 +141,14 @@ class MainActivity : FragmentActivity() {
 
     private fun promptAuth(force: Boolean = false) {
         if (authInProgress && !force) return
+        if (!securityPrefs.requireSystemAuth) {
+            // User opted out in Settings (opt-out itself required a biometric
+            // challenge — see SettingsScreen). Distinct from the credential-less
+            // bypass below: here a credential IS configured, it's just not required.
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            appLock.unlock()
+            return
+        }
         if (DeviceAuth.noCredentialConfigured(this)) {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             appLock.unlock()
