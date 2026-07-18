@@ -15,6 +15,65 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.a42r.mdrender.ui.navigation.Routes
 
+/** Minimal controls shown at the bottom of the screen when a hidden audio file is
+ *  playing (mini player is hidden to avoid revealing the file). Pause + Stop only. */
+@Composable
+fun HiddenAudioControls(
+    playerState: AudioPlayerState,
+    visible: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val isPlaying by playerState.isPlaying.collectAsState()
+    val isLoading by playerState.isLoading.collectAsState()
+
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            tonalElevation = 3.dp,
+            shadowElevation = 6.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 3.dp
+                    )
+                } else {
+                    IconButton(onClick = {
+                        if (isPlaying) playerState.pause() else playerState.resume()
+                    }) {
+                        Icon(
+                            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play"
+                        )
+                    }
+
+                    Spacer(Modifier.width(32.dp))
+
+                    IconButton(onClick = { playerState.stopPlayback() }) {
+                        Icon(
+                            Icons.Filled.Stop,
+                            contentDescription = "Stop",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Thin persistent bar at the bottom of every screen when an audio file is loaded.
  *  Visibility is controlled by the caller. */
 @Composable

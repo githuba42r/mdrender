@@ -8,6 +8,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,6 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.SpanStyle
@@ -25,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -63,7 +70,36 @@ fun MarkdownViewerScreen(
         fontScale = (fontScale + delta * 0.1f).coerceIn(0.6f, 3f)
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectionStart by remember { mutableIntStateOf(-1) }
+    var selectionEnd by remember { mutableIntStateOf(-1) }
+    val hasSelection = selectionStart >= 0 && selectionEnd >= 0 && selectionStart != selectionEnd
+    val clipboard = LocalClipboardManager.current
+
+    // Clear selection when exiting selection mode.
+    LaunchedEffect(selectionMode) {
+        if (!selectionMode) { selectionStart = -1; selectionEnd = -1 }
+    }
+
+    // Show a persistent "Reopen" snackbar when LocalSend replaces the file.
+    // Key on updatedFileId so a second replacement while the snackbar is
+    // still showing re-triggers the LaunchedEffect (dismissing the old one).
+    LaunchedEffect(uiState.updatedFileId) {
+        if (uiState.fileUpdated && uiState.updatedFileId != null) {
+            val result = snackbarHostState.showSnackbar(
+                message = "File updated",
+                actionLabel = "Reopen",
+                duration = SnackbarDuration.Indefinite
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                onNavigateToFile(uiState.updatedFileId!!)
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (showAppBar) {
                 TopAppBar(
@@ -71,6 +107,28 @@ fun MarkdownViewerScreen(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    },
+                    actions = {
+                        if (selectionMode) {
+                            TextButton(onClick = {
+                                if (hasSelection) {
+                                    val start = minOf(selectionStart, selectionEnd)
+                                    val end = maxOf(selectionStart, selectionEnd)
+                                    clipboard.setText(AnnotatedString(uiState.markdownContent.substring(start, end)))
+                                } else {
+                                    clipboard.setText(AnnotatedString(uiState.markdownContent))
+                                }
+                            }) {
+                                Text(if (hasSelection) "Copy" else "Copy all")
+                            }
+                            IconButton(onClick = { selectionMode = false }) {
+                                Icon(Icons.Filled.Close, "Done selecting")
+                            }
+                        } else {
+                            TextButton(onClick = { selectionMode = true }) {
+                                Text("Select")
+                            }
                         }
                     }
                 )
@@ -164,8 +222,20 @@ fun MarkdownViewerScreen(
                                 markdown = uiState.markdownContent,
                                 headings = headings,
                                 fontScale = fontScale,
+                                selectionMode = selectionMode,
+                                selectionStart = selectionStart,
+                                selectionEnd = selectionEnd,
+                                onSelectionChanged = { start, end ->
+                                    selectionStart = start
+                                    selectionEnd = end
+                                },
                                 scrollState = scrollState,
-                                onTap = { showAppBar = !showAppBar },
+                                onTap = { if (!selectionMode) showAppBar = !showAppBar },
+                                onLongPressAt = { offset ->
+                                    selectionStart = offset
+                                    selectionEnd = offset
+                                    selectionMode = true
+                                },
                                 onLinkTap = { link ->
                                     if (link.startsWith("#")) {
                                         val target = link.removePrefix("#").lowercase()
@@ -248,7 +318,7 @@ fun MarkdownViewerScreen(
 
                     // Jump-to-top FAB
                     AnimatedVisibility(
-                        visible = showTopButton,
+                        visible = showTopButton && !selectionMode,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp),
@@ -266,6 +336,45 @@ fun MarkdownViewerScreen(
                             )
                         }
                     }
+
+                    // Selection mode bottom bar — scroll is disabled so selection
+                    // handle drags aren't stolen by the scroll container.
+                    if (selectionMode) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth(),
+                            tonalElevation = 3.dp,
+                            shadowElevation = 6.dp
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                TextButton(onClick = {
+                                    if (hasSelection) {
+                                        val start = minOf(selectionStart, selectionEnd)
+                                        val end = maxOf(selectionStart, selectionEnd)
+                                        clipboard.setText(AnnotatedString(uiState.markdownContent.substring(start, end)))
+                                    } else {
+                                        clipboard.setText(AnnotatedString(uiState.markdownContent))
+                                    }
+                                }) {
+                                    Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(if (hasSelection) "Copy" else "Copy all")
+                                }
+                                TextButton(onClick = { selectionMode = false }) {
+                                    Icon(Icons.Filled.Close, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Done")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -277,9 +386,14 @@ fun MarkdownText(
     markdown: String,
     headings: List<HeadingPos>,
     fontScale: Float = 1f,
+    selectionMode: Boolean = false,
+    selectionStart: Int = -1,
+    selectionEnd: Int = -1,
+    onSelectionChanged: (Int, Int) -> Unit = { _, _ -> },
     scrollState: androidx.compose.foundation.ScrollState? = null,
     onLinkTap: ((String) -> Unit)? = null,
-    onTap: (() -> Unit)? = null
+    onTap: (() -> Unit)? = null,
+    onLongPressAt: ((Int) -> Unit)? = null
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
     val bodySize = (16 * fontScale).sp
@@ -323,24 +437,109 @@ fun MarkdownText(
         }
     }
 
-    // Use plain Text for reliable height rendering inside scroll containers.
-    // A transparent overlay Box captures taps and detects links by mapping
-    // the tap coordinate to a text position via TextLayoutResult.
     var textLayoutResult by remember(annotatedString) { mutableStateOf<TextLayoutResult?>(null) }
 
-    Box {
+    if (selectionMode) {
+        val selStart = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
+        val selEnd = maxOf(selectionStart, selectionEnd)
+        val hasActiveSelection = selectionStart >= 0 && selectionEnd >= 0 && selStart != selEnd
+
+        val highlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+        val handleColor = MaterialTheme.colorScheme.primary
+
+        val displayString = remember(annotatedString, selectionStart, selectionEnd) {
+            if (hasActiveSelection) {
+                buildAnnotatedString {
+                    append(annotatedString)
+                    addStyle(SpanStyle(background = highlightColor), selStart, selEnd)
+                }
+            } else {
+                annotatedString
+            }
+        }
+
+        var boxWindowPos by remember { mutableStateOf(Offset.Zero) }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { boxWindowPos = it.positionInWindow() }
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            val layout = textLayoutResult
+                            if (layout != null) {
+                                val pos = layout.getOffsetForPosition(offset)
+                                    .coerceIn(0, annotatedString.length)
+                                onSelectionChanged(pos, pos)
+                            }
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            val layout = textLayoutResult
+                            if (layout != null) {
+                                val pos = layout.getOffsetForPosition(change.position)
+                                    .coerceIn(0, annotatedString.length)
+                                onSelectionChanged(selStart, pos)
+                            }
+                        }
+                    )
+                }
+        ) {
+            Text(
+                text = displayString,
+                fontSize = bodySize,
+                lineHeight = bodyLineHeight,
+                onTextLayout = { textLayoutResult = it }
+            )
+
+            // Draggable selection handles — each converts drag coordinates from its
+            // own window-space to the parent Box's local space via boxWindowPos.
+            val layout = textLayoutResult
+            if (layout != null && hasActiveSelection) {
+                val startBox = layout.getBoundingBox(selStart)
+                HandleMarker(
+                    boxWindowPos = boxWindowPos,
+                    color = handleColor,
+                    modifier = Modifier.offset {
+                        IntOffset(startBox.left.roundToInt() - 12, startBox.top.roundToInt() - 12)
+                    },
+                    onDragTo = { localPos ->
+                        val off = layout.getOffsetForPosition(localPos).coerceIn(0, annotatedString.length)
+                        onSelectionChanged(off, selectionEnd)
+                    }
+                )
+
+                val endChar = (selEnd - 1).coerceAtLeast(selStart)
+                val endBox = layout.getBoundingBox(endChar)
+                HandleMarker(
+                    boxWindowPos = boxWindowPos,
+                    color = handleColor,
+                    modifier = Modifier.offset {
+                        IntOffset(endBox.right.roundToInt() - 12, endBox.bottom.roundToInt() - 12)
+                    },
+                    onDragTo = { localPos ->
+                        val off = layout.getOffsetForPosition(localPos).coerceIn(0, annotatedString.length)
+                        onSelectionChanged(selectionStart, off)
+                    }
+                )
+            }
+        }
+    } else {
+        // Use plain Text for reliable height rendering inside scroll containers
+        // (ClickableText truncates height). Tap detection is on the Text itself
+        // rather than a matchParentSize() overlay Box — matchParentSize forces
+        // Compose to build fixed Constraints matching the Text's exact measured
+        // size, which throws for very large documents whose pixel height exceeds
+        // what Constraints can represent.
         Text(
             text = annotatedString,
             fontSize = bodySize,
             lineHeight = bodyLineHeight,
-            onTextLayout = { textLayoutResult = it }
-        )
-        // Full-size transparent tap overlay
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .pointerInput(onLinkTap, onTap) {
-                    detectTapGestures { offset ->
+            onTextLayout = { textLayoutResult = it },
+            modifier = Modifier.pointerInput(onLinkTap, onTap, onLongPressAt) {
+                detectTapGestures(
+                    onTap = { offset ->
                         val layout = textLayoutResult
                         if (layout != null) {
                             val textOffset = layout.getOffsetForPosition(offset)
@@ -358,11 +557,51 @@ fun MarkdownText(
                             Log.w("MarkdownLink", "textLayoutResult is null on tap")
                         }
                         onTap?.invoke()
+                    },
+                    onLongPress = { offset ->
+                        val layout = textLayoutResult
+                        val textOffset = layout?.getOffsetForPosition(offset)?.coerceIn(0, annotatedString.length)
+                        if (textOffset != null) onLongPressAt?.invoke(textOffset)
                     }
-                }
+                )
+            }
         )
     }
 }
+
+/** Small draggable circle overlay positioned at one end of a text selection.
+ *  Uses positionInWindow on both itself and the parent Box to convert drag
+ *  coordinates into the parent Box's local space for getOffsetForPosition. */
+@Composable
+private fun HandleMarker(
+    boxWindowPos: Offset,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onDragTo: (Offset) -> Unit = {}
+) {
+    var myWindowPos by remember { mutableStateOf(Offset.Zero) }
+
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .onGloballyPositioned { myWindowPos = it.positionInWindow() }
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    val dragWindowPos = myWindowPos + change.position
+                    val parentLocalPos = dragWindowPos - boxWindowPos
+                    onDragTo(parentLocalPos)
+                }
+            }
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val r = size.width / 2
+            drawCircle(color = color, radius = r)
+            drawCircle(color = Color.White, radius = r * 0.35f)
+        }
+    }
+}
+
 data class HeadingPos(
     val text: String,
     val lineIndex: Int,
@@ -437,6 +676,8 @@ private fun HeadingScrollbar(
         label = "scrollbarAlpha"
     )
 
+    val scrollbarVisible = showScrollbar || dragTargetIdx >= 0
+
     Box(
         modifier = Modifier
             .fillMaxHeight()
@@ -446,7 +687,7 @@ private fun HeadingScrollbar(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(headingCount) {
+                .then(if (scrollbarVisible) Modifier.pointerInput(headingCount) {
                     detectTapGestures { offset ->
                         val canvasH = size.height.toFloat()
                         val topM = canvasH * 0.10f
@@ -456,8 +697,8 @@ private fun HeadingScrollbar(
                         val scrollRatio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
                         coroutineScope.launch { scrollState.animateScrollTo((scrollRatio * scrollState.maxValue).roundToInt()) }
                     }
-                }
-                .pointerInput(headingCount) {
+                } else Modifier)
+                .then(if (scrollbarVisible) Modifier.pointerInput(headingCount) {
                     detectDragGestures(
                         onDragStart = { offset ->
                             val canvasH = size.height.toFloat()
@@ -474,13 +715,12 @@ private fun HeadingScrollbar(
                             val ratio = ((change.position.y - topM) / trackH).coerceIn(0f, 1f)
                             val idx = (ratio * (headingCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, headingCount - 1)
                             onDragChange(idx)
-                            val scrollRatio = headings[idx].lineIndex.toFloat() / totalLines.coerceAtLeast(1)
-                            coroutineScope.launch { scrollState.scrollTo((scrollRatio * scrollState.maxValue).roundToInt()) }
+                            coroutineScope.launch { scrollState.scrollTo((ratio * scrollState.maxValue).roundToInt()) }
                         },
                         onDragEnd = onDragEnd,
                         onDragCancel = onDragEnd
                     )
-                }
+                } else Modifier)
         ) {
             val h = size.height
             val topMargin = h * 0.10f
@@ -581,7 +821,7 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(start = 32.dp)
-                    .pointerInput(Unit) {
+                    .then(if (showScrollbar) Modifier.pointerInput(Unit) {
                         detectTapGestures { offset ->
                             val canvasH = size.height
                             val topM = canvasH * 0.10f
@@ -591,8 +831,8 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
                                 scrollState.animateScrollTo((ratio * h).roundToInt())
                             }
                         }
-                    }
-                    .pointerInput(Unit) {
+                    } else Modifier)
+                    .then(if (showScrollbar) Modifier.pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = { _ -> },
                             onDrag = { change, _ ->
@@ -606,7 +846,7 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
                                 }
                             }
                         )
-                    }
+                    } else Modifier)
             ) {
                 val canvasH = size.height
                 val topM = canvasH * 0.10f

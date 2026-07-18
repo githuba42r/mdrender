@@ -1,6 +1,7 @@
 package com.a42r.mdrender.localsend
 
 import android.util.Log
+import com.a42r.mdrender.data.repository.FileBookmarks
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
 import java.io.File
@@ -15,10 +16,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Emitted when a LocalSend REPLACE conflict replaces an existing file. */
+data class FileReplacedEvent(
+    val fileName: String,
+    val folderId: Long?,
+    val newFileId: Long
+)
 
 /** Progress of a file upload currently in transit. */
 data class TransferProgress(
@@ -72,6 +83,10 @@ class LocalSendSessionManager @Inject constructor(
     /** Emits a user-facing message when a transfer finishes ("3 files received"). */
     private val _lastCompleted = MutableStateFlow<String?>(null)
     val lastCompleted: StateFlow<String?> = _lastCompleted.asStateFlow()
+
+    /** Emits up-to-one event when a REPLACE conflict replaces an existing file. */
+    private val _fileReplaced = MutableSharedFlow<FileReplacedEvent>(replay = 1)
+    val fileReplaced: SharedFlow<FileReplacedEvent> = _fileReplaced.asSharedFlow()
 
     /** Emits progress during an active file upload. Null when idle. */
     private val _transferProgress = MutableStateFlow<TransferProgress?>(null)
@@ -206,39 +221,45 @@ class LocalSendSessionManager @Inject constructor(
         }
 
         return try {
+            var replacedFolderId: Long? = null
+            var replacedNewId: Long = 0L
+            var wasReplace = false
             runBlocking {
                 val folderId = resolveFolder(session.options.folder)
+                replacedFolderId = folderId
                 val mime = fileRepository.mimeTypeFromExtension(meta.fileName)
                     .takeIf { it != "application/octet-stream" } ?: meta.fileType
 
-                // Capture bookmarks before REPLACE deletes the existing file.
-                val oldBookmarks = if (session.options.conflict == ConflictStrategy.REPLACE) {
-                    fileRepository.findByName(folderId, meta.fileName)?.let {
-                        Triple(it.scrollPosition, it.playbackPosition, fileRepository.getLastOpenedAt(it.id) ?: 0L)
-                    }
+                val oldMeta = if (session.options.conflict == ConflictStrategy.REPLACE) {
+                    fileRepository.findByName(folderId, meta.fileName)
                 } else null
 
-                when (session.options.conflict) {
-                    ConflictStrategy.REPLACE -> {
-                        fileRepository.findByName(folderId, meta.fileName)
-                            ?.let { fileRepository.deleteFile(it.id) }
-                    }
-                    ConflictStrategy.SKIP -> { /* early-out above already handled this */ }
-                    ConflictStrategy.RENAME -> { /* handled below via uniqueNameInFolder */ }
-                }
+                oldMeta?.let { wasReplace = true }
+
                 val name = when (session.options.conflict) {
                     ConflictStrategy.REPLACE -> meta.fileName
                     ConflictStrategy.SKIP -> meta.fileName
                     ConflictStrategy.RENAME -> fileRepository.uniqueNameInFolder(folderId, meta.fileName)
                 }
-                // importFileFromTemp deletes the temp file on success.
-                val newId = fileRepository.importFileFromTemp(tempFile, name, mime, folderId)
-                // Restore bookmarks from the replaced file onto the new file.
-                oldBookmarks?.let { (scrollPos, playbackPos, lastOpenedAt) ->
-                    fileRepository.saveScrollPosition(newId, scrollPos)
-                    fileRepository.savePlaybackPosition(newId, playbackPos)
-                    if (lastOpenedAt > 0) fileRepository.restoreLastOpenedAt(newId, lastOpenedAt)
+
+                if (wasReplace) {
+                    val om = oldMeta!!
+                    val lastOpened = fileRepository.getLastOpenedAt(om.id)?.coerceAtLeast(0) ?: 0
+                    val bookmarks = FileBookmarks(
+                        scrollPosition = om.scrollPosition,
+                        playbackPosition = om.playbackPosition,
+                        lastOpenedAt = lastOpened
+                    )
+                    replacedNewId = fileRepository.replaceFileFromTemp(
+                        tempFile, name, mime, folderId,
+                        oldId = om.id, bookmarks = bookmarks
+                    )
+                } else {
+                    replacedNewId = fileRepository.importFileFromTemp(tempFile, name, mime, folderId)
                 }
+            }
+            if (wasReplace) {
+                _fileReplaced.tryEmit(FileReplacedEvent(meta.fileName, replacedFolderId, replacedNewId))
             }
             synchronized(session.received) { session.received.add(fileId) }
             if (session.received.size == session.files.size) {

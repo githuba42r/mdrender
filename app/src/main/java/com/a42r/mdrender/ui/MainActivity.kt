@@ -30,6 +30,7 @@ import androidx.navigation.compose.rememberNavController
 import com.a42r.mdrender.audio.AudioMiniPlayerBar
 import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.audio.AudioPlayerState
+import com.a42r.mdrender.audio.HiddenAudioControls
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import com.a42r.mdrender.localsend.LocalSendSessionManager
@@ -106,6 +107,10 @@ class MainActivity : FragmentActivity() {
                     currentRoute?.startsWith("audio_player/") != true &&
                     (!isHiddenFile || revealHidden)
 
+                val showHiddenAudio = info.fileId != 0L &&
+                    currentRoute?.startsWith("audio_player/") != true &&
+                    isHiddenFile && !revealHidden
+
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (locked || !contentReady) {
                         LockGate()
@@ -118,6 +123,11 @@ class MainActivity : FragmentActivity() {
                                     playerState = playerState,
                                     prefs = audioPlayerPrefs,
                                     visible = showMiniPlayer,
+                                    modifier = Modifier.align(Alignment.BottomCenter)
+                                )
+                                HiddenAudioControls(
+                                    playerState = playerState,
+                                    visible = showHiddenAudio,
                                     modifier = Modifier.align(Alignment.BottomCenter)
                                 )
                             }

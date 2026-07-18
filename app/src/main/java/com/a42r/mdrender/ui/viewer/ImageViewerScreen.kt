@@ -33,8 +33,10 @@ import coil.request.ImageRequest
 @Composable
 fun ImageViewerScreen(
     onBack: () -> Unit,
+    onNavigateToFile: (Long) -> Unit = {},
     viewModel: ViewerViewModel = hiltViewModel()
 ) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val pager by viewModel.imagePager.collectAsStateWithLifecycle()
     var showAppBar by remember { mutableStateOf(false) }
 
@@ -46,6 +48,24 @@ fun ImageViewerScreen(
     RegisterViewerZoom { delta ->
         scale = (scale * if (delta > 0) 1.25f else 0.8f).coerceIn(1f, 5f)
         if (scale == 1f) offset = Offset.Zero
+    }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Show a persistent "Reopen" snackbar when LocalSend replaces the file.
+    // Key on updatedFileId so a second replacement while the snackbar is
+    // still showing re-triggers the LaunchedEffect (dismissing the old one).
+    LaunchedEffect(uiState.updatedFileId) {
+        if (uiState.fileUpdated && uiState.updatedFileId != null) {
+            val result = snackbarHostState.showSnackbar(
+                message = "File updated",
+                actionLabel = "Reopen",
+                duration = SnackbarDuration.Indefinite
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                onNavigateToFile(uiState.updatedFileId!!)
+            }
+        }
     }
 
     val state = pager
@@ -69,6 +89,10 @@ fun ImageViewerScreen(
 
     Scaffold(
         containerColor = Color.Black,
+        snackbarHost = {
+            // Match Scaffold's background so the snackbar blends with the content area.
+            SnackbarHost(snackbarHostState)
+        },
         topBar = {
             if (showAppBar) {
                 TopAppBar(

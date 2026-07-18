@@ -41,7 +41,10 @@ class FileRepository @Inject constructor(
 
     fun getFilesInFolder(folderId: Long?): Flow<List<FileListItem>> = fileDao.getFilesInFolder(folderId)
 
-    suspend fun importFile(name: String, mimeType: String, rawBytes: ByteArray, folderId: Long? = null): Long {
+    suspend fun importFile(
+        name: String, mimeType: String, rawBytes: ByteArray, folderId: Long? = null,
+        scrollPosition: Int = 0, playbackPosition: Long = 0, lastOpenedAt: Long = 0
+    ): Long {
         val encryptedBlob = cryptoEngine.encrypt(rawBytes)
         val thumbnail: ByteArray? = if (mimeType.startsWith("image/")) {
             generateEncryptedThumbnail(rawBytes)
@@ -53,7 +56,10 @@ class FileRepository @Inject constructor(
             mimeType = mimeType,
             encryptedBlob = encryptedBlob,
             encryptedThumbnail = thumbnail,
-            fileSize = rawBytes.size.toLong()
+            fileSize = rawBytes.size.toLong(),
+            scrollPosition = scrollPosition,
+            playbackPosition = playbackPosition,
+            lastOpenedAt = lastOpenedAt
         )
         return fileDao.insert(entity)
     }
@@ -105,6 +111,63 @@ class FileRepository @Inject constructor(
                 storagePath = storageName
             )
             fileDao.insert(entity)
+        }
+    }
+
+    /** Like importFileFromTemp but atomically deletes [oldId] and inserts the new
+     *  row in a single Room transaction, so invalidation-tracked Flows
+     *  (e.g. getLastOpenedFile) only emit once with the final state. */
+    suspend fun replaceFileFromTemp(
+        tempFile: File, name: String, mimeType: String, folderId: Long? = null,
+        oldId: Long, bookmarks: FileBookmarks = FileBookmarks()
+    ): Long {
+        val fileSize = tempFile.length()
+        return if (fileSize <= FILE_STORAGE_THRESHOLD) {
+            val rawBytes = tempFile.readBytes()
+            tempFile.delete()
+            val encryptedBlob = cryptoEngine.encrypt(rawBytes)
+            val thumbnail = if (mimeType.startsWith("image/")) {
+                generateEncryptedThumbnail(rawBytes)
+            } else null
+            val entity = FileEntity(
+                folderId = folderId, name = name, mimeType = mimeType,
+                encryptedBlob = encryptedBlob, encryptedThumbnail = thumbnail,
+                fileSize = fileSize,
+                scrollPosition = bookmarks.scrollPosition,
+                playbackPosition = bookmarks.playbackPosition,
+                lastOpenedAt = bookmarks.lastOpenedAt
+            )
+            fileDao.replaceWithEntity(oldId, entity)
+        } else if (!storagePrefs.encryptLargeFiles) {
+            val storageName = UUID.randomUUID().toString()
+            val dest = File(plainDir, storageName)
+            tempFile.copyTo(dest, overwrite = true)
+            tempFile.delete()
+            val entity = FileEntity(
+                folderId = folderId, name = name, mimeType = mimeType,
+                encryptedBlob = ByteArray(0), fileSize = fileSize,
+                storageType = "plain", storagePath = storageName,
+                scrollPosition = bookmarks.scrollPosition,
+                playbackPosition = bookmarks.playbackPosition,
+                lastOpenedAt = bookmarks.lastOpenedAt
+            )
+            fileDao.replaceWithEntity(oldId, entity)
+        } else {
+            val storageName = UUID.randomUUID().toString()
+            val dest = File(encryptedDir, storageName)
+            tempFile.inputStream().use { input ->
+                cryptoEngine.encryptStream(input, dest.outputStream())
+            }
+            tempFile.delete()
+            val entity = FileEntity(
+                folderId = folderId, name = name, mimeType = mimeType,
+                encryptedBlob = ByteArray(0), fileSize = fileSize,
+                storageType = "file", storagePath = storageName,
+                scrollPosition = bookmarks.scrollPosition,
+                playbackPosition = bookmarks.playbackPosition,
+                lastOpenedAt = bookmarks.lastOpenedAt
+            )
+            fileDao.replaceWithEntity(oldId, entity)
         }
     }
 
@@ -424,3 +487,10 @@ class FileRepository @Inject constructor(
         }
     }
 }
+
+/** Bookmarks carried over from a replaced file (the old row) to its replacement. */
+data class FileBookmarks(
+    val scrollPosition: Int = 0,
+    val playbackPosition: Long = 0,
+    val lastOpenedAt: Long = 0
+)

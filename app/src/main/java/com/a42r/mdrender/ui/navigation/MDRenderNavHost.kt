@@ -50,11 +50,25 @@ fun MDRenderNavHost(navController: NavHostController) {
         composable(
             route = Routes.TextViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
-        ) { TextViewerScreen(onBack = { navController.popBackStack() }) }
+        ) {
+            TextViewerScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToFile = { fileId ->
+                    navController.navigate(Routes.TextViewer.createRoute(fileId))
+                }
+            )
+        }
         composable(
             route = Routes.ImageViewer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })
-        ) { ImageViewerScreen(onBack = { navController.popBackStack() }) }
+        ) {
+            ImageViewerScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToFile = { fileId ->
+                    navController.navigate(Routes.ImageViewer.createRoute(fileId))
+                }
+            )
+        }
         composable(
             route = Routes.AudioPlayer.route,
             arguments = listOf(navArgument("fileId") { type = NavType.LongType })

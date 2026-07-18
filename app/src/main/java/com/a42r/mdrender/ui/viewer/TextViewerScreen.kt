@@ -43,6 +43,7 @@ import kotlin.math.roundToInt
 @Composable
 fun TextViewerScreen(
     onBack: () -> Unit,
+    onNavigateToFile: (Long) -> Unit = {},
     viewModel: ViewerViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -54,7 +55,26 @@ fun TextViewerScreen(
         fontScale = (fontScale + delta * 0.1f).coerceIn(0.6f, 3f)
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Show a persistent "Reopen" snackbar when LocalSend replaces the file.
+    // Key on updatedFileId so a second replacement while the snackbar is
+    // still showing re-triggers the LaunchedEffect (dismissing the old one).
+    LaunchedEffect(uiState.updatedFileId) {
+        if (uiState.fileUpdated && uiState.updatedFileId != null) {
+            val result = snackbarHostState.showSnackbar(
+                message = "File updated",
+                actionLabel = "Reopen",
+                duration = SnackbarDuration.Indefinite
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                onNavigateToFile(uiState.updatedFileId!!)
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (showAppBar) {
                 TopAppBar(

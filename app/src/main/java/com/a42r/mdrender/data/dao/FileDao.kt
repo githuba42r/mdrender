@@ -100,4 +100,13 @@ interface FileDao {
 
     @Query("SELECT last_opened_at FROM files WHERE id = :id")
     suspend fun getLastOpenedAt(id: Long): Long?
+
+    /** Delete the old file and insert a new one atomically in a single Room
+     *  transaction, so invalidation-tracked Flows (notably getLastOpenedFile)
+     *  only emit once with the final state — no transient wrong-file race. */
+    @Transaction
+    suspend fun replaceWithEntity(oldId: Long, entity: FileEntity): Long {
+        delete(oldId)
+        return insert(entity)
+    }
 }

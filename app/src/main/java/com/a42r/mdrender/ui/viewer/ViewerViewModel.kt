@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.repository.FileRepository
+import com.a42r.mdrender.localsend.LocalSendSessionManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +23,9 @@ data class ViewerUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
     val initialScrollPosition: Int = 0,
-    val isIndexTocEnabled: Boolean = false
+    val isIndexTocEnabled: Boolean = false,
+    val fileUpdated: Boolean = false,
+    val updatedFileId: Long? = null
 )
 
 /** Ordered sibling image ids in the folder plus the index of the opened one. */
@@ -35,6 +38,7 @@ data class ImagePagerState(
 class ViewerViewModel @Inject constructor(
     private val fileRepository: FileRepository,
     private val viewerPrefs: ViewerPrefs,
+    private val localSendSessionManager: LocalSendSessionManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -50,9 +54,25 @@ class ViewerViewModel @Inject constructor(
     private val _imagePager = MutableStateFlow<ImagePagerState?>(null)
     val imagePager: StateFlow<ImagePagerState?> = _imagePager.asStateFlow()
 
+    private val currentFileName: String get() = _uiState.value.fileName
+
     init {
         loadContent()
         loadImageSiblings()
+        observeFileReplacements()
+    }
+
+    /** Watch for LocalSend REPLACE events targeting the file we're viewing. */
+    private fun observeFileReplacements() {
+        viewModelScope.launch {
+            localSendSessionManager.fileReplaced.collect { event ->
+                val fn = currentFileName
+                val fid = folderId
+                if (fn.isNotEmpty() && event.fileName == fn && event.folderId == fid) {
+                    _uiState.update { it.copy(fileUpdated = true, updatedFileId = event.newFileId) }
+                }
+            }
+        }
     }
 
     /** Resolve a filename (from a markdown link) to a file ID in the same folder, or null. */
