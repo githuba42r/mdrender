@@ -21,7 +21,40 @@ val versionMajor = versionProps.getProperty("VERSION_MAJOR")?.toIntOrNull() ?: 0
 val versionMinor = versionProps.getProperty("VERSION_MINOR")?.toIntOrNull() ?: 0
 val versionPatch = versionProps.getProperty("VERSION_PATCH")?.toIntOrNull() ?: 0
 val appVersionCode = versionProps.getProperty("VERSION_CODE")?.toIntOrNull() ?: 1
-val appVersionName = "$versionMajor.$versionMinor.$versionPatch"
+val stableVersionName = "$versionMajor.$versionMinor.$versionPatch"
+val nextPatchVersion = "$versionMajor.$versionMinor.${versionPatch + 1}"
+
+// --- RC detection: non-master branches produce -rc.N tags ---
+data class GitInfo(val branch: String, val rcCount: Int)
+
+val gitInfo: GitInfo = try {
+    val proc = ProcessBuilder("git", "rev-parse", "--abbrev-ref", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(false)
+        .start()
+    val branch = proc.inputStream.bufferedReader().readText().trim()
+    proc.waitFor()
+
+    val isMain = branch == "master" || branch == "main"
+    val rcCount = if (isMain) 0 else {
+        val c = ProcessBuilder("git", "rev-list", "--count", "HEAD", "^master")
+            .directory(rootProject.projectDir)
+            .redirectErrorStream(false)
+            .start()
+        c.inputStream.bufferedReader().readText().trim().toInt().coerceAtLeast(1)
+    }
+    GitInfo(branch, rcCount)
+} catch (_: Exception) {
+    GitInfo("unknown", 0)
+}
+
+// versionName for the Android manifest (no rc suffix — Play Store rejects it)
+// displayVersionName shown in the app's About section
+val displayVersionName = if (gitInfo.rcCount > 0) {
+    "$nextPatchVersion-rc.${gitInfo.rcCount}"
+} else {
+    stableVersionName
+}
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties()
@@ -36,11 +69,12 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = appVersionCode
-        versionName = appVersionName
+        versionName = stableVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
-        resValue("string", "build_date", SimpleDateFormat("MMM dd, yyyy").format(Date()))
-        resValue("string", "build_time", SimpleDateFormat("HH:mm:ss").format(Date()))
+        resValue("string", "build_date", SimpleDateFormat("E, MMM d, yyyy").format(Date()))
+        resValue("string", "build_time", SimpleDateFormat("HH:mm").format(Date()))
+        resValue("string", "version_display", displayVersionName)
     }
 
     signingConfigs {
@@ -73,6 +107,7 @@ android {
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
+
 }
 
 dependencies {

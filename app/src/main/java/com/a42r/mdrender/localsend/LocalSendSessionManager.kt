@@ -204,6 +204,15 @@ class LocalSendSessionManager @Inject constructor(
         if (session.tokens[fileId] != token) return false
         val meta = session.files[fileId] ?: return false
 
+        // Check if the target folder is in a hidden tree. When it is, suppress
+        // the completion toast so hidden activity is never exposed.
+        val isHidden = runBlocking {
+            folderRepository.isInHiddenTree(resolveFolder(session.options.folder))
+        }
+        fun maybeComplete(result: String) {
+            if (!isHidden) _lastCompleted.value = result
+        }
+
         // --- ConflictStrategy.SKIP early-out ---
         // Check before runBlocking so we can return normally.
         if (session.options.conflict == ConflictStrategy.SKIP && runBlocking {
@@ -214,8 +223,8 @@ class LocalSendSessionManager @Inject constructor(
                 sessionWatchdogs.remove(sessionId)?.cancel()
                 sessions.remove(sessionId)
                 _transferProgress.value = null
-                _lastCompleted.value = if (session.files.size == 1)
-                    "\"${meta.fileName}\" skipped" else "${session.files.size} files received (with skips)"
+                maybeComplete(if (session.files.size == 1)
+                    "\"${meta.fileName}\" skipped" else "${session.files.size} files received (with skips)")
             }
             return true
         }
@@ -266,8 +275,8 @@ class LocalSendSessionManager @Inject constructor(
                 sessionWatchdogs.remove(sessionId)?.cancel()
                 sessions.remove(sessionId)
                 _transferProgress.value = null
-                _lastCompleted.value = if (session.files.size == 1)
-                    "\"${meta.fileName}\" received" else "${session.files.size} files received"
+                maybeComplete(if (session.files.size == 1)
+                    "\"${meta.fileName}\" received" else "${session.files.size} files received")
             }
             true
         } catch (e: Exception) {

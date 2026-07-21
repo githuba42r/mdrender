@@ -2,6 +2,7 @@ package com.a42r.mdrender.ui.settings
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
+import com.a42r.mdrender.R
 import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.data.repository.StoragePrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
@@ -18,7 +19,7 @@ import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 
 data class SettingsUiState(
-    val appVersion: String = "0.1.0",
+    val appVersion: String = "",
     val localSendEnabled: Boolean = false,
     val localSendAlias: String = "",
     val localSendPin: String = "",
@@ -44,6 +45,7 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState(
+        appVersion = buildVersionString(),
         localSendEnabled = localSendPrefs.enabled,
         localSendAlias = localSendPrefs.alias,
         localSendPin = localSendPrefs.pin,
@@ -128,5 +130,12 @@ class SettingsViewModel @Inject constructor(
     fun setShowThumbnails(enabled: Boolean) {
         browserPrefs.showThumbnails = enabled
         _uiState.update { it.copy(showThumbnails = enabled) }
+    }
+
+    private fun buildVersionString(): String {
+        val date = try { context.getString(R.string.build_date) } catch (_: Exception) { "?" }
+        val time = try { context.getString(R.string.build_time) } catch (_: Exception) { "?" }
+        val versionDisplay = try { context.getString(R.string.version_display) } catch (_: Exception) { "?" }
+        return "Version v$versionDisplay\nbuild $date  $time"
     }
 }
