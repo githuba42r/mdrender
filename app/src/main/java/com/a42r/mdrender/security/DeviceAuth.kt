@@ -62,12 +62,6 @@ object DeviceAuth {
             .setTitle("Unlock MDRender")
             .setSubtitle("Authenticate to access your files")
 
-        if (allowWeak) {
-            // Face unlock (BIOMETRIC_WEAK) normally requires a "tap to confirm"
-            // step after scanning. Skip it so unlock happens immediately.
-            builder.setConfirmationRequired(false)
-        }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             builder.setAllowedAuthenticators(authTypes)
         } else {

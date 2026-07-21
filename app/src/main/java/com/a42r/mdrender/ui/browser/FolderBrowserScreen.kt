@@ -274,16 +274,7 @@ fun FolderBrowserScreen(
                                 contentDescription = "Toggle view"
                             )
                         }
-                        Box(
-                            modifier = Modifier
-                                .combinedClickable(
-                                    onClick = { navController.navigate(Routes.Settings.route) },
-                                    onLongClick = {
-                                        if (revealHidden) navController.navigate(Routes.UnhideSettings.route)
-                                    }
-                                )
-                                .padding(8.dp)
-                        ) {
+                        IconButton(onClick = { navController.navigate(Routes.Settings.route) }) {
                             Icon(Icons.Filled.Settings, contentDescription = "Settings")
                         }
                     }

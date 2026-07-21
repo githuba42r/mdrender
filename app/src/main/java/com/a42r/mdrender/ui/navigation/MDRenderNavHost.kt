@@ -17,7 +17,6 @@ import com.a42r.mdrender.ui.viewer.ImageViewerScreen
 import com.a42r.mdrender.ui.viewer.MarkdownViewerScreen
 import com.a42r.mdrender.ui.viewer.TextViewerScreen
 import com.a42r.mdrender.ui.import.ImportScreen
-import com.a42r.mdrender.gesture.settings.UnhideSettingsScreen
 import com.a42r.mdrender.ui.settings.SettingsScreen
 
 @Composable
@@ -81,9 +80,6 @@ fun MDRenderNavHost(navController: NavHostController) {
         }
         composable(Routes.Settings.route) {
             SettingsScreen(onBack = { navController.popBackStack() })
-        }
-        composable(Routes.UnhideSettings.route) {
-            UnhideSettingsScreen(onBack = { navController.popBackStack() })
         }
         composable(
             route = Routes.Import.route,

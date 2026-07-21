@@ -62,211 +62,225 @@ fun UnhideSettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // --- Info header ---
-            Text(
-                "Customise how hidden files and folders are revealed. " +
-                "These settings are not documented in the app.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            UnhideSettingsContent(
+                uiState = uiState,
+                viewModel = viewModel
             )
+        }
+    }
+}
 
-            HorizontalDivider()
+@Composable
+fun UnhideSettingsContent(
+    uiState: UnhideSettingsUiState,
+    viewModel: UnhideSettingsViewModel,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        // --- Info header ---
+        Text(
+            "Customise how hidden files and folders are revealed. " +
+            "These settings are not documented in the app.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
 
-            // --- SECTION 1: 12-Tap Toggle ---
-            ListItem(
-                headlineContent = { Text("12-tap title gesture") },
-                supportingContent = {
+        HorizontalDivider()
+
+        // --- SECTION 1: 12-Tap Toggle ---
+        ListItem(
+            headlineContent = { Text("12-tap title gesture") },
+            supportingContent = {
+                Text(
+                    "Warning: disabling this may leave you unable to reveal " +
+                    "hidden folders if no other method works reliably"
+                )
+            },
+            trailingContent = {
+                Switch(
+                    checked = uiState.twelveTapEnabled,
+                    onCheckedChange = { viewModel.setTwelveTapEnabled(it) }
+                )
+            }
+        )
+
+        if (uiState.showDisableWarning) {
+            AlertDialog(
+                onDismissRequest = { viewModel.cancelDisableWarning() },
+                title = { Text("Disable 12-tap?") },
+                text = {
                     Text(
-                        "Warning: disabling this may leave you unable to reveal " +
-                        "hidden folders if no other method works reliably"
+                        "If no other method is working reliably, you won't " +
+                        "be able to reveal hidden folders. Make sure you have " +
+                        "tested at least one alternative gesture before disabling."
                     )
                 },
-                trailingContent = {
-                    Switch(
-                        checked = uiState.twelveTapEnabled,
-                        onCheckedChange = { viewModel.setTwelveTapEnabled(it) }
-                    )
+                confirmButton = {
+                    TextButton(onClick = { viewModel.confirmDisableTwelveTap() }) {
+                        Text("Disable", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.cancelDisableWarning() }) { Text("Cancel") }
                 }
             )
-
-            if (uiState.showDisableWarning) {
-                AlertDialog(
-                    onDismissRequest = { viewModel.cancelDisableWarning() },
-                    title = { Text("Disable 12-tap?") },
-                    text = {
-                        Text(
-                            "If no other method is working reliably, you won't " +
-                            "be able to reveal hidden folders. Make sure you have " +
-                            "tested at least one alternative gesture before disabling."
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { viewModel.confirmDisableTwelveTap() }) {
-                            Text("Disable", color = MaterialTheme.colorScheme.error)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { viewModel.cancelDisableWarning() }) { Text("Cancel") }
-                    }
-                )
-            }
-
-            HorizontalDivider()
-
-            // --- SECTION 2: Tap Sequence ---
-            Text(
-                "Tap Sequence",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-
-            ListItem(
-                headlineContent = { Text("Enabled") },
-                trailingContent = {
-                    Switch(
-                        checked = uiState.tapSequenceEnabled,
-                        onCheckedChange = { viewModel.setTapSequenceEnabled(it) }
-                    )
-                }
-            )
-
-            if (uiState.tapSequenceEnabled) {
-                // Explanation
-                Text(
-                    "Tap the title bar in this sequence to unhide. Each step is " +
-                    "either a quick tap (TAP) or a long press (HOLD). " +
-                    "Tap a chip below to toggle between TAP and HOLD.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-                // Pattern editor
-                Text(
-                    "Pattern:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    uiState.tapPattern.forEachIndexed { index, action ->
-                        val tap = action as? GestureAction.Tap ?: return@forEachIndexed
-                        val label = if (tap.isLongPress) "HOLD" else "TAP"
-                        val isSelected = tap.isLongPress
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { viewModel.toggleTapStepLongPress(index) },
-                            label = { Text(label, fontSize = 11.sp) },
-                            modifier = Modifier.height(32.dp)
-                        )
-                    }
-                }
-                Text(
-                    "Tap a chip to switch between quick tap (TAP) and long press (HOLD)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, top = 0.dp)
-                )
-
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(onClick = { viewModel.addTapStep() }) {
-                        Icon(Icons.Filled.Add, "Add step")
-                    }
-                    IconButton(
-                        onClick = { viewModel.removeTapStep() },
-                        enabled = uiState.tapPattern.size > 1
-                    ) {
-                        Icon(Icons.Filled.Remove, "Remove step")
-                    }
-                }
-
-                // Test button
-                TapTestButton(viewModel)
-            }
-
-            HorizontalDivider()
-
-            // --- SECTION 3: Multi-Touch ---
-            Text(
-                "Multi-Touch",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-
-            ListItem(
-                headlineContent = { Text("Enabled") },
-                trailingContent = {
-                    Switch(
-                        checked = uiState.multiTouchEnabled,
-                        onCheckedChange = { viewModel.setMultiTouchEnabled(it) }
-                    )
-                }
-            )
-
-            if (uiState.multiTouchEnabled) {
-                // Explanation
-                Text(
-                    "Place your fingers on the content area (below the title bar) in " +
-                    "the zones shown in the grid below. Build a sequence of actions — " +
-                    "finger placement, rotation, sliding, or lift — then the app will " +
-                    "watch for that exact sequence to unhide.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-                // Sequence editor
-                Text(
-                    "Sequence steps:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                )
-
-                uiState.multiTouchSequence.forEachIndexed { index, action ->
-                    ListItem(
-                        headlineContent = { Text(describeAction(action)) },
-                        trailingContent = {
-                            IconButton(onClick = { viewModel.removeMultiTouchAction(index) }) {
-                                Icon(Icons.Filled.Delete, "Remove", tint = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    )
-                }
-
-                // Add action buttons
-                MultiTouchActionAdder(viewModel)
-
-                // Debug overlay toggle
-                ListItem(
-                    headlineContent = { Text("Debug overlay") },
-                    supportingContent = { Text("Show zone grid and finger tracking on screen") },
-                    trailingContent = {
-                        Switch(
-                            checked = uiState.multiTouchDebugOverlay,
-                            onCheckedChange = { viewModel.toggleDebugOverlay() }
-                        )
-                    }
-                )
-
-                // Zone grid preview
-                if (uiState.multiTouchSequence.isNotEmpty()) {
-                    ZoneGridPreview()
-                }
-
-                // Test button
-                MultiTouchTestButton(viewModel)
-            }
-
-            Spacer(Modifier.height(32.dp))
         }
+
+        HorizontalDivider()
+
+        // --- SECTION 2: Tap Sequence ---
+        Text(
+            "Tap Sequence",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+
+        ListItem(
+            headlineContent = { Text("Enabled") },
+            trailingContent = {
+                Switch(
+                    checked = uiState.tapSequenceEnabled,
+                    onCheckedChange = { viewModel.setTapSequenceEnabled(it) }
+                )
+            }
+        )
+
+        if (uiState.tapSequenceEnabled) {
+            // Explanation
+            Text(
+                "Tap the title bar in this sequence to unhide. Each step is " +
+                "either a quick tap (TAP) or a long press (HOLD). " +
+                "Tap a chip below to toggle between TAP and HOLD.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+            // Pattern editor
+            Text(
+                "Pattern:",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                uiState.tapPattern.forEachIndexed { index, action ->
+                    val tap = action as? GestureAction.Tap ?: return@forEachIndexed
+                    val label = if (tap.isLongPress) "HOLD" else "TAP"
+                    val isSelected = tap.isLongPress
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.toggleTapStepLongPress(index) },
+                        label = { Text(label, fontSize = 11.sp) },
+                        modifier = Modifier.height(32.dp)
+                    )
+                }
+            }
+            Text(
+                "Tap a chip to switch between quick tap (TAP) and long press (HOLD)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, top = 0.dp)
+            )
+
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(onClick = { viewModel.addTapStep() }) {
+                    Icon(Icons.Filled.Add, "Add step")
+                }
+                IconButton(
+                    onClick = { viewModel.removeTapStep() },
+                    enabled = uiState.tapPattern.size > 1
+                ) {
+                    Icon(Icons.Filled.Remove, "Remove step")
+                }
+            }
+
+            // Test button
+            TapTestButton(viewModel)
+        }
+
+        HorizontalDivider()
+
+        // --- SECTION 3: Multi-Touch ---
+        Text(
+            "Multi-Touch",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+
+        ListItem(
+            headlineContent = { Text("Enabled") },
+            trailingContent = {
+                Switch(
+                    checked = uiState.multiTouchEnabled,
+                    onCheckedChange = { viewModel.setMultiTouchEnabled(it) }
+                )
+            }
+        )
+
+        if (uiState.multiTouchEnabled) {
+            // Explanation
+            Text(
+                "Place your fingers on the content area (below the title bar) in " +
+                "the zones shown in the grid below. Build a sequence of actions — " +
+                "finger placement, rotation, sliding, or lift — then the app will " +
+                "watch for that exact sequence to unhide.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+            // Sequence editor
+            Text(
+                "Sequence steps:",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+            )
+
+            uiState.multiTouchSequence.forEachIndexed { index, action ->
+                ListItem(
+                    headlineContent = { Text(describeAction(action)) },
+                    trailingContent = {
+                        IconButton(onClick = { viewModel.removeMultiTouchAction(index) }) {
+                            Icon(Icons.Filled.Delete, "Remove", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                )
+            }
+
+            // Add action buttons
+            MultiTouchActionAdder(viewModel)
+
+            // Debug overlay toggle
+            ListItem(
+                headlineContent = { Text("Debug overlay") },
+                supportingContent = { Text("Show zone grid and finger tracking on screen") },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.multiTouchDebugOverlay,
+                        onCheckedChange = { viewModel.toggleDebugOverlay() }
+                    )
+                }
+            )
+
+            // Zone grid preview
+            if (uiState.multiTouchSequence.isNotEmpty()) {
+                ZoneGridPreview()
+            }
+
+            // Test button
+            MultiTouchTestButton(viewModel)
+        }
+
+        Spacer(Modifier.height(32.dp))
     }
 }
 
