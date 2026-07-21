@@ -80,6 +80,9 @@ class BrowserViewModel @Inject constructor(
     /** Whether hidden folders are currently revealed (drives badges + Unhide). */
     val revealHidden: StateFlow<Boolean> = appLock.revealHidden
 
+    /** Whether to generate and display image thumbnails in grid view. */
+    val showThumbnails: Boolean get() = browserPrefs.showThumbnails
+
     /** Whether the LocalSend receiver is on (drives the top-bar toggle). */
     val localSendEnabled: StateFlow<Boolean> = localSendPrefs.enabledFlow
 

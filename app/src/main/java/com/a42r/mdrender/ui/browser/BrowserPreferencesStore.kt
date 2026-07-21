@@ -25,8 +25,15 @@ class BrowserPreferencesStore @Inject constructor(
             prefs.edit().putBoolean(KEY_GRID_VIEW, value).apply()
         }
 
+    var showThumbnails: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_THUMBNAILS, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_THUMBNAILS, value).apply()
+        }
+
     companion object {
         private const val KEY_LAST_FOLDER = "last_folder_id"
         private const val KEY_GRID_VIEW = "is_grid_view"
+        private const val KEY_SHOW_THUMBNAILS = "show_thumbnails"
     }
 }

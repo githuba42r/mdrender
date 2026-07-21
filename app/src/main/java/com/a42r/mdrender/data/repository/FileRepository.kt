@@ -374,7 +374,11 @@ class FileRepository @Inject constructor(
 
     suspend fun getDecryptedThumbnail(id: Long): ByteArray? {
         val meta = fileDao.getFileMetadata(id) ?: return null
-        return meta.encryptedThumbnail?.let { if (it.isNotEmpty()) cryptoEngine.decrypt(it) else null }
+        // If a stored thumbnail exists, decrypt and return it.
+        meta.encryptedThumbnail?.takeIf { it.isNotEmpty() }?.let { return cryptoEngine.decrypt(it) }
+        // No stored thumbnail — generate one on-the-fly for display purposes.
+        val content = getDecryptedContent(id)?.first ?: return null
+        return generateRawThumbnail(content)
     }
 
     /** Ordered image files in the same folder as [fileId], with the index of
@@ -388,7 +392,7 @@ class FileRepository @Inject constructor(
         return images to index
     }
 
-    private fun generateEncryptedThumbnail(rawBytes: ByteArray): ByteArray? {
+    private fun generateRawThumbnail(rawBytes: ByteArray): ByteArray? {
         return try {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
@@ -398,11 +402,14 @@ class FileRepository @Inject constructor(
             val stream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
             bitmap.recycle()
-            cryptoEngine.encrypt(stream.toByteArray())
+            stream.toByteArray()
         } catch (e: Exception) {
             null
         }
     }
+
+    private fun generateEncryptedThumbnail(rawBytes: ByteArray): ByteArray? =
+        generateRawThumbnail(rawBytes)?.let { cryptoEngine.encrypt(it) }
 
     suspend fun saveScrollPosition(id: Long, pos: Int) = fileDao.updateScrollPosition(id, pos)
 

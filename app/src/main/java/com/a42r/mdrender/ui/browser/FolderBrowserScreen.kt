@@ -373,8 +373,8 @@ fun FolderBrowserScreen(
                     // Files
                     items(uiState.files, key = { "file_${it.id}" }) { file ->
                         val fileType = FileType.fromMimeType(file.mimeType)
-                        val thumb by produceState<ByteArray?>(null, file.id) {
-                            value = if (file.mimeType.startsWith("image/"))
+                        val thumb by produceState<ByteArray?>(null, file.id, viewModel.showThumbnails) {
+                            value = if (viewModel.showThumbnails && file.mimeType.startsWith("image/"))
                                 viewModel.decryptThumbnail(file.id) else null
                         }
                         FileItem(
@@ -405,8 +405,8 @@ fun FolderBrowserScreen(
                     }
                     items(uiState.files, key = { "file_${it.id}" }) { file ->
                         val fileType = FileType.fromMimeType(file.mimeType)
-                        val thumb by produceState<ByteArray?>(null, file.id) {
-                            value = if (file.mimeType.startsWith("image/"))
+                        val thumb by produceState<ByteArray?>(null, file.id, viewModel.showThumbnails) {
+                            value = if (viewModel.showThumbnails && file.mimeType.startsWith("image/"))
                                 viewModel.decryptThumbnail(file.id) else null
                         }
                         val fileRow = @Composable {

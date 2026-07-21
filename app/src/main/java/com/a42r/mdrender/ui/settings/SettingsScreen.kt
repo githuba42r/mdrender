@@ -229,6 +229,21 @@ fun SettingsScreen(
                 }
             )
 
+            // Image thumbnails
+            ListItem(
+                headlineContent = { Text("Show image thumbnails") },
+                supportingContent = {
+                    Text("Generate and display thumbnail previews for image " +
+                         "files in the folder browser.")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = uiState.showThumbnails,
+                        onCheckedChange = { viewModel.setShowThumbnails(it) }
+                    )
+                }
+            )
+
             HorizontalDivider()
 
             // INDEX.md table of contents

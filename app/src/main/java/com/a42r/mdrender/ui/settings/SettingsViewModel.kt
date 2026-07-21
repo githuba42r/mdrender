@@ -6,6 +6,7 @@ import com.a42r.mdrender.audio.AudioPlayerPrefs
 import com.a42r.mdrender.data.repository.StoragePrefs
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import com.a42r.mdrender.security.SecurityPrefs
+import com.a42r.mdrender.ui.browser.BrowserPreferencesStore
 import com.a42r.mdrender.ui.viewer.ViewerPrefs
 import com.a42r.mdrender.localsend.LocalSendService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,7 +28,8 @@ data class SettingsUiState(
     val indexTocEnabled: Boolean = true,
     val encryptLargeFiles: Boolean = true,
     val requireSystemAuth: Boolean = true,
-    val allowWeakBiometric: Boolean = false
+    val allowWeakBiometric: Boolean = false,
+    val showThumbnails: Boolean = false
 )
 
 @HiltViewModel
@@ -37,6 +39,7 @@ class SettingsViewModel @Inject constructor(
     private val viewerPrefs: ViewerPrefs,
     private val storagePrefs: StoragePrefs,
     private val securityPrefs: SecurityPrefs,
+    private val browserPrefs: BrowserPreferencesStore,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -50,7 +53,8 @@ class SettingsViewModel @Inject constructor(
         indexTocEnabled = viewerPrefs.indexTocEnabled,
         encryptLargeFiles = storagePrefs.encryptLargeFiles,
         requireSystemAuth = securityPrefs.requireSystemAuth,
-        allowWeakBiometric = securityPrefs.allowWeakBiometric
+        allowWeakBiometric = securityPrefs.allowWeakBiometric,
+        showThumbnails = browserPrefs.showThumbnails
     ))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -119,5 +123,10 @@ class SettingsViewModel @Inject constructor(
     fun setAllowWeakBiometric(enabled: Boolean) {
         securityPrefs.allowWeakBiometric = enabled
         _uiState.update { it.copy(allowWeakBiometric = enabled) }
+    }
+
+    fun setShowThumbnails(enabled: Boolean) {
+        browserPrefs.showThumbnails = enabled
+        _uiState.update { it.copy(showThumbnails = enabled) }
     }
 }
