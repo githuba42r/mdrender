@@ -222,12 +222,24 @@ class FileRepository @Inject constructor(
 
     suspend fun deleteFile(id: Long) {
         val meta = fileDao.getFileMetadata(id)
+        deleteFileStorage(meta)
+        fileDao.delete(id)
+    }
+
+    /** Delete physical storage for every file whose folder_id is in [folderIds]. */
+    suspend fun deleteFilesInFolders(folderIds: List<Long>) {
+        fileDao.getFilesInFolders(folderIds).forEach { deleteFileStorage(it) }
+    }
+
+    suspend fun getFileCountByFolderIds(folderIds: List<Long>): Int =
+        fileDao.getFileCountByFolderIds(folderIds)
+
+    private fun deleteFileStorage(meta: FileMetadata?) {
         if (meta?.storageType == "file" && meta.storagePath != null) {
             File(encryptedDir, meta.storagePath).delete()
         } else if (meta?.storageType == "plain" && meta.storagePath != null) {
             File(plainDir, meta.storagePath).delete()
         }
-        fileDao.delete(id)
     }
 
     /** Returns [desired] or, when taken in [folderId], "name (1).ext"-style variant. */

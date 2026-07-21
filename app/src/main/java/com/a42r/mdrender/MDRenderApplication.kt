@@ -32,7 +32,6 @@ class MDRenderApplication : Application() {
             private set
     }
 
-    private fun isTransient(activity: Activity): Boolean = activity is ShareReceiverActivity
     private var startedActivities = 0
     private var foregroundActivity: WeakReference<Activity>? = null
     private lateinit var screenOffReceiver: ScreenOffReceiver
@@ -40,10 +39,46 @@ class MDRenderApplication : Application() {
     /** True when the audio player has a file loaded. */
     private fun isAudioActive(): Boolean = audioPlayerState.info.value.fileId != 0L
 
+    private fun isTransient(activity: Activity): Boolean = activity is ShareReceiverActivity
+
+    private fun cleanupOrphanedFiles() {
+        val prefs = getSharedPreferences("mdrender_cleanup", MODE_PRIVATE)
+        val cleanedVersion = prefs.getInt("db_version", 0)
+        if (cleanedVersion >= 7) return
+        val dbFile = getDatabasePath("mdrender.db")
+        if (!dbFile.exists()) return
+        try {
+            val db = android.database.sqlite.SQLiteDatabase.openDatabase(
+                dbFile.absolutePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            val paths = mutableSetOf<String>()
+            val cursor = db.rawQuery("SELECT storage_path FROM files WHERE storage_path IS NOT NULL", null)
+            while (cursor.moveToNext()) {
+                cursor.getString(0)?.let { paths.add(it) }
+            }
+            cursor.close()
+            db.close()
+            val encryptedDir = java.io.File(filesDir, "encrypted")
+            val plainDir = java.io.File(filesDir, "plain")
+            fun cleanDir(dir: java.io.File) {
+                if (!dir.exists()) return
+                dir.listFiles()?.forEach { file ->
+                    if (!paths.contains(file.name)) file.delete()
+                }
+            }
+            cleanDir(encryptedDir)
+            cleanDir(plainDir)
+            prefs.edit().putInt("db_version", 7).apply()
+        } catch (_: Exception) {
+            // DB not yet open — will retry on next launch
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         thread { shareOutManager.clearShareCache() }
+        thread { cleanupOrphanedFiles() }
 
         screenOffReceiver = ScreenOffReceiver().also {
             it.onScreenOff = {

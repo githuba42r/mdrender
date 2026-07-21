@@ -52,6 +52,13 @@ data class MoveTarget(
     val depth: Int
 )
 
+/** Info for the folder-delete confirmation dialog: what will be removed. */
+data class FolderDeleteConfirm(
+    val folder: FolderEntity,
+    val fileCount: Int,
+    val subFolderCount: Int
+)
+
 /** A move name-conflict currently awaiting the user's decision. */
 data class MoveConflict(
     val file: FileMetadata,
@@ -315,8 +322,18 @@ class BrowserViewModel @Inject constructor(
 
     fun deleteFolder(id: Long) {
         viewModelScope.launch {
+            val subtreeIds = folderRepository.getSubtreeIds(id).toList()
+            fileRepository.deleteFilesInFolders(subtreeIds)
             folderRepository.deleteFolder(id)
         }
+    }
+
+    suspend fun getFolderDeleteInfo(id: Long): FolderDeleteConfirm? {
+        val folder = folderRepository.getFolder(id) ?: return null
+        val subtreeIds = folderRepository.getSubtreeIds(id).toList()
+        val fileCount = fileRepository.getFileCountByFolderIds(subtreeIds)
+        val subFolderCount = subtreeIds.size - 1
+        return FolderDeleteConfirm(folder, fileCount, subFolderCount)
     }
 
     /** Blocked when the destination already has a same-named sibling. */

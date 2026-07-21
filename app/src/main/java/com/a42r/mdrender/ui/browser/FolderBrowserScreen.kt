@@ -57,7 +57,7 @@ fun FolderBrowserScreen(
     var moveFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     var renameFolderState by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
     var renameFolderText by remember { mutableStateOf("") }
-    var confirmDeleteFolder by remember { mutableStateOf<com.a42r.mdrender.data.entity.FolderEntity?>(null) }
+    var confirmDeleteFolder by remember { mutableStateOf<FolderDeleteConfirm?>(null) }
     val revealHidden by viewModel.revealHidden.collectAsStateWithLifecycle()
     val localSendEnabled by viewModel.localSendEnabled.collectAsStateWithLifecycle()
     val pendingShare by viewModel.pendingShare.collectAsStateWithLifecycle()
@@ -633,7 +633,9 @@ fun FolderBrowserScreen(
                     },
                     modifier = Modifier.clickable {
                         folderMenu = null
-                        confirmDeleteFolder = folder
+                        scope.launch {
+                            confirmDeleteFolder = viewModel.getFolderDeleteInfo(folder.id)
+                        }
                     }
                 )
             }
@@ -739,14 +741,27 @@ fun FolderBrowserScreen(
     }
 
     // Folder delete confirmation (cascades to contents)
-    confirmDeleteFolder?.let { folder ->
+    confirmDeleteFolder?.let { info ->
+        val fileWord = if (info.fileCount == 1) "file" else "files"
+        val folderWord = if (info.subFolderCount == 1) "sub-folder" else "sub-folders"
+        val detail = buildString {
+            append("\"${info.folder.name}\"")
+            if (info.fileCount > 0 || info.subFolderCount > 0) {
+                append(" — ")
+                val parts = mutableListOf<String>()
+                if (info.subFolderCount > 0) parts.add("${info.subFolderCount} $folderWord")
+                if (info.fileCount > 0) parts.add("${info.fileCount} $fileWord")
+                append(parts.joinToString(" and "))
+            }
+            append(" will be permanently deleted.")
+        }
         AlertDialog(
             onDismissRequest = { confirmDeleteFolder = null },
             title = { Text("Delete Folder?") },
-            text = { Text("\"${folder.name}\" and all its contents will be permanently deleted.") },
+            text = { Text(detail) },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteFolder(folder.id)
+                    viewModel.deleteFolder(info.folder.id)
                     confirmDeleteFolder = null
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },

@@ -78,6 +78,12 @@ interface FileDao {
     @Query("DELETE FROM files WHERE folder_id = :folderId")
     suspend fun deleteByFolderId(folderId: Long)
 
+    @Query("SELECT id, folder_id, name, mime_type, file_size, storage_type, storage_path, created_at, updated_at, scroll_position, playback_position FROM files WHERE folder_id IN (:folderIds)")
+    suspend fun getFilesInFolders(folderIds: List<Long>): List<FileMetadata>
+
+    @Query("SELECT COUNT(*) FROM files WHERE folder_id IN (:folderIds)")
+    suspend fun getFileCountByFolderIds(folderIds: List<Long>): Int
+
     @Query("UPDATE files SET storage_type = :storageType, storage_path = :storagePath, file_size = :fileSize, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateStorageInfo(id: Long, storageType: String, storagePath: String?, fileSize: Long, updatedAt: Long)
 
