@@ -26,7 +26,8 @@ data class SettingsUiState(
     val fullNotification: Boolean = false,
     val indexTocEnabled: Boolean = true,
     val encryptLargeFiles: Boolean = true,
-    val requireSystemAuth: Boolean = true
+    val requireSystemAuth: Boolean = true,
+    val allowWeakBiometric: Boolean = false
 )
 
 @HiltViewModel
@@ -48,7 +49,8 @@ class SettingsViewModel @Inject constructor(
         fullNotification = audioPlayerPrefs.fullNotification,
         indexTocEnabled = viewerPrefs.indexTocEnabled,
         encryptLargeFiles = storagePrefs.encryptLargeFiles,
-        requireSystemAuth = securityPrefs.requireSystemAuth
+        requireSystemAuth = securityPrefs.requireSystemAuth,
+        allowWeakBiometric = securityPrefs.allowWeakBiometric
     ))
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
@@ -112,5 +114,10 @@ class SettingsViewModel @Inject constructor(
     fun setRequireSystemAuth(enabled: Boolean) {
         securityPrefs.requireSystemAuth = enabled
         _uiState.update { it.copy(requireSystemAuth = enabled) }
+    }
+
+    fun setAllowWeakBiometric(enabled: Boolean) {
+        securityPrefs.allowWeakBiometric = enabled
+        _uiState.update { it.copy(allowWeakBiometric = enabled) }
     }
 }

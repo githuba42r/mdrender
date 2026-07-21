@@ -159,7 +159,7 @@ class MainActivity : FragmentActivity() {
             appLock.unlock()
             return
         }
-        if (DeviceAuth.noCredentialConfigured(this)) {
+        if (DeviceAuth.noCredentialConfigured(this, securityPrefs.allowWeakBiometric)) {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             appLock.unlock()
             return
@@ -169,6 +169,7 @@ class MainActivity : FragmentActivity() {
         try {
             DeviceAuth.authenticate(
                 activity = this,
+                allowWeak = securityPrefs.allowWeakBiometric,
                 onSuccess = {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     authInProgress = false

@@ -45,7 +45,7 @@ fun SettingsScreen(
             // Security
             val context = LocalContext.current
             val activity = context as? FragmentActivity
-            val noCredential = remember { DeviceAuth.noCredentialConfigured(context) }
+            val noCredential = remember { DeviceAuth.noCredentialConfigured(context, uiState.allowWeakBiometric) }
             ListItem(
                 headlineContent = { Text("Require unlock authentication") },
                 supportingContent = {
@@ -73,6 +73,7 @@ fun SettingsScreen(
                                 try {
                                     DeviceAuth.authenticate(
                                         activity = activity,
+                                        allowWeak = uiState.allowWeakBiometric,
                                         onSuccess = { viewModel.setRequireSystemAuth(false) },
                                         onFailure = { /* leave enabled, no state change */ }
                                     )
@@ -85,6 +86,24 @@ fun SettingsScreen(
                     )
                 }
             )
+
+            // Face unlock toggle (only visible when auth is required)
+            if (uiState.requireSystemAuth) {
+                ListItem(
+                    headlineContent = { Text("Allow face unlock") },
+                    supportingContent = {
+                        Text("Also accept face recognition (BIOMETRIC_WEAK) " +
+                             "when unlocking. Turning this off restricts unlock to " +
+                             "strong biometrics (e.g. fingerprint) and device PIN/pattern.")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = uiState.allowWeakBiometric,
+                            onCheckedChange = { viewModel.setAllowWeakBiometric(it) }
+                        )
+                    }
+                )
+            }
 
             HorizontalDivider()
 

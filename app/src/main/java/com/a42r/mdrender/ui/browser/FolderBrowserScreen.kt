@@ -177,6 +177,16 @@ fun FolderBrowserScreen(
                         }
                     },
                     actions = {
+                        val allSelected = uiState.files.isNotEmpty() && selectedIds.size == uiState.files.size
+                        IconButton(onClick = {
+                            selectedIds = if (allSelected) emptySet()
+                            else uiState.files.mapTo(mutableSetOf()) { it.id }
+                        }) {
+                            Icon(
+                                if (allSelected) Icons.Filled.Deselect else Icons.Filled.SelectAll,
+                                contentDescription = if (allSelected) "Deselect all" else "Select all"
+                            )
+                        }
                         IconButton(onClick = { viewModel.requestShare(selectedIds) }) {
                             Icon(Icons.Filled.Share, contentDescription = "Share")
                         }
