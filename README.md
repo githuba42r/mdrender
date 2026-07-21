@@ -69,7 +69,7 @@ Hierarchical settings menu with sub-pages:
 
 ```bash
 # Clone
-git clone https://github.com/your-org/mdrender.git
+git clone git@github.com:githuba42r/mdrender.git
 cd mdrender
 
 # Debug build and install on connected device
