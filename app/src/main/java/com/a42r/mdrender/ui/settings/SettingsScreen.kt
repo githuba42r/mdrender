@@ -24,6 +24,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.a42r.mdrender.gesture.settings.UnhideSettingsContent
 import com.a42r.mdrender.gesture.settings.UnhideSettingsViewModel
+import com.a42r.mdrender.MDRenderApplication
 import com.a42r.mdrender.security.DeviceAuth
 
 private const val TAG = "SettingsScreen"
@@ -33,6 +34,7 @@ enum class SettingsSection(val label: String) {
     FOLDERS("Folders"),
     AUDIO("Audio"),
     LOCALSEND("LocalSend"),
+    PUSHES("Push History"),
     ADVANCED("Advanced"),
     ABOUT("About")
 }
@@ -96,6 +98,9 @@ fun SettingsScreen(
                     context = context,
                     notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
                 )
+                SettingsSection.PUSHES -> PushHistoryScreen(
+                    revealHidden = MDRenderApplication.instance.appLock.revealHidden
+                )
                 SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
                 SettingsSection.ABOUT -> AboutSection(uiState = uiState)
             }
@@ -139,6 +144,13 @@ private fun SettingsMenu(
         leadingContent = { Icon(Icons.Filled.Sensors, null) },
         trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
         modifier = Modifier.clickable { onSelectSection(SettingsSection.LOCALSEND) }
+    )
+    ListItem(
+        headlineContent = { Text("Push History") },
+        supportingContent = { Text("Received files from LAN or cloud") },
+        leadingContent = { Icon(Icons.Filled.Download, null) },
+        trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+        modifier = Modifier.clickable { onSelectSection(SettingsSection.PUSHES) }
     )
     ListItem(
         headlineContent = { Text("Advanced") },

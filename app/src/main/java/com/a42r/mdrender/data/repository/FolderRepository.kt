@@ -86,6 +86,21 @@ class FolderRepository @Inject constructor(
         return false
     }
 
+    /** Returns all folder IDs whose trees contain at least one hidden folder. */
+    suspend fun getHiddenTreeFolderIds(): Set<Long> {
+        val allFolders = folderDao.getAllFolders()
+        val hidden = allFolders.filter { it.hidden }.map { it.id }.toSet()
+        val childrenMap = allFolders.groupBy { it.parentId }
+        val result = hidden.toMutableSet()
+        fun collectDescendants(id: Long) {
+            childrenMap[id]?.forEach { child ->
+                if (result.add(child.id)) collectDescendants(child.id)
+            }
+        }
+        hidden.forEach { collectDescendants(it) }
+        return result
+    }
+
     /** Returns the id of the folder with [name] under [parentId], creating it if needed. */
     suspend fun findOrCreateFolder(name: String, parentId: Long? = null): Long =
         folderDao.findByName(parentId, name)?.id ?: createFolder(name, parentId)

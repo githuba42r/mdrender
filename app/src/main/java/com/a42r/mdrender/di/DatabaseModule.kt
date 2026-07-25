@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.a42r.mdrender.data.AppDatabase
 import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FolderDao
+import com.a42r.mdrender.data.dao.PushHistoryDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -24,13 +25,16 @@ object DatabaseModule {
             AppDatabase::class.java,
             "mdrender.db"
         )
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7, AppDatabase.MIGRATION_7_8)
             .fallbackToDestructiveMigration()
             .build()
     }
 
     @Provides
     fun provideFolderDao(db: AppDatabase): FolderDao = db.folderDao()
+
+    @Provides
+    fun providePushHistoryDao(db: AppDatabase): PushHistoryDao = db.pushHistoryDao()
 
     @Provides
     fun provideFileDao(db: AppDatabase): FileDao = db.fileDao()
