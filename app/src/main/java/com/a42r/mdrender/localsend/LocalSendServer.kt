@@ -106,19 +106,16 @@ class LocalSendServer(
         val token = session.parameters["token"]?.firstOrNull()
             ?: return error(Response.Status.BAD_REQUEST, "Missing token")
 
-        // Read the full body into a buffer (handled by NanoHTTPD's internal body
-        // parsing) and write it to a temp file for streaming import. NanoHTTPD
-        // 2.3.1's getInputStream() can be unreliable for application/octet-stream
-        // content types, so readBody() — which reads from the parsed body buffer
-        // via content-length — is the reliable path.
-        val bytes = readBody(session)
-        if (bytes.isEmpty())
-            return error(Response.Status.BAD_REQUEST, "Empty body")
-
         val tempFile = File.createTempFile("upload_${sessionId}_${fileId}_", ".tmp", uploadDir)
         return try {
-            tempFile.writeBytes(bytes)
-            sessionManager.reportUploadProgress(sessionId, fileId, bytes.size, bytes.size)
+            // Stream the body straight to a temp file in fixed-size chunks so a
+            // large upload (e.g. a 100 MB+ MP3) never occupies the heap as a
+            // single ByteArray. The temp file is then imported by the repository,
+            // which streams it into app storage.
+            val bytesRead = streamBodyToFile(session, sessionId, fileId, tempFile)
+            if (bytesRead <= 0L)
+                return error(Response.Status.BAD_REQUEST, "Empty body")
+
             if (sessionManager.receiveFile(sessionId, fileId, token, tempFile)) {
                 json(Response.Status.OK, JSONObject())
             } else {
@@ -131,6 +128,45 @@ class LocalSendServer(
         } finally {
             tempFile.delete()
         }
+    }
+
+    private fun streamBodyToFile(session: IHTTPSession, sessionId: String, fileId: String, target: File): Long {
+        val length = session.headers["content-length"]?.toLongOrNull() ?: 0L
+        if (length <= 0L) return 0L
+
+        // Read EXACTLY content-length bytes, then stop. The sender uses
+        // Content-Length + keep-alive and keeps the connection open waiting for
+        // our response — reading until EOF would deadlock (we'd block forever,
+        // never process the file, never respond) until the sender's own timeout
+        // closed the socket. Reading exactly the declared length lets us respond
+        // as soon as the body is fully received.
+        val buffer = ByteArray(STREAM_BUFFER_SIZE)
+        var total = 0L
+        var lastReported = 0L
+        target.outputStream().use { out ->
+            while (total < length) {
+                val want = minOf(buffer.size.toLong(), length - total).toInt()
+                val n = session.inputStream.read(buffer, 0, want)
+                if (n < 0) break // early EOF / connection dropped
+                if (n == 0) continue
+                out.write(buffer, 0, n)
+                total += n
+                // Report progress periodically so the transfer notification stays
+                // live and the inactivity watchdog keeps resetting during a long
+                // upload. contentLength is null so the total falls back to the
+                // session's recorded file size (avoids Int overflow on >2GiB).
+                if (total - lastReported >= PROGRESS_INTERVAL_BYTES) {
+                    lastReported = total
+                    sessionManager.reportUploadProgress(sessionId, fileId, total, null)
+                }
+            }
+        }
+        // Final report so the notification shows the full total and the watchdog
+        // is reset right before the (slower) import into app storage.
+        if (total > lastReported) {
+            sessionManager.reportUploadProgress(sessionId, fileId, total, null)
+        }
+        return total
     }
 
     private fun handleCancel(session: IHTTPSession): Response {
@@ -159,5 +195,7 @@ class LocalSendServer(
 
     companion object {
         private const val TAG = "LocalSendServer"
+        private const val STREAM_BUFFER_SIZE = 64 * 1024
+        private const val PROGRESS_INTERVAL_BYTES = 1024L * 1024L
     }
 }

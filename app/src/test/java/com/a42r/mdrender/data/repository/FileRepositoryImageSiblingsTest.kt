@@ -20,6 +20,7 @@ class FileRepositoryImageSiblingsTest {
         val ctx = mock<Context>()
         val dao = mock<FileDao>()
         val crypto = mock<CryptoEngine>()
+        val storagePrefs = mock<StoragePrefs>()
         whenever(dao.getFileMetadata(2)).thenReturn(meta(2, 5, "b.png", "image/png"))
         whenever(dao.getFilesInFolderList(5)).thenReturn(
             listOf(
@@ -29,7 +30,7 @@ class FileRepositoryImageSiblingsTest {
                 meta(3, 5, "c.webp", "image/webp"),
             )
         )
-        val repo = FileRepository(dao, crypto, ctx)
+        val repo = FileRepository(dao, crypto, storagePrefs, ctx)
 
         val (ids, index) = repo.getImageSiblings(2)
 
@@ -42,7 +43,8 @@ class FileRepositoryImageSiblingsTest {
         val ctx = mock<Context>()
         val dao = mock<FileDao>()
         val crypto = mock<CryptoEngine>()
-        val repo = FileRepository(dao, crypto, ctx)
+        val storagePrefs = mock<StoragePrefs>()
+        val repo = FileRepository(dao, crypto, storagePrefs, ctx)
 
         val (ids, index) = repo.getImageSiblings(99)
 

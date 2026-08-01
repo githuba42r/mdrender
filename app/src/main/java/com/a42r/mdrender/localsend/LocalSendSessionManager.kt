@@ -147,7 +147,7 @@ class LocalSendSessionManager @Inject constructor(
     /** Called from the HTTP server worker thread during the chunked body read
      *  of an upload request. Emits progress so the service can update its
      *  notification. */
-    fun reportUploadProgress(sessionId: String, fileId: String, bytesRead: Int, contentLength: Int?) {
+    fun reportUploadProgress(sessionId: String, fileId: String, bytesRead: Long, contentLength: Int?) {
         val session = sessions[sessionId] ?: return
         resetInactivityWatchdog(sessionId)
         val meta = session.files[fileId] ?: return
@@ -156,7 +156,7 @@ class LocalSendSessionManager @Inject constructor(
             sessionId = sessionId,
             fileId = fileId,
             fileName = meta.fileName,
-            receivedBytes = bytesRead.toLong(),
+            receivedBytes = bytesRead,
             totalBytes = total,
             fileIndex = session.received.size + 1,
             totalFiles = session.files.size

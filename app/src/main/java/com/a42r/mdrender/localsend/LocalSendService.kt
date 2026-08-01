@@ -45,7 +45,7 @@ class LocalSendService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannels()
-        startInForeground()
+        if (!startInForeground()) return
 
         multicastLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
             .createMulticastLock("mdrender-localsend").apply {
@@ -68,7 +68,15 @@ class LocalSendService : Service() {
         var started: LocalSendServer? = null
         for (port in LocalSendProtocol.PORT..LocalSendProtocol.PORT + 10) {
             try {
-                started = LocalSendServer(prefs, sessionManager, port, certificate, this.cacheDir).also { it.start() }
+                // NanoHTTPD's default socket read timeout is 5s (SOCKET_READ_TIMEOUT),
+                // but a LocalSend sender streams the body in 64 KiB chunks and will
+                // happily pause up to its own socket timeout (default 200s) between
+                // chunks on a slow or congested link. A 5s receiver timeout kills
+                // any legitimate large-file transfer mid-stream. Raise it well above
+                // the sender's maximum gap (200s + margin): a genuinely dead
+                // connection is still bounded — the sender errors on write and
+                // closes, or the receiver sees EOF — without racing the sender.
+                started = LocalSendServer(prefs, sessionManager, port, certificate, this.cacheDir).also { it.start(300_000) }
                 break
             } catch (e: Exception) {
                 Log.w(TAG, "Port $port unavailable: ${e.message}")
@@ -135,7 +143,11 @@ class LocalSendService : Service() {
         super.onDestroy()
     }
 
-    private fun startInForeground() {
+    /** Promotes the service to foreground. Returns false (and stops the service)
+     *  when the system refuses, e.g. Android 15+ dataSync time limit exhausted on
+     *  a restart. A thrown exception here would become "Unable to create service"
+     *  → process death, so it is caught and converted to a graceful stop. */
+    private fun startInForeground(): Boolean {
         val openApp = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
@@ -147,10 +159,17 @@ class LocalSendService : Service() {
             .setOngoing(true)
             .setContentIntent(openApp)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID_STATUS, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIF_ID_STATUS, notification)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_ID_STATUS, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIF_ID_STATUS, notification)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Foreground start refused; receiver unavailable", e)
+            stopSelf()
+            false
         }
     }
 
