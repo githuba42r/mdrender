@@ -110,11 +110,8 @@ fun AudioPlayerScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    IconButton(onClick = {
-                        val newPos = (position - 15_000).coerceAtLeast(0)
-                        state.seekTo(newPos)
-                    }) {
-                        Icon(Icons.Filled.Replay10, "Skip back 10s", modifier = Modifier.size(48.dp))
+                    IconButton(onClick = { state.skipBack() }) {
+                        Icon(Icons.Filled.Replay30, "Skip back 30s", modifier = Modifier.size(48.dp))
                     }
 
                     IconButton(
@@ -131,10 +128,8 @@ fun AudioPlayerScreen(
                         )
                     }
 
-                    IconButton(onClick = {
-                        state.seekTo((position + 10_000).coerceAtMost(duration))
-                    }) {
-                        Icon(Icons.Filled.Forward10, "Skip forward 10s", modifier = Modifier.size(48.dp))
+                    IconButton(onClick = { state.skipForward() }) {
+                        Icon(Icons.Filled.Forward30, "Skip forward 30s", modifier = Modifier.size(48.dp))
                     }
                 }
 
