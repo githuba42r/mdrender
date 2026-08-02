@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.stateIn
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.roundToLong
 
@@ -33,11 +34,12 @@ fun PushHistoryScreen(
 ) {
     val entries by viewModel.entries.collectAsStateWithLifecycle()
     val hiddenRevealed by revealHidden.collectAsStateWithLifecycle()
+    var showClearConfirm by remember { mutableStateOf(false) }
 
     val filtered = remember(entries, hiddenRevealed) {
         if (hiddenRevealed) entries
         else entries.filter { !it.isHidden }
-    }
+    }.filter { it.fileExists }
 
     if (filtered.isEmpty()) {
         Box(
@@ -47,14 +49,42 @@ fun PushHistoryScreen(
             Text("No pushes yet", style = MaterialTheme.typography.bodyLarge)
         }
     } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 8.dp)
-        ) {
-            items(filtered, key = { it.entity.id }) { entry ->
-                PushHistoryRow(entry)
+        Column(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(filtered, key = { it.entity.id }) { entry ->
+                    PushHistoryRow(entry)
+                }
+            }
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { showClearConfirm = true }) {
+                    Text("Clear history")
+                }
             }
         }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear push history?") },
+            text = { Text("This removes the record of all received files. The files themselves are not deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearConfirm = false
+                    viewModel.clearAll()
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -125,4 +155,8 @@ class PushHistoryViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
+
+    fun clearAll() {
+        viewModelScope.launch { pushHistoryRepository.deleteAll() }
+    }
 }

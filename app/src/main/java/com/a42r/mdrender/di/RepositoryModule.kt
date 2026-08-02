@@ -32,6 +32,6 @@ object RepositoryModule {
 
     @Provides
     @Singleton
-    fun providePushHistoryRepository(pushHistoryDao: PushHistoryDao, folderRepository: FolderRepository): PushHistoryRepository =
-        PushHistoryRepository(pushHistoryDao, folderRepository)
+    fun providePushHistoryRepository(pushHistoryDao: PushHistoryDao, folderRepository: FolderRepository, fileDao: FileDao): PushHistoryRepository =
+        PushHistoryRepository(pushHistoryDao, folderRepository, fileDao)
 }

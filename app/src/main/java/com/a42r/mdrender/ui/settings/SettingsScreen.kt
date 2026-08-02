@@ -77,32 +77,42 @@ fun SettingsScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-        ) {
-            when (currentSection) {
-                null -> SettingsMenu(
-                    uiState = uiState,
-                    viewModel = viewModel,
-                    activity = activity,
-                    onSelectSection = { currentSection = it }
-                )
-                SettingsSection.AUTH -> AuthSettings(uiState = uiState, viewModel = viewModel, context = context)
-                SettingsSection.FOLDERS -> FolderSettings(uiState = uiState, viewModel = viewModel)
-                SettingsSection.AUDIO -> AudioSettings(uiState = uiState, viewModel = viewModel)
-                SettingsSection.LOCALSEND -> LocalSendSettings(
-                    uiState = uiState,
-                    viewModel = viewModel,
-                    context = context,
-                    notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
-                )
-                SettingsSection.PUSHES -> PushHistoryScreen(
+        if (currentSection == SettingsSection.PUSHES) {
+            // PushHistoryScreen renders a LazyColumn; nesting it inside the
+            // verticalScroll Column below would measure it with infinite max
+            // height and throw IllegalStateException. Host it in a plain
+            // container as a sibling of the scrollable Column.
+            Box(modifier = Modifier.padding(padding)) {
+                PushHistoryScreen(
                     revealHidden = MDRenderApplication.instance.appLock.revealHidden
                 )
-                SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
-                SettingsSection.ABOUT -> AboutSection(uiState = uiState)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                when (currentSection) {
+                    null -> SettingsMenu(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        activity = activity,
+                        onSelectSection = { currentSection = it }
+                    )
+                    SettingsSection.AUTH -> AuthSettings(uiState = uiState, viewModel = viewModel, context = context)
+                    SettingsSection.FOLDERS -> FolderSettings(uiState = uiState, viewModel = viewModel)
+                    SettingsSection.AUDIO -> AudioSettings(uiState = uiState, viewModel = viewModel)
+                    SettingsSection.LOCALSEND -> LocalSendSettings(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        context = context,
+                        notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                    )
+                    SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
+                    SettingsSection.ABOUT -> AboutSection(uiState = uiState)
+                    SettingsSection.PUSHES -> Unit // handled above; unreachable here
+                }
             }
         }
     }
