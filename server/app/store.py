@@ -58,3 +58,66 @@ def revoke_client(conn, client_id):
     conn.execute("UPDATE clients SET revoked_at = ? WHERE client_id = ?",
                  (int(time.time()), client_id))
     conn.commit()
+
+
+def update_device_token(conn, device_secret, device_auth, new_token) -> bool:
+    cur = conn.execute(
+        "UPDATE devices SET fcm_token = ? WHERE device_secret = ? AND device_auth = ?",
+        (new_token, device_secret, device_auth),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def update_device_name(conn, device_secret, device_auth, new_name) -> bool:
+    try:
+        cur = conn.execute(
+            "UPDATE devices SET device_name = ? WHERE device_secret = ? AND device_auth = ?",
+            (new_name, device_secret, device_auth),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        return False  # name already taken by another device
+
+
+def check_device(conn, device_secret, device_auth) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM devices WHERE device_secret = ? AND device_auth = ?",
+        (device_secret, device_auth),
+    ).fetchone() is not None
+
+
+def touch_last_seen(conn, device_secret):
+    conn.execute("UPDATE devices SET last_seen = ? WHERE device_secret = ?",
+                 (int(time.time()), device_secret))
+    conn.commit()
+
+
+def get_device_by_name(conn, name):
+    return conn.execute("SELECT * FROM devices WHERE device_name = ?", (name,)).fetchone()
+
+
+def get_device_by_secret(conn, device_secret):
+    return conn.execute("SELECT * FROM devices WHERE device_secret = ?",
+                        (device_secret,)).fetchone()
+
+
+def delete_device(conn, device_secret):
+    conn.execute("DELETE FROM devices WHERE device_secret = ?", (device_secret,))
+    conn.commit()
+
+
+def list_devices(conn):
+    return conn.execute(
+        "SELECT device_secret, device_name, registered_at, last_seen FROM devices ORDER BY registered_at"
+    ).fetchall()
+
+
+def sweep_stale_devices(conn, ttl_days: int) -> list[str]:
+    cutoff = int(time.time()) - ttl_days * 86400
+    rows = conn.execute("SELECT device_secret FROM devices WHERE last_seen < ?", (cutoff,)).fetchall()
+    for r in rows:
+        conn.execute("DELETE FROM devices WHERE device_secret = ?", (r["device_secret"],))
+    conn.commit()
+    return [r["device_secret"] for r in rows]
