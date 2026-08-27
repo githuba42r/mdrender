@@ -1,0 +1,40 @@
+# server/app/config.py
+import os
+
+
+class Config:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+DEFAULTS = {
+    "LOGIN_MAX_ATTEMPTS": 5,
+    "LOGIN_LOCKOUT_SECONDS": 300,
+    "ENROL_TOKEN_TTL_HOURS": 1,
+    "ENROL_SESSION_TTL_MINUTES": 15,
+    "ACCESS_TOKEN_TTL_SECONDS": 3600,
+    "PUSH_STORAGE_DIR": "/data/push",
+    "DB_PATH": "/data/push/server.db",
+    "PUSH_FILE_TTL_HOURS": 24,
+    "PUSH_RETRY_COUNT": 5,
+    "PUSH_RETRY_INTERVAL_MINUTES": 30,
+    "DEVICE_TTL_DAYS": 90,
+    "FCM_SERVER_KEY": "",
+    "PUSH_PUBLIC_URL": "",
+    "LISTEN_ADDR": ":8080",
+}
+
+
+def load_config(*, overrides: dict | None = None) -> Config:
+    env = {k: os.environ.get(k, v) for k, v in DEFAULTS.items()}
+    env["SERVER_PASSWORD"] = os.environ.get("SERVER_PASSWORD", "")
+    for k in env:
+        if k in ("LOGIN_MAX_ATTEMPTS", "LOGIN_LOCKOUT_SECONDS",
+                 "ENROL_TOKEN_TTL_HOURS", "ENROL_SESSION_TTL_MINUTES",
+                 "ACCESS_TOKEN_TTL_SECONDS", "PUSH_FILE_TTL_HOURS",
+                 "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
+                 "DEVICE_TTL_DAYS"):
+            env[k] = int(env[k])
+    if overrides:
+        env.update(overrides)
+    return Config(**env)
