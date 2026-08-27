@@ -3,8 +3,10 @@ package com.a42r.mdrender.di
 import android.content.Context
 import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FolderDao
+import com.a42r.mdrender.data.dao.PushHistoryDao
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
+import com.a42r.mdrender.data.repository.PushHistoryRepository
 import com.a42r.mdrender.data.repository.StoragePrefs
 import com.a42r.mdrender.security.CryptoEngine
 import dagger.Module
@@ -27,4 +29,9 @@ object RepositoryModule {
     @Singleton
     fun provideFileRepository(fileDao: FileDao, cryptoEngine: CryptoEngine, storagePrefs: StoragePrefs, @ApplicationContext context: Context): FileRepository =
         FileRepository(fileDao, cryptoEngine, storagePrefs, context)
+
+    @Provides
+    @Singleton
+    fun providePushHistoryRepository(pushHistoryDao: PushHistoryDao, folderRepository: FolderRepository, fileDao: FileDao): PushHistoryRepository =
+        PushHistoryRepository(pushHistoryDao, folderRepository, fileDao)
 }

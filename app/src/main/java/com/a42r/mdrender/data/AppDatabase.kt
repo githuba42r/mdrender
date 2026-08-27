@@ -6,13 +6,16 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.a42r.mdrender.data.dao.FileDao
 import com.a42r.mdrender.data.dao.FolderDao
+import com.a42r.mdrender.data.dao.PushHistoryDao
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.entity.FolderEntity
+import com.a42r.mdrender.data.entity.PushHistoryEntity
 
-@Database(entities = [FolderEntity::class, FileEntity::class], version = 7, exportSchema = false)
+@Database(entities = [FolderEntity::class, FileEntity::class, PushHistoryEntity::class], version = 8, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun folderDao(): FolderDao
     abstract fun fileDao(): FileDao
+    abstract fun pushHistoryDao(): PushHistoryDao
 
     companion object {
         /** v1 → v2: add the folders.hidden flag without dropping data. */
@@ -57,6 +60,20 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // No schema change — file cleanup is done in application code
+            }
+        }
+
+        /** v7 → v8: add push_history table for tracking pushed files. */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS push_history (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "file_name TEXT NOT NULL, " +
+                    "file_size INTEGER NOT NULL, " +
+                    "folder_id INTEGER, " +
+                    "source TEXT NOT NULL, " +
+                    "pushed_at INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_push_history_pushed_at ON push_history(pushed_at)")
             }
         }
     }

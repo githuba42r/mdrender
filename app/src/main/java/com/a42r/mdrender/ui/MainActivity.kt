@@ -3,6 +3,7 @@ package com.a42r.mdrender.ui
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.Toast
@@ -62,7 +63,15 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         if (localSendPrefs.enabled) {
-            runCatching { LocalSendService.start(this) }
+            // Starting a dataSync foreground service from onCreate on the main
+            // thread can throw synchronously (e.g. ForegroundServiceStartNotAllowedException
+            // after Android 15's dataSync time limit is exhausted on a restart).
+            // Defer to a background thread and swallow the failure so a refused
+            // start degrades to "receiver unavailable" instead of killing the app.
+            Thread {
+                runCatching { LocalSendService.start(this@MainActivity) }
+                    .onFailure { Log.w(TAG, "LocalSend receiver start refused", it) }
+            }.start()
         }
 
         setContent {
@@ -251,5 +260,9 @@ class MainActivity : FragmentActivity() {
         }
         if (delta != 0 && ViewerZoom.onVolumeKey(delta)) return true
         return super.onKeyDown(keyCode, event)
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }

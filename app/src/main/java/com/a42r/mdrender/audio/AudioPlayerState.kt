@@ -14,6 +14,10 @@ data class AudioFileInfo(
     val fileName: String = ""
 )
 
+/** Audiobook skip interval used by both the on-screen controls and the
+ *  notification actions. Kept in one place so both surfaces stay consistent. */
+const val SKIP_MS = 30_000L
+
 /** Shared state between AudioPlayerService and the Compose UI layers.
  *  The service mutates this in response to playback; the UI observes it. */
 @Singleton
@@ -96,6 +100,18 @@ class AudioPlayerState @Inject constructor() {
         _commands.tryEmit(PlayerCommand.SeekTo(positionMs))
     }
 
+    /** Skip backward by [SKIP_MS]. The service resolves the target against the
+     *  player's real position (the UI position is only refreshed every 2s, so
+     *  computing the target here would seek from a stale point). */
+    fun skipBack() {
+        _commands.tryEmit(PlayerCommand.Skip(-SKIP_MS))
+    }
+
+    /** Skip forward by [SKIP_MS]. See [skipBack]. */
+    fun skipForward() {
+        _commands.tryEmit(PlayerCommand.Skip(SKIP_MS))
+    }
+
     fun stopPlayback() {
         _commands.tryEmit(PlayerCommand.Stop)
         // Deliberately NOT calling stop() here — the service reads
@@ -110,5 +126,7 @@ sealed class PlayerCommand {
     data object Pause : PlayerCommand()
     data object Resume : PlayerCommand()
     data class SeekTo(val positionMs: Long) : PlayerCommand()
+    /** Relative seek by [deltaMs]; positive = forward, negative = back. */
+    data class Skip(val deltaMs: Long) : PlayerCommand()
     data object Stop : PlayerCommand()
 }

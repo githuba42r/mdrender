@@ -120,6 +120,7 @@ class AudioPlayerService : MediaSessionService() {
                     is PlayerCommand.Pause -> exoPlayer.pause()
                     is PlayerCommand.Resume -> exoPlayer.play()
                     is PlayerCommand.SeekTo -> exoPlayer.seekTo(command.positionMs)
+                    is PlayerCommand.Skip -> skipBy(command.deltaMs)
                     is PlayerCommand.Stop -> savePosition().also { stopNow() }
                 }
             }
@@ -225,15 +226,8 @@ class AudioPlayerService : MediaSessionService() {
                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                 updateNotification(exoPlayer.isPlaying)
             }
-            ACTION_SKIP_BACK -> {
-                exoPlayer.seekTo(maxOf(0L, exoPlayer.currentPosition - 15000))
-                if (exoPlayer.playbackState == Player.STATE_READY) updateNotification(exoPlayer.isPlaying)
-            }
-            ACTION_SKIP_FORWARD -> {
-                val target = minOf(exoPlayer.duration.coerceAtLeast(0L), exoPlayer.currentPosition + 15000)
-                exoPlayer.seekTo(target)
-                if (exoPlayer.playbackState == Player.STATE_READY) updateNotification(exoPlayer.isPlaying)
-            }
+            ACTION_SKIP_BACK -> skipBy(-SKIP_MS)
+            ACTION_SKIP_FORWARD -> skipBy(SKIP_MS)
             ACTION_STOP -> {
                 savePosition()
                 stopNow()
@@ -369,6 +363,19 @@ class AudioPlayerService : MediaSessionService() {
                 }
             }
         }
+    }
+
+    /** Relative seek by [deltaMs] (positive forward, negative back). The target
+     *  is computed from the player's real position so the skip is exact, then
+     *  published to the UI immediately — otherwise the position shown (updated
+     *  only every 2s by the tracking job) would lag the actual seek and the
+     *  skip would look wrong. */
+    private fun skipBy(deltaMs: Long) {
+        val target = (exoPlayer.currentPosition + deltaMs)
+            .coerceIn(0L, exoPlayer.duration.coerceAtLeast(0L))
+        exoPlayer.seekTo(target)
+        playerState.updatePosition(target)
+        if (exoPlayer.playbackState == Player.STATE_READY) updateNotification(exoPlayer.isPlaying)
     }
 
     private fun savePosition() {

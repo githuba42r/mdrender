@@ -24,6 +24,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.a42r.mdrender.gesture.settings.UnhideSettingsContent
 import com.a42r.mdrender.gesture.settings.UnhideSettingsViewModel
+import com.a42r.mdrender.MDRenderApplication
 import com.a42r.mdrender.security.DeviceAuth
 
 private const val TAG = "SettingsScreen"
@@ -33,6 +34,7 @@ enum class SettingsSection(val label: String) {
     FOLDERS("Folders"),
     AUDIO("Audio"),
     LOCALSEND("LocalSend"),
+    PUSHES("Push History"),
     ADVANCED("Advanced"),
     ABOUT("About")
 }
@@ -75,29 +77,42 @@ fun SettingsScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-        ) {
-            when (currentSection) {
-                null -> SettingsMenu(
-                    uiState = uiState,
-                    viewModel = viewModel,
-                    activity = activity,
-                    onSelectSection = { currentSection = it }
+        if (currentSection == SettingsSection.PUSHES) {
+            // PushHistoryScreen renders a LazyColumn; nesting it inside the
+            // verticalScroll Column below would measure it with infinite max
+            // height and throw IllegalStateException. Host it in a plain
+            // container as a sibling of the scrollable Column.
+            Box(modifier = Modifier.padding(padding)) {
+                PushHistoryScreen(
+                    revealHidden = MDRenderApplication.instance.appLock.revealHidden
                 )
-                SettingsSection.AUTH -> AuthSettings(uiState = uiState, viewModel = viewModel, context = context)
-                SettingsSection.FOLDERS -> FolderSettings(uiState = uiState, viewModel = viewModel)
-                SettingsSection.AUDIO -> AudioSettings(uiState = uiState, viewModel = viewModel)
-                SettingsSection.LOCALSEND -> LocalSendSettings(
-                    uiState = uiState,
-                    viewModel = viewModel,
-                    context = context,
-                    notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
-                )
-                SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
-                SettingsSection.ABOUT -> AboutSection(uiState = uiState)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                when (currentSection) {
+                    null -> SettingsMenu(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        activity = activity,
+                        onSelectSection = { currentSection = it }
+                    )
+                    SettingsSection.AUTH -> AuthSettings(uiState = uiState, viewModel = viewModel, context = context)
+                    SettingsSection.FOLDERS -> FolderSettings(uiState = uiState, viewModel = viewModel)
+                    SettingsSection.AUDIO -> AudioSettings(uiState = uiState, viewModel = viewModel)
+                    SettingsSection.LOCALSEND -> LocalSendSettings(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        context = context,
+                        notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                    )
+                    SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
+                    SettingsSection.ABOUT -> AboutSection(uiState = uiState)
+                    SettingsSection.PUSHES -> Unit // handled above; unreachable here
+                }
             }
         }
     }
@@ -139,6 +154,13 @@ private fun SettingsMenu(
         leadingContent = { Icon(Icons.Filled.Sensors, null) },
         trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
         modifier = Modifier.clickable { onSelectSection(SettingsSection.LOCALSEND) }
+    )
+    ListItem(
+        headlineContent = { Text("Push History") },
+        supportingContent = { Text("Received files from LAN or cloud") },
+        leadingContent = { Icon(Icons.Filled.Download, null) },
+        trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+        modifier = Modifier.clickable { onSelectSection(SettingsSection.PUSHES) }
     )
     ListItem(
         headlineContent = { Text("Advanced") },

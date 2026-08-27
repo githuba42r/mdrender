@@ -4,6 +4,7 @@ import android.util.Log
 import com.a42r.mdrender.data.repository.FileBookmarks
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
+import com.a42r.mdrender.data.repository.PushHistoryRepository
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -73,7 +74,8 @@ private class ActiveSession(
 @Singleton
 class LocalSendSessionManager @Inject constructor(
     private val fileRepository: FileRepository,
-    private val folderRepository: FolderRepository
+    private val folderRepository: FolderRepository,
+    private val pushHistoryRepository: PushHistoryRepository
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -145,7 +147,7 @@ class LocalSendSessionManager @Inject constructor(
     /** Called from the HTTP server worker thread during the chunked body read
      *  of an upload request. Emits progress so the service can update its
      *  notification. */
-    fun reportUploadProgress(sessionId: String, fileId: String, bytesRead: Int, contentLength: Int?) {
+    fun reportUploadProgress(sessionId: String, fileId: String, bytesRead: Long, contentLength: Int?) {
         val session = sessions[sessionId] ?: return
         resetInactivityWatchdog(sessionId)
         val meta = session.files[fileId] ?: return
@@ -154,7 +156,7 @@ class LocalSendSessionManager @Inject constructor(
             sessionId = sessionId,
             fileId = fileId,
             fileName = meta.fileName,
-            receivedBytes = bytesRead.toLong(),
+            receivedBytes = bytesRead,
             totalBytes = total,
             fileIndex = session.received.size + 1,
             totalFiles = session.files.size
@@ -219,6 +221,9 @@ class LocalSendSessionManager @Inject constructor(
                 fileRepository.findByName(resolveFolder(session.options.folder), meta.fileName) != null
             }) {
             synchronized(session.received) { session.received.add(fileId) }
+            runBlocking {
+                pushHistoryRepository.record("localsend", meta.fileName, meta.size, resolveFolder(session.options.folder))
+            }
             if (session.received.size == session.files.size) {
                 sessionWatchdogs.remove(sessionId)?.cancel()
                 sessions.remove(sessionId)
@@ -269,6 +274,9 @@ class LocalSendSessionManager @Inject constructor(
             }
             if (wasReplace) {
                 _fileReplaced.tryEmit(FileReplacedEvent(meta.fileName, replacedFolderId, replacedNewId))
+            }
+            runBlocking {
+                pushHistoryRepository.record("localsend", meta.fileName, meta.size, replacedFolderId)
             }
             synchronized(session.received) { session.received.add(fileId) }
             if (session.received.size == session.files.size) {
