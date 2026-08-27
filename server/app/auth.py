@@ -70,3 +70,23 @@ def verify_session(session_secret: str, token: str, config) -> bool:
     if not hmac.compare_digest(expected, given_sig):
         return False
     return True
+
+
+ACCESS_TOKENS: dict[str, tuple[str, float]] = {}  # token -> (client_id, expires_at)
+
+
+def issue_access_token(config, client_id: str) -> str:
+    token = uuid.uuid4().hex
+    ACCESS_TOKENS[token] = (client_id, time.time() + config.ACCESS_TOKEN_TTL_SECONDS)
+    return token
+
+
+def validate_access_token(config, token: str) -> str | None:
+    entry = ACCESS_TOKENS.get(token)
+    if entry is None:
+        return None
+    client_id, expires = entry
+    if time.time() > expires:
+        ACCESS_TOKENS.pop(token, None)
+        return None
+    return client_id
