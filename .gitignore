@@ -24,3 +24,6 @@ RELEASE_NOTES.txt
 secrets.properties
 *service-account*.json
 __pycache__/
+server/.pytest_cache/
+server/.venv/
+*.db
