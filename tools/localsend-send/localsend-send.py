@@ -11,6 +11,7 @@ Examples:
     localsend-send.py --host 10.0.1.226 --pin 1964 notes.md photo.jpg
     localsend-send.py --host 10.0.1.226 *.md
     localsend-send.py --host 10.0.1.226 --port 53318 --insecure report.pdf
+    localsend-send.py --enrol --server https://push.example.com
 
 Exit codes: 0 ok, 2 usage, 3 rejected/timeout, 4 PIN required/wrong,
 5 receiver busy, 1 other error.
@@ -21,6 +22,7 @@ import json
 import mimetypes
 import os
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
@@ -29,6 +31,7 @@ import urllib.request
 import uuid
 
 API = "/api/localsend/v2"
+CLOUD_API = "/api"  # cloud-push server base (NOT the LocalSend LAN protocol)
 
 
 def _client_info():
@@ -87,10 +90,78 @@ def _upload_stream(url, path, ctx, timeout):
     return body
 
 
+def _enrol_flow(server_url, key_input, creds_path=None):
+    """Run the two-step cloud enrolment exchange and persist the credentials.
+
+    Returns the creds dict that was written to disk ({client_id,
+    client_secret, server_url}), with 0600 permissions.
+    """
+    base = f"{server_url.rstrip('/')}{CLOUD_API}"
+    start = json.loads(_post(f"{base}/enrol/start",
+                             {"info": _client_info()}, None, 30).read())
+    resp = _post(f"{base}/enrol",
+                 {"enrolment_id": start["enrolment_id"], "key": key_input},
+                 None, 30)
+    creds = json.loads(resp.read())
+    record = {**creds, "server_url": server_url}
+    path = creds_path or os.path.expanduser(
+        "~/.config/mdrender/push-credentials.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(record, fh)
+        fh.flush()
+        os.fchmod(fh.fileno(), 0o600)
+    return record
+
+
+def _get_token(creds, server_url):
+    """POST the client-credentials grant and return the access token."""
+    data = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": creds["client_id"],
+        "client_secret": creds["client_secret"],
+    }).encode()
+    req = urllib.request.Request(f"{server_url.rstrip('/')}/oauth/token",
+                                 data=data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)["access_token"]
+
+
+def get_access_token(creds_path, server_url=None):
+    """Load push credentials and return a fresh cloud access token.
+
+    This is the interface the push path (Task C3) consumes.
+    """
+    with open(creds_path) as fh:
+        creds = json.load(fh)
+    server_url = server_url or creds["server_url"]
+    return _get_token(creds, server_url)
+
+
+def cmd_enrol(args):
+    """Interactively enrol an OAuth client with the cloud-push server."""
+    path = args.creds or os.path.expanduser(
+        "~/.config/mdrender/push-credentials.json")
+    base = f"{args.server.rstrip('/')}{CLOUD_API}"
+    start = json.loads(_post(f"{base}/enrol/start",
+                             {"info": _client_info()}, None, 30).read())
+    uri = start["verification_uri"]
+    print(f"Open in your browser:  {uri}")
+    if os.environ.get("DISPLAY"):
+        subprocess.Popen(["xdg-open", uri])
+    key = input("Enter enrolment key: ").strip()
+    _enrol_flow(args.server, key, path)
+    print(f"wrote {path} (0600)")
+    return 0
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Send files to a LocalSend receiver by IP.")
-    p.add_argument("files", nargs="+", help="one or more file paths")
-    p.add_argument("--host", required=True, help="receiver IP or hostname")
+    p = argparse.ArgumentParser(
+        description="Send files to a LocalSend receiver by IP, or enrol this "
+                    "CLI with the cloud-push server.")
+    p.add_argument("files", nargs="*", help="one or more file paths")
+    p.add_argument("--host", default=None, help="receiver IP or hostname")
     p.add_argument("--port", type=int, default=53317, help="receiver port (default 53317)")
     p.add_argument("--pin", default=None, help="transfer PIN, if the receiver requires one")
     p.add_argument("--http", action="store_true", help="use http instead of https")
@@ -102,7 +173,28 @@ def main(argv=None):
                    help="destination folder path on receiver, e.g. 'Docs/Reports' (MDRender extension)")
     p.add_argument("--conflict", default="rename", choices=["replace", "skip", "rename"],
                    help="what to do when a file name already exists (MDRender extension, default: rename)")
+    p.add_argument("--enrol", action="store_true",
+                   help="enrol an OAuth client with the cloud-push server (requires --server)")
+    p.add_argument("--server", default=None,
+                   help="cloud-push server base URL, e.g. https://push.example.com "
+                        "(required with --enrol)")
+    p.add_argument("--creds", default=None,
+                   help="path for the push credentials JSON "
+                        "(default ~/.config/mdrender/push-credentials.json)")
     args = p.parse_args(argv)
+
+    if args.enrol:
+        if not args.server:
+            print("error: --enrol requires --server <URL>", file=sys.stderr)
+            return 2
+        return cmd_enrol(args)
+
+    if not args.host:
+        print("error: --host <IP or hostname> is required", file=sys.stderr)
+        return 2
+    if not args.files:
+        print("error: at least one file is required", file=sys.stderr)
+        return 2
 
     paths = []
     for f in args.files:
