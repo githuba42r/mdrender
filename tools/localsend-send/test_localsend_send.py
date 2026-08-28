@@ -84,6 +84,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"access_token": ACCESS_TOKEN})
             else:
                 self._json({"error": "invalid_grant"}, status=401)
+        elif self.path == "/api/push":
+            # Capture the raw multipart body + auth so the test can inspect them.
+            self.state["push_auth"] = self.headers.get("Authorization")
+            self.state["push_content_type"] = self.headers.get("Content-Type")
+            self.state["push_body"] = body
+            self._json({"push_id": "p1", "files_sent": 2})
         else:
             self._json({"error": "not found"}, status=404)
 
@@ -220,3 +226,94 @@ def test_get_access_token_from_file(tmp_path, cloud_server):
     assert ls.get_access_token(str(creds_path), server_url) == ACCESS_TOKEN
     # server_url read from the credentials file when not passed
     assert ls.get_access_token(str(creds_path)) == ACCESS_TOKEN
+
+
+def test_discover_lan_parses_response(monkeypatch):
+    """Discovery announces on the multicast group and maps alias -> ip.
+
+    Regression locks on two app-driven requirements: the packet must go to the
+    multicast group 224.0.0.167 (NOT 255.255.255.255, which no receiver listens
+    on) and must carry announce: true (LocalSendDiscovery.kt drops any packet
+    where announce is not true). It also asserts the loop early-exits once the
+    wanted alias is found (exactly one announce).
+    """
+    sent = []
+
+    class FakeSocket:
+        def __init__(self, *a, **k):
+            self.sent = sent
+
+        def setsockopt(self, *a):
+            pass
+
+        def settimeout(self, t):
+            pass
+
+        def sendto(self, data, addr):
+            sent.append((data, addr))
+
+        def recvfrom(self, bufsize):
+            # Answer the first announce like the app does (unicast reply to the
+            # source address); then time out like an empty LAN.
+            if len(sent) == 1:
+                return (json.dumps({"alias": "Sunny Falcon", "version": "2.1",
+                                    "deviceModel": "Pixel", "deviceType": "mobile",
+                                    "fingerprint": "f", "port": 53317,
+                                    "protocol": "https", "download": False,
+                                    "announce": False}).encode(),
+                        ("10.0.0.5", 53317))
+            raise ls.socket.timeout("timeout")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ls.socket, "socket", FakeSocket)
+
+    found = ls.discover_lan(["Sunny Falcon"], timeout=3.0)
+
+    assert found == {"Sunny Falcon": "10.0.0.5"}
+    # One announce, because the wanted alias was found on the first reply.
+    assert len(sent) == 1
+    # The multicast group, not the broadcast address (regression).
+    assert sent[0][1] == ("224.0.0.167", 53317)
+    # The announce flag is what the app's listener requires (regression).
+    assert json.loads(sent[0][0])["announce"] is True
+
+
+def test_push_to_server_multipart(tmp_path, cloud_server):
+    """push_to_server POSTs a Bearer-authed multipart body to /api/push.
+
+    The mock server captures the raw body and Content-Type; the test parses the
+    boundary back out and asserts the target_device text part, one file part per
+    path (with filename + file bytes), and the trailing closing delimiter.
+    """
+    server_url, state = cloud_server
+    f1 = tmp_path / "one.txt"
+    f2 = tmp_path / "two.bin"
+    f1.write_bytes(b"hello world")
+    f2.write_bytes(b"\x00\x01\x02binary")
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text(json.dumps({
+        "server_url": server_url,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+    }))
+
+    rc = ls.push_to_server(str(creds_path), "Sunny Falcon", [str(f1), str(f2)])
+
+    assert rc == 0
+    assert state["oauth_hits"] == 1  # a fresh token was fetched
+    assert state["push_auth"] == f"Bearer {ACCESS_TOKEN}"
+    ct = state["push_content_type"]
+    assert ct.startswith("multipart/form-data; boundary=")
+    boundary = ct.split("boundary=", 1)[1]
+    body = state["push_body"]
+
+    assert b'name="target_device"' in body
+    assert b"Sunny Falcon" in body
+    assert b'name="file"' in body
+    assert b'filename="one.txt"' in body
+    assert b"hello world" in body          # file 1 bytes
+    assert b'filename="two.bin"' in body
+    assert b"\x00\x01\x02binary" in body   # file 2 bytes
+    assert body.endswith(("--" + boundary + "--").encode())  # closing delimiter

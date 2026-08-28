@@ -11,16 +11,18 @@ Examples:
     localsend-send.py --host 10.0.1.226 --pin 1964 notes.md photo.jpg
     localsend-send.py --host 10.0.1.226 *.md
     localsend-send.py --host 10.0.1.226 --port 53318 --insecure report.pdf
+    localsend-send.py --name "Sunny Falcon" notes.md  # LAN discovery, cloud fallback
     localsend-send.py --enrol --server https://push.example.com
 
-Exit codes: 0 ok, 2 usage, 3 rejected/timeout, 4 PIN required/wrong,
-5 receiver busy, 1 other error.
+Exit codes: 0 ok, 2 usage, 3 rejected/timeout / device not found and no creds,
+4 PIN required/wrong, 5 receiver busy, 1 other error.
 """
 import argparse
 import http.client
 import json
 import mimetypes
 import os
+import socket
 import ssl
 import subprocess
 import sys
@@ -153,6 +155,106 @@ def get_access_token(creds_path, server_url=None):
     return _get_token(creds, server_url)
 
 
+def discover_lan(names, timeout=3.0):
+    """Best-effort LocalSend v2 UDP discovery: maps alias -> ip.
+
+    Broadcasts an announce to the LocalSend multicast group (224.0.0.167:53317)
+    and collects alias -> ip from the unicast replies receivers send back. The
+    app only answers announces (it drops messages where announce is not true),
+    so the multicast group -- NOT 255.255.255.255 -- and the announce flag are
+    both load-bearing. Same-subnet only; never raises; returns whatever was
+    found (possibly {}).
+    """
+    found = {}
+    want = set(names)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        return found
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.5)
+        msg = json.dumps({**_client_info(), "announce": True}).encode()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and want:
+            try:
+                sock.sendto(msg, ("224.0.0.167", 53317))
+            except OSError:
+                pass  # best-effort: keep trying until the deadline
+            try:
+                data, addr = sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                continue
+            try:
+                info = json.loads(data)
+            except ValueError:
+                continue
+            alias = info.get("alias")
+            if alias in want:
+                found[alias] = addr[0]
+                want.discard(alias)
+    finally:
+        sock.close()
+    return found
+
+
+def push_to_server(creds_path, target_device, paths):
+    """Push files to a registered device via the cloud-push server.
+
+    Fetches a fresh OAuth2 token from *creds_path* (C2's get_access_token),
+    then POSTs a multipart/form-data body to {server_url}/api/push carrying a
+    target_device text part and one file part per path. Prints per-file results
+    and a summary; returns 0 on success (files_sent >= 1), 1 on any failure.
+    """
+    token = get_access_token(creds_path)
+    with open(creds_path) as fh:
+        server_url = json.load(fh)["server_url"].rstrip("/")
+
+    boundary = f"----mdrender{uuid.uuid4().hex}"
+    parts = []
+    # Text part: the target device name.
+    parts.append(f"--{boundary}".encode())
+    parts.append(b'Content-Disposition: form-data; name="target_device"')
+    parts.append(b"Content-Type: text/plain")
+    parts.append(b"")
+    parts.append(target_device.encode())
+    # One file part per path.
+    for path in paths:
+        name = os.path.basename(path)
+        parts.append(f"--{boundary}".encode())
+        parts.append(
+            f'Content-Disposition: form-data; name="file"; filename="{name}"'.encode())
+        parts.append(b"Content-Type: application/octet-stream")
+        parts.append(b"")
+        with open(path, "rb") as fh:
+            parts.append(fh.read())
+    parts.append(f"--{boundary}--".encode())
+    body = b"\r\n".join(parts)
+
+    req = urllib.request.Request(f"{server_url}/api/push", data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            reply = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        print(f"error: cloud push failed: HTTP {e.code} {e.read().decode()[:200]}",
+              file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, OSError) as e:
+        print(f"error: cloud push failed: {e}", file=sys.stderr)
+        return 1
+
+    sent = reply.get("files_sent", 0)
+    for path in paths:
+        print(f"  ✓ {os.path.basename(path)}")
+    push_id = reply.get("push_id", "?")
+    print(f"cloud push to {target_device}: {sent} file(s) sent (push {push_id})")
+    return 0 if sent >= 1 else 1
+
+
 def cmd_enrol(args):
     """Interactively enrol an OAuth client with the cloud-push server."""
     path = args.creds or os.path.expanduser(
@@ -173,6 +275,8 @@ def main(argv=None):
                     "CLI with the cloud-push server.")
     p.add_argument("files", nargs="*", help="one or more file paths")
     p.add_argument("--host", default=None, help="receiver IP or hostname")
+    p.add_argument("--name", default=None,
+                   help="LocalSend device name: resolve on the LAN, else cloud fallback")
     p.add_argument("--port", type=int, default=53317, help="receiver port (default 53317)")
     p.add_argument("--pin", default=None, help="transfer PIN, if the receiver requires one")
     p.add_argument("--http", action="store_true", help="use http instead of https")
@@ -200,11 +304,12 @@ def main(argv=None):
             return 2
         return cmd_enrol(args)
 
-    if not args.host:
-        print("error: --host <IP or hostname> is required", file=sys.stderr)
-        return 2
     if not args.files:
         print("error: at least one file is required", file=sys.stderr)
+        return 2
+    if not args.name and not args.host:
+        print("error: --host <IP or hostname> or --name <device name> is required",
+              file=sys.stderr)
         return 2
 
     paths = []
@@ -213,6 +318,21 @@ def main(argv=None):
             print(f"error: not a file: {f}", file=sys.stderr)
             return 2
         paths.append(f)
+
+    # --name: resolve the device on the LAN; if not found, fall back to the
+    # cloud-push server when push credentials exist. --host stays direct with
+    # no fallback (spec), and --name wins if both are given.
+    if args.name:
+        found = discover_lan([args.name], timeout=3.0)
+        if args.name in found:
+            args.host = found[args.name]
+        else:
+            creds = args.creds or os.path.expanduser(
+                "~/.config/mdrender/push-credentials.json")
+            if not os.path.exists(creds):
+                print("device not found on LAN and no push credentials", file=sys.stderr)
+                return 3
+            return push_to_server(creds, args.name, paths)
 
     scheme = "http" if args.http else "https"
     base = f"{scheme}://{args.host}:{args.port}{API}"
