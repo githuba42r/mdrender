@@ -32,6 +32,8 @@ class RetryWorker:
         self.fcm_client = fcm_client
 
     def tick(self, now: float) -> list[str]:
+        if self.fcm_client is None:
+            return []
         touched = []
         with self.db.connect() as conn:
             _, server_pk_b64 = get_or_create_server_keypair(conn)
