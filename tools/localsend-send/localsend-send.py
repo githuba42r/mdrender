@@ -90,17 +90,31 @@ def _upload_stream(url, path, ctx, timeout):
     return body
 
 
-def _enrol_flow(server_url, key_input, creds_path=None):
-    """Run the two-step cloud enrolment exchange and persist the credentials.
+def _start_enrolment(server_url):
+    """Mint a fresh enrolment on the server.
 
-    Returns the creds dict that was written to disk ({client_id,
-    client_secret, server_url}), with 0600 permissions.
+    Returns (enrolment_id, verification_uri) from a single POST to
+    /api/enrol/start. The server stores the matching key against this
+    enrolment_id, so the operator reads it back from the browser at the
+    verification_uri and it must be submitted against this same id.
     """
     base = f"{server_url.rstrip('/')}{CLOUD_API}"
     start = json.loads(_post(f"{base}/enrol/start",
                              {"info": _client_info()}, None, 30).read())
+    return start["enrolment_id"], start["verification_uri"]
+
+
+def _enrol_flow(server_url, enrolment_id, key_input, creds_path=None):
+    """Complete the browser-key enrolment exchange and persist the credentials.
+
+    Submits the operator's key against *enrolment_id* (minted earlier by
+    _start_enrolment) to /api/enrol, then writes the resulting credentials
+    ({client_id, client_secret, server_url}) to *creds_path* with 0600
+    permissions. Returns the creds dict that was written.
+    """
+    base = f"{server_url.rstrip('/')}{CLOUD_API}"
     resp = _post(f"{base}/enrol",
-                 {"enrolment_id": start["enrolment_id"], "key": key_input},
+                 {"enrolment_id": enrolment_id, "key": key_input},
                  None, 30)
     creds = json.loads(resp.read())
     record = {**creds, "server_url": server_url}
@@ -143,15 +157,12 @@ def cmd_enrol(args):
     """Interactively enrol an OAuth client with the cloud-push server."""
     path = args.creds or os.path.expanduser(
         "~/.config/mdrender/push-credentials.json")
-    base = f"{args.server.rstrip('/')}{CLOUD_API}"
-    start = json.loads(_post(f"{base}/enrol/start",
-                             {"info": _client_info()}, None, 30).read())
-    uri = start["verification_uri"]
+    eid, uri = _start_enrolment(args.server)
     print(f"Open in your browser:  {uri}")
     if os.environ.get("DISPLAY"):
         subprocess.Popen(["xdg-open", uri])
     key = input("Enter enrolment key: ").strip()
-    _enrol_flow(args.server, key, path)
+    _enrol_flow(args.server, eid, key, path)
     print(f"wrote {path} (0600)")
     return 0
 
