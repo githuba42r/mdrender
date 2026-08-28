@@ -7,12 +7,15 @@ import os
 import time
 import uuid
 
-from flask import (Flask, Response, g, jsonify, make_response, redirect,
-                   request, send_file)
+import qrcode
+from flask import (Flask, g, jsonify, make_response, redirect,
+                   render_template, request, send_file)
+from qrcode.image.svg import SvgImage
 
 from cryptography.hazmat.primitives import serialization
 
 from server.app import crypto, fcm as fcm_mod, pairing, push_store
+from server.app.config import load_config
 from server.app.auth import (LoginGate, hash_secret, issue_access_token,
                              make_session, validate_access_token,
                              verify_secret, verify_session)
@@ -75,6 +78,14 @@ def create_app(config):
 
     os.makedirs(config.PUSH_STORAGE_DIR, exist_ok=True)
 
+    @app.template_filter("dt")
+    def _fmt_epoch(ts):
+        """Render an epoch timestamp as a local human-readable string."""
+        try:
+            return datetime.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+        except (TypeError, ValueError, OverflowError, OSError):
+            return "-"
+
     @app.before_request
     def _open_db():
         g.db = app.config["_db"].connect()
@@ -111,7 +122,11 @@ def create_app(config):
             if fcm is not None:
                 fcm.send({"p": json.dumps(env)}, device["fcm_token"])
 
-    # ---- Browser session-gated pages (JSON placeholders until A11) ----
+    # ---- Browser session-gated pages ----
+
+    @app.route("/login", methods=["GET"])
+    def login_page():
+        return render_template("login.html")
 
     @app.route("/login", methods=["POST"])
     def login():
@@ -129,43 +144,56 @@ def create_app(config):
         if auth_error:
             return auth_error
         token = pairing.create_pairing_token(g.db, config.ENROL_SESSION_TTL_MINUTES)
-        expires_iso = (datetime.datetime.now(datetime.timezone.utc)
-                       + datetime.timedelta(minutes=config.ENROL_SESSION_TTL_MINUTES)
-                       ).isoformat()
+        expires_at = (datetime.datetime.now(datetime.timezone.utc)
+                      + datetime.timedelta(minutes=config.ENROL_SESSION_TTL_MINUTES))
+        expires_iso = expires_at.isoformat()
         app.config["_test_pairing_token"] = token
         app.config["_pairing_tokens"] = {"token": token, "expires": expires_iso}
-        qr = pairing.build_pairing_qr(config.PUSH_PUBLIC_URL,
-                                      app.config["_server_pk_b64"], token, expires_iso)
-        # A11 swaps in the QR HTML template; this is the placeholder.
-        return Response(qr, mimetype="application/json")
+        qr_text = pairing.build_pairing_qr(config.PUSH_PUBLIC_URL,
+                                           app.config["_server_pk_b64"],
+                                           token, expires_iso)
+        # Inline SVG QR (qrcode SVG factory; no Pillow required).
+        img = qrcode.make(qr_text, image_factory=SvgImage)
+        qr_svg = img.to_string().decode()
+        return render_template(
+            "pair.html",
+            qr_svg=qr_svg,
+            server_url=config.PUSH_PUBLIC_URL,
+            expires=expires_at.strftime("%Y-%m-%d %H:%M UTC"),
+        )
 
     @app.route("/enrol/<eid>", methods=["GET"])
     def enrol_page(eid):
         auth_error = require_session()
         if auth_error:
             return auth_error
-        return jsonify({"verification_uri": f"{config.PUSH_PUBLIC_URL}/enrol/{eid}"})
+        entry = app.config["_enrol_keys"].get(eid)
+        key = entry["key"] if entry else None
+        return render_template("enrol.html", key=key)
 
     @app.route("/devices", methods=["GET"])
     def devices():
         auth_error = require_session()
         if auth_error:
             return auth_error
-        return jsonify({"devices": [dict(r) for r in list_devices(g.db)]})
+        return render_template("devices.html",
+                               devices=[dict(r) for r in list_devices(g.db)])
 
     @app.route("/pushes", methods=["GET"])
     def pushes():
         auth_error = require_session()
         if auth_error:
             return auth_error
-        return jsonify({"pushes": [dict(r) for r in push_store.list_pushes(g.db)]})
+        return render_template("pushes.html",
+                               pushes=[dict(r) for r in push_store.list_pushes(g.db)])
 
     @app.route("/pending", methods=["GET"])
     def pending():
         auth_error = require_session()
         if auth_error:
             return auth_error
-        return jsonify({"pending": [dict(r) for r in push_store.list_pending(g.db)]})
+        return render_template("pending.html",
+                               pending=[dict(r) for r in push_store.list_pending(g.db)])
 
     @app.route("/devices/<device_secret>", methods=["DELETE"])
     def devices_delete(device_secret):
@@ -173,7 +201,15 @@ def create_app(config):
         if auth_error:
             return auth_error
         delete_device(g.db, device_secret)
-        return jsonify({"ok": True})
+        return redirect("/devices", 303)
+
+    @app.route("/devices/<device_secret>/delete", methods=["POST"])
+    def devices_delete_post(device_secret):
+        auth_error = require_session()
+        if auth_error:
+            return auth_error
+        delete_device(g.db, device_secret)
+        return redirect("/devices", 303)
 
     # ---- Unauthenticated / Bearer / enrolment API ----
 
@@ -347,3 +383,9 @@ def create_app(config):
         return jsonify({"ok": True, "files_sent": len(entries)})
 
     return app
+
+
+if __name__ == "__main__":
+    cfg = load_config()
+    host, _, port = cfg.LISTEN_ADDR.partition(":")
+    create_app(cfg).run(host=host or "0.0.0.0", port=int(port or "8080"))

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Pushes &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Pushes</h1>
+{% if pushes %}
+<table>
+  <thead>
+    <tr><th>Push ID</th><th>Target device</th><th>Date</th><th>Status</th><th>Files</th><th>Acked</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for p in pushes %}
+    <tr>
+      <td><code>{{ p.push_id }}</code></td>
+      <td>{{ p.target_device }}</td>
+      <td>{{ p.date | dt }}</td>
+      <td>{{ p.status }}</td>
+      <td>{{ p.file_count }}</td>
+      <td>{{ p.acked_count }}</td>
+      <td>
+        <form method="POST" action="/api/push/{{ p.push_id }}/retry">
+          <button type="submit">Re-push pending</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No pushes yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Enrol a tool &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Enrol a tool</h1>
+{% if key %}
+<p>Give this one-time key to the tool you want to enrol:</p>
+<pre>{{ key }}</pre>
+<p>It is valid for a short window and can only be used once.</p>
+{% else %}
+<p class="empty">Enrolment not found or already used.</p>
+{% endif %}
+{% endblock %}

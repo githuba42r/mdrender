@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Devices &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Devices</h1>
+{% if devices %}
+<table>
+  <thead>
+    <tr><th>Name</th><th>Registered</th><th>Last seen</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for d in devices %}
+    <tr>
+      <td>{{ d.device_name }}</td>
+      <td>{{ d.registered_at | dt }}</td>
+      <td>{{ d.last_seen | dt }}</td>
+      <td>
+        <form method="POST" action="/devices/{{ d.device_secret }}/delete">
+          <button type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No devices registered yet.</p>
+{% endif %}
+{% endblock %}

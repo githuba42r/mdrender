@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Cloud Push Server{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 2rem; color: #222; }
+    nav a { margin-right: 1rem; }
+    table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+    code, pre { background: #f4f4f4; padding: 0.2rem 0.4rem; border-radius: 3px; }
+    .empty { color: #666; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/pair">Pair</a>
+      <a href="/devices">Devices</a>
+      <a href="/pushes">Pushes</a>
+      <a href="/pending">Pending</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

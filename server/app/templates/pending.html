@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Pending files &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Pending files</h1>
+{% if pending %}
+<table>
+  <thead>
+    <tr><th>File</th><th>Path</th><th>Size</th><th>Created</th><th>Status</th><th>Retries</th><th>Target device</th></tr>
+  </thead>
+  <tbody>
+    {% for f in pending %}
+    <tr>
+      <td>{{ f.file_name }}</td>
+      <td>{{ f.file_path }}</td>
+      <td>{{ f.size }}</td>
+      <td>{{ f.created_at | dt }}</td>
+      <td>{{ f.status }}</td>
+      <td>{{ f.retries }}</td>
+      <td>{{ f.target_device }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No pending files.</p>
+{% endif %}
+{% endblock %}

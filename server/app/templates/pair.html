@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Pair a device &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Pair a new device</h1>
+<p>Server URL: <code>{{ server_url }}</code></p>
+<p>Pairing token expires: <code>{{ expires }}</code></p>
+<p>Scan this QR code with the app to pair a device:</p>
+<div>{{ qr_svg | safe }}</div>
+{% endblock %}
