@@ -356,12 +356,16 @@ def create_app(config):
         project = getattr(config, "FIREBASE_PROJECT_ID", "")
         auth_domain = getattr(config, "FIREBASE_AUTH_DOMAIN", "") or (
             f"{project}.firebaseapp.com" if project else "")
+        providers = [p.strip().lower() for p in
+                     str(getattr(config, "FIREBASE_PROVIDERS", "")).split(",")
+                     if p.strip()]
         firebase = None
         if api_key and auth_domain and (getattr(config, "IDENTITY_PROVIDER", "local")
                                         == "firebase"):
             firebase = {"apiKey": api_key, "authDomain": auth_domain,
                         "projectId": project,
-                        "appId": getattr(config, "FIREBASE_APP_ID", "")}
+                        "appId": getattr(config, "FIREBASE_APP_ID", ""),
+                        "providers": providers}
         return {"firebase": firebase}
 
     @app.context_processor

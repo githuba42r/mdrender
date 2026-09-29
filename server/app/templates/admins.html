@@ -30,10 +30,10 @@
         {% if a.firebase_uid %}
           <span class="chip">linked</span>
           <span class="empty">{{ a.firebase_email or a.firebase_phone or a.firebase_uid[:10] }}</span>
-        {% elif firebase %}
-          <button type="button" class="inline" onclick="mdrenderLinkAdmin('{{ a.admin_id }}')">Google</button>
-          <button type="button" class="inline" onclick="mdrenderLinkAdminGithub('{{ a.admin_id }}')">GitHub</button>
-          <button type="button" class="inline" onclick="mdrenderLinkAdminPhone('{{ a.admin_id }}')">Phone</button>
+        {% elif firebase and (('google' in firebase.providers) or ('github' in firebase.providers) or ('phone' in firebase.providers)) %}
+          {% if 'google' in firebase.providers %}<button type="button" class="inline" onclick="mdrenderLinkAdmin('{{ a.admin_id }}')">Google</button>{% endif %}
+          {% if 'github' in firebase.providers %}<button type="button" class="inline" onclick="mdrenderLinkAdminGithub('{{ a.admin_id }}')">GitHub</button>{% endif %}
+          {% if 'phone' in firebase.providers %}<button type="button" class="inline" onclick="mdrenderLinkAdminPhone('{{ a.admin_id }}')">Phone</button>{% endif %}
         {% else %}
           <span class="empty">&mdash;</span>
         {% endif %}

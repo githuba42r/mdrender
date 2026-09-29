@@ -141,14 +141,23 @@ async function sendPhoneCode(phone) {
 
 window.mdrenderSend = async () => {
   const identifier = val("identifier");
+  const providers = window.__FIREBASE_PROVIDERS__ || [];
   if (!identifier) {
     show("auth-error", "Enter your email or phone number first.");
     return;
   }
   show("auth-error", "");
   if (identifier.includes("@")) {
+    if (!providers.includes("email_link")) {
+      show("auth-error", "Email sign-in isn't enabled.");
+      return;
+    }
     await sendMagicLink(identifier);
   } else {
+    if (!providers.includes("phone")) {
+      show("auth-error", "Phone sign-in isn't enabled.");
+      return;
+    }
     await sendPhoneCode(identifier);
   }
 };

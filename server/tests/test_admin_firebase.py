@@ -138,6 +138,18 @@ def test_signup_offers_link_only_but_login_has_password(config, db_path):
     assert b"auth-email-link-panel" in login.data
 
 
+def test_only_configured_providers_are_rendered(config, db_path):
+    app = _app(config, FIREBASE_API_KEY="k", FIREBASE_AUTH_DOMAIN="proj.firebaseapp.com",
+               FIREBASE_PROVIDERS="email_link")
+    page = app.test_client().get("/login").data
+    assert b"Send sign-in link" in page
+    assert b"mdrenderGoogle" not in page
+    assert b"mdrenderGithub" not in page
+    assert b"social-row" not in page
+    assert b"auth-password-panel" not in page  # password not enabled
+    assert b"phone-number" not in page and b"+61 400" not in page
+
+
 def test_unlink_removes_the_binding(config, db_path, monkeypatch):
     app = _app(config, ADMIN_FIREBASE_LOGIN=True)
     c = app.test_client()

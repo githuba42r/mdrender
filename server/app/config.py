@@ -44,6 +44,10 @@ DEFAULTS = {
     "FIREBASE_API_KEY": "",
     "FIREBASE_AUTH_DOMAIN": "",
     "FIREBASE_APP_ID": "",
+    # Which Firebase sign-in methods the login/signup pages surface, comma
+    # separated. Any of: google, github, phone, password, email_link. Only the
+    # listed methods are shown, so a disabled provider never renders a button.
+    "FIREBASE_PROVIDERS": "google,github,phone,password,email_link",
     # Server-enforced content encryption: on (clients must encrypt) | off.
     "ENCRYPTION_MODE": "off",
     # Allow a Firebase-linked admin to sign in on the generic front page by

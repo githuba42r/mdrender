@@ -1,9 +1,16 @@
 {# Generic Firebase sign-in / sign-up. Set `auth_action` ("signin"|"signup")
-   and `auth_next` before including. Sign-up offers the link + social only;
-   sign-in additionally offers the password option. A phone-only sign-in with
-   no email reveals the attach-email panel. #}
+   and `auth_next` before including. Only the methods listed in
+   firebase.providers are shown (google, github, phone, password, email_link).
+   A phone-only sign-in with no email reveals the attach-email panel. #}
 {% set auth_action = auth_action | default('signin') %}
 {% set auth_next = auth_next | default('') %}
+{% set providers = firebase.providers if firebase else [] %}
+{% set can_email = 'email_link' in providers %}
+{% set can_phone = 'phone' in providers %}
+{% set can_password = 'password' in providers %}
+{% set can_google = 'google' in providers %}
+{% set can_github = 'github' in providers %}
+{% set has_social = can_google or can_github %}
 
 {% macro google_icon() %}
   <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
@@ -20,21 +27,27 @@
 {% endmacro %}
 
 <div class="auth-block">
+  {% if can_email or can_phone %}
   <div id="auth-identifier-panel">
-    <label for="identifier">Email or phone number</label>
+    <label for="identifier">{% if can_email and can_phone %}Email or phone number{% elif can_phone %}Phone number{% else %}Email{% endif %}</label>
     <div class="field">
       <input type="text" id="identifier" autocomplete="username"
-             placeholder="you@example.com or +61 400 000 000">
+             placeholder="{% if can_email and can_phone %}you@example.com or +61 400 000 000{% elif can_phone %}+61 400 000 000{% else %}you@example.com{% endif %}">
     </div>
     <button type="button" class="btn-primary" onclick="mdrenderSend()">
-      {% if auth_action == 'signup' %}Send create account link{% else %}Send sign-in link{% endif %}
+      {%- if auth_action == 'signup' -%}
+        {% if can_email %}Send create account link{% else %}Send create account code{% endif %}
+      {%- else -%}
+        {% if can_email %}Send sign-in link{% else %}Send SMS code{% endif %}
+      {%- endif -%}
     </button>
-    {% if auth_action != 'signup' %}
+    {% if can_password and auth_action != 'signup' %}
     <p class="login-alt"><a href="#" onclick="mdrenderTogglePassword();return false;">Sign in with a password instead</a></p>
     {% endif %}
   </div>
+  {% endif %}
 
-  {% if auth_action != 'signup' %}
+  {% if can_password and auth_action != 'signup' %}
   <div id="auth-password-panel" hidden>
     <label for="pw-email">Email</label>
     <div class="field"><input type="text" id="pw-email" autocomplete="username"></div>
@@ -47,8 +60,8 @@
 
   <div id="auth-email-link-panel" hidden>
     <p class="login-alt">Every account needs an email. Add one to finish.</p>
-    <button type="button" class="social" onclick="mdrenderAttachGoogle()">{{ google_icon() }} Google</button>
-    <button type="button" class="social" onclick="mdrenderAttachGithub()">{{ github_icon() }} GitHub</button>
+    {% if can_google %}<button type="button" class="social" onclick="mdrenderAttachGoogle()">{{ google_icon() }} Google</button>{% endif %}
+    {% if can_github %}<button type="button" class="social" onclick="mdrenderAttachGithub()">{{ github_icon() }} GitHub</button>{% endif %}
     <label for="attach-email">Email</label>
     <div class="field"><input type="text" id="attach-email" autocomplete="email"></div>
     <label for="attach-password">Password (6+)</label>
@@ -56,17 +69,20 @@
     <button type="button" class="btn-primary" onclick="mdrenderAttachEmail()">Attach email</button>
   </div>
 
+  {% if has_social %}
   <div class="divider"><span>or continue with</span></div>
   <div class="social-row">
-    <button type="button" class="social" onclick="mdrenderGoogle()">{{ google_icon() }} Google</button>
-    <button type="button" class="social" onclick="mdrenderGithub()">{{ github_icon() }} GitHub</button>
+    {% if can_google %}<button type="button" class="social" onclick="mdrenderGoogle()">{{ google_icon() }} Google</button>{% endif %}
+    {% if can_github %}<button type="button" class="social" onclick="mdrenderGithub()">{{ github_icon() }} GitHub</button>{% endif %}
   </div>
+  {% endif %}
 
   <p id="auth-message" class="login-msg"></p>
   <p id="auth-error" class="login-msg login-msg-error"></p>
   <div id="recaptcha-container"></div>
   <script>window.__FIREBASE__ = {{ firebase | tojson }};
     window.__FIREBASE_ACTION__ = {{ auth_action | tojson }};
-    window.__FIREBASE_NEXT__ = {{ auth_next | tojson }};</script>
+    window.__FIREBASE_NEXT__ = {{ auth_next | tojson }};
+    window.__FIREBASE_PROVIDERS__ = {{ providers | tojson }};</script>
   <script type="module" src="{{ url_for('static', filename='firebase-auth.js') }}"></script>
 </div>
