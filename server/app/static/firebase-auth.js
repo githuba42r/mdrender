@@ -33,6 +33,23 @@ function val(id) {
   return (document.getElementById(id)?.value || "").trim();
 }
 
+const ERRORS = {
+  "auth/operation-not-allowed": "This sign-in method isn't enabled — ask the operator to enable it in Firebase.",
+  "auth/unauthorized-domain": "This domain is not authorised for sign-in.",
+  "auth/invalid-phone-number": "That phone number looks invalid.",
+  "auth/invalid-email": "That email address looks invalid.",
+  "auth/too-many-requests": "Too many attempts — please try again later.",
+  "auth/popup-closed-by-user": "The sign-in popup was closed before finishing.",
+  "auth/invalid-verification-code": "That code is not correct.",
+  "auth/code-expired": "That code has expired — request a new one.",
+  "auth/network-request-failed": "Network error — check your connection.",
+};
+
+function friendly(e) {
+  const code = (e && e.code) || "";
+  return ERRORS[code] || (e && e.message) || String(e);
+}
+
 async function exchange(user) {
   try {
     const idToken = await user.getIdToken();
@@ -53,7 +70,7 @@ async function exchange(user) {
     const body = await resp.json().catch(() => ({}));
     show("auth-error", body.error || `sign-in failed (${resp.status})`);
   } catch (e) {
-    show("auth-error", e.message || String(e));
+    show("auth-error", friendly(e));
   }
 }
 
@@ -62,7 +79,7 @@ async function popup(provider) {
     const result = await signInWithPopup(auth, provider);
     await exchange(result.user);
   } catch (e) {
-    show("auth-error", e.message || String(e));
+    show("auth-error", friendly(e));
   }
 }
 
@@ -79,7 +96,7 @@ async function sendMagicLink(email) {
     const what = window.__FIREBASE_ACTION__ === "signup" ? "Create-account link" : "Sign-in link";
     show("auth-message", `${what} sent — open it on this device to finish.`);
   } catch (e) {
-    show("auth-error", e.message || String(e));
+    show("auth-error", friendly(e));
   }
 }
 
@@ -94,7 +111,7 @@ async function sendPhoneCode(phone) {
       await exchange(result.user);
     }
   } catch (e) {
-    show("auth-error", e.message || String(e));
+    show("auth-error", friendly(e));
   }
 }
 
@@ -123,7 +140,7 @@ window.mdrenderPassword = async () => {
     const result = await signInWithEmailAndPassword(auth, email, password);
     await exchange(result.user);
   } catch (e) {
-    show("auth-error", e.message || String(e));
+    show("auth-error", friendly(e));
   }
 };
 
@@ -151,6 +168,6 @@ if (isSignInWithEmailLink(auth, window.location.href)) {
         localStorage.removeItem(EMAIL_KEY);
         return exchange(result.user);
       })
-      .catch((e) => show("auth-error", e.message || String(e)));
+      .catch((e) => show("auth-error", friendly(e)));
   }
 }

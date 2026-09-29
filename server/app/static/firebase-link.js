@@ -16,6 +16,18 @@ import {
 const app = initializeApp(window.__FIREBASE__);
 const auth = getAuth(app);
 
+const ERRORS = {
+  "auth/operation-not-allowed": "This sign-in method isn't enabled — ask the operator to enable it in Firebase.",
+  "auth/unauthorized-domain": "This domain is not authorised for sign-in.",
+  "auth/popup-closed-by-user": "The sign-in popup was closed before finishing.",
+  "auth/network-request-failed": "Network error — check your connection.",
+};
+
+function friendly(e) {
+  const code = (e && e.code) || "";
+  return ERRORS[code] || (e && e.message) || String(e);
+}
+
 async function postLink(idToken, adminId) {
   const resp = await fetch("/admins/link", {
     method: "POST",
@@ -35,7 +47,7 @@ window.mdrenderLinkAdmin = async (adminId) => {
     const result = await signInWithPopup(auth, new GoogleAuthProvider());
     await postLink(await result.user.getIdToken(), adminId);
   } catch (e) {
-    window.alert(e.message || String(e));
+    window.alert(friendly(e));
   }
 };
 
@@ -44,7 +56,7 @@ window.mdrenderLinkAdminGithub = async (adminId) => {
     const result = await signInWithPopup(auth, new GithubAuthProvider());
     await postLink(await result.user.getIdToken(), adminId);
   } catch (e) {
-    window.alert(e.message || String(e));
+    window.alert(friendly(e));
   }
 };
 
@@ -59,6 +71,6 @@ window.mdrenderLinkAdminPhone = async (adminId) => {
     const result = await confirmation.confirm(code);
     await postLink(await result.user.getIdToken(), adminId);
   } catch (e) {
-    window.alert(e.message || String(e));
+    window.alert(friendly(e));
   }
 };
