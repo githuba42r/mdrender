@@ -20,6 +20,7 @@
       </td>
     </tr>
     <tr><th>Master URL</th><td>{% if master_url %}<code>{{ master_url }}</code>{% else %}<span class="empty">(not configured)</span>{% endif %}</td></tr>
+    <tr><th>Content encryption</th><td><span class="chip">{{ encryption }}</span></td></tr>
     <tr><th>Hostname</th><td>{{ hostname or "-" }}</td></tr>
     <tr><th>Server ID</th><td><code>{{ server_id }}</code></td></tr>
   </tbody>

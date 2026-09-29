@@ -308,6 +308,9 @@ def create_app(config):
         """
         if not device["push_key"]:
             return False
+        if _encryption_mode() == "required" and encryption.get_sealed_cek(
+                g.db, device["device_secret"]) is None:
+            return False  # client/app must negotiate encryption first (§7b)
         sealed = trigger.seal_trigger(
             base64.b64decode(device["push_key"]), config.PUSH_PUBLIC_URL,
             push_row["push_id"], push_row["challenge_key"],
@@ -483,6 +486,9 @@ def create_app(config):
         if (bool(getattr(config, "BILLING_ENFORCEMENT", False))
                 and not billing.entitled(g.db, billing.SCOPE_ACCOUNT, account_id)):
             return jsonify({"error": "payment required"}), 402
+        if _encryption_mode() == "required" and not (
+                request.form.get("alg") and request.form.get("nonce")):
+            return jsonify({"error": "encryption required"}), 422
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files"}), 400
@@ -683,6 +689,7 @@ def create_app(config):
             fcm_configured=bool(getattr(config, "FCM_SERVER_KEY", "")),
             fcm_available=app.config["_fcm_available"],
             master_url=getattr(config, "MASTER_URL", ""),
+            encryption=_encryption_mode(),
         )
 
     @app.route("/federation", methods=["GET"])
@@ -849,9 +856,18 @@ def create_app(config):
 
     # ---- Unauthenticated / Bearer / enrolment API ----
 
+    def _encryption_mode() -> str:
+        mode = (getattr(config, "ENCRYPTION_MODE", "off") or "off").lower()
+        return mode if mode in ("off", "optional", "required") else "off"
+
     @app.route("/api/health", methods=["GET"])
     def health():
         return jsonify({"ok": True})
+
+    @app.route("/api/server/policy", methods=["GET"])
+    def server_policy():
+        """Advertise server policy so clients/apps negotiate (design §7b)."""
+        return jsonify({"encryption": _encryption_mode()})
 
     @app.route("/auth/providers", methods=["GET"])
     def auth_providers():
@@ -1002,6 +1018,9 @@ def create_app(config):
                                      server_id=row["server_id"])
         if device is None:
             return jsonify({"error": "device not found for this slave"}), 403
+        if _encryption_mode() == "required" and encryption.get_sealed_cek(
+                g.db, device_id) is None:
+            return jsonify({"error": "encryption required"}), 409
         fcm = app.config["_fcm"]
         if fcm is None or not device["fcm_token"]:
             return jsonify({"error": "fcm unavailable"}), 503

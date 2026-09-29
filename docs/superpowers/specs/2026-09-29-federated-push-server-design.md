@@ -268,10 +268,30 @@ key or the content key.
 - Consequently servers **cannot scan, deduplicate, or moderate** content;
   abuse handling is policy/report-driven (§8a).
 - The doorbell `push_key` (§7) is separate and unchanged.
-- Encryption is per account and may be opted out (plaintext); the server records
-  the mode.
 - **Filenames/metadata are encrypted in the payload** and not stored (D13);
   storage is an opaque binary blob.
+
+### 7b. Server-enforced encryption policy
+
+Encryption is a **server setting, not a client choice**. The operator configures
+`ENCRYPTION_MODE` (admin-set; default `off`): `off` · `optional` · `required`.
+
+When it is **`required`**, the client and app are **forced to negotiate**
+encryption before anything is delivered:
+
+- The server **advertises the policy** (`GET /api/server/policy`, and in the
+  pairing handshake) so both sides know encryption is mandatory.
+- The app **must register its content public key** and the client **must upload
+  the sealed CEK**; these are prerequisites for delivery.
+- Uploads **must carry encryption metadata** (algorithm + nonce); plaintext
+  uploads are rejected.
+- A **doorbell is refused** for a device with no sealed CEK, forcing the
+  client/app to finish negotiation first.
+
+This is a deliberate operator control: it lets the admin guarantee that content
+at rest on the push server (awaiting collection) is unreadable to them, and
+therefore that they are not responsible for it. `off`/`optional` exist for
+deployments that choose otherwise; the mode is never chosen by the client.
 
 ## 8. Master administration of slave servers
 
@@ -506,8 +526,11 @@ Each phase lands independently with tests.
 - **D12 (resolved)** Billing cycles are **anniversary-based** per account; plan
   changes prorate to the account's own dates.
 - **D13 (resolved)** **Filenames are mangled/encrypted into the payload** and the
-  server stores **only an opaque binary string** (no name, no metadata). The
-  sealing algorithm (RSA-OAEP vs ECIES) is a small implementation detail.
+  server stores **only an opaque binary string** (no name, no metadata).
+  **Encryption is a server setting (`ENCRYPTION_MODE` = off/optional/required),
+  enforced server-side (§7b)** — when required, clients and apps are forced to
+  negotiate; the client never decides. The sealing algorithm (RSA-OAEP vs ECIES)
+  is a small implementation detail.
 - **D14 (resolved)** All liveness/queue tunables (probe interval, timeouts, down
   threshold, heartbeat cadence, nonce window, outbox TTL/backoff) are **server
   settings from environment config** with sane defaults.
