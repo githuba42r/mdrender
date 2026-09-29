@@ -18,8 +18,8 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import (accounts, crypto, federation, fcm as fcm_mod, pairing,
-                        push_store, storage, trigger)
+from server.app import (accounts, bans, crypto, federation, fcm as fcm_mod,
+                        pairing, push_store, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -115,6 +115,13 @@ def create_app(config):
     def _open_db():
         g.db = app.config["_db"].connect()
         g.cfg = config
+        # Ban enforcement at the edge of every endpoint (design §14).
+        if bool(getattr(config, "BAN_ENFORCEMENT", True)):
+            try:
+                if bans.is_banned(g.db, ip=request.remote_addr):
+                    return jsonify({"error": "forbidden"}), 403
+            except Exception:  # noqa: BLE001 - never let a ban check break requests
+                pass
 
     @app.teardown_request
     def _close_db(exc):
@@ -584,6 +591,36 @@ def create_app(config):
         elif action == "delete":
             federation.delete_server(g.db, server_id)
         return redirect("/federation", 303)
+
+    @app.route("/bans", methods=["GET"])
+    def bans_page():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        return render_template("bans.html",
+                               bans=[dict(b) for b in bans.list_bans(g.db)],
+                               kinds=bans.KINDS)
+
+    @app.route("/bans", methods=["POST"])
+    def bans_add():
+        auth_error = require_form_session("/bans")
+        if auth_error:
+            return auth_error
+        kind = request.form.get("kind", "")
+        value = (request.form.get("value") or "").strip()
+        if kind in bans.KINDS and value:
+            bans.add_ban(g.db, kind, value,
+                         scope=request.form.get("scope", "global"),
+                         reason=request.form.get("reason") or None)
+        return redirect("/bans", 303)
+
+    @app.route("/bans/<int:ban_id>/delete", methods=["POST"])
+    def bans_delete(ban_id):
+        auth_error = require_form_session("/bans")
+        if auth_error:
+            return auth_error
+        bans.remove_ban(g.db, ban_id)
+        return redirect("/bans", 303)
 
     @app.route("/devices", methods=["GET"])
     def devices():

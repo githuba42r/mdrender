@@ -33,6 +33,7 @@ DEFAULTS = {
     "ACCOUNT_MAX_BYTES": 104857600,   # 100 MB
     "ACCOUNT_MAX_FILES": 1000,
     "ACCOUNT_MAX_AGE_HOURS": 168,     # 7 days
+    "BAN_ENFORCEMENT": True,
 }
 
 
@@ -48,6 +49,8 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS"):
             env[k] = int(env[k])
+    env["BAN_ENFORCEMENT"] = str(env.get("BAN_ENFORCEMENT", True)).lower() in (
+        "1", "true", "yes", "on")
     if overrides:
         env.update(overrides)
     return Config(**env)

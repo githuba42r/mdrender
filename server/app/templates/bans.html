@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Bans &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Bans</h1>
+<p class="lede">Block network sources and identities by exact IP, CIDR range, AS number, hostname, or domain. Enforced on every request, at signup, and on federation.</p>
+
+{% if bans %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Kind</th><th>Value</th><th>Scope</th><th>Reason</th><th>Expires</th><th></th></tr></thead>
+  <tbody>
+    {% for b in bans %}
+    <tr>
+      <td>{{ b.kind }}</td>
+      <td><code>{{ b.value }}</code></td>
+      <td>{{ b.scope }}</td>
+      <td>{{ b.reason or "" }}</td>
+      <td>{% if b.expires_at %}{{ b.expires_at | dt }}{% else %}<span class="empty">never</span>{% endif %}</td>
+      <td>
+        <form method="POST" action="/bans/{{ b.id }}/delete" class="inline"
+              data-confirm="Remove this ban?" data-confirm-ok="Remove">
+          <button type="submit" class="btn-danger">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No bans.</p>
+{% endif %}
+
+<h2>Add a ban</h2>
+<form method="POST" action="/bans">
+  <label for="kind">Kind</label>
+  <div class="field">
+    <select id="kind" name="kind">
+      {% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+    </select>
+  </div>
+  <label for="value">Value</label>
+  <div class="field"><input type="text" id="value" name="value" required placeholder="1.2.3.4 / 10.0.0.0/8 / 64500 / host.example / example.com"></div>
+  <label for="reason">Reason (optional)</label>
+  <div class="field"><input type="text" id="reason" name="reason"></div>
+  <button type="submit" class="btn-primary">Add ban</button>
+</form>
+{% endblock %}
