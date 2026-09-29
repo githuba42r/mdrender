@@ -420,8 +420,9 @@ assign a plan to an account or a group.**
   and admin — not just registration. Matching is by exact IP, **CIDR block
   range**, **AS number**, hostname, or domain.
 - The client's source IP is read from the proxy-aware forwarded header (the
-  master sits behind Cloudflare); the AS number is resolved from a local
-  IP→ASN database rather than an external call.
+  master sits behind Cloudflare); **country** comes from the `CF-IPCountry`
+  header (or the local DB for direct calls) and the **AS number** from a bundled
+  local IP→ASN database (DB-IP Lite) — no external lookup (D9).
 - First-run admin setup closes permanently after the first admin exists.
 - Rate-limit login, signup, upload, and doorbell endpoints per identity/IP.
 - No secrets in URLs; no card data stored.
@@ -513,10 +514,21 @@ Each phase lands independently with tests; the app is untouched.
 - **D14 (open)** Liveness/queue tuning (§5a): probe interval and timeout, number
   of failures before a slave is marked down, heartbeat cadence, signed-request
   time window and nonce retention, and the outbox retention/backoff policy.
-- **D9** ASN/CIDR source and matching: a bundled IP→ASN database
-  (e.g. MaxMind GeoLite2 ASN, self-updated) vs an external lookup; how to trust
-  the forwarded client IP through Cloudflare; IPv4 vs IPv6 CIDR handling; and
-  whether ASN bans also cover hosting/VPN ranges.
+- **D9 (resolved — recommendation)** Use **local lookups**, no per-request
+  external call:
+  - **Country:** prefer Cloudflare's **`CF-IPCountry`** header (the master sits
+    behind Cloudflare — free, zero lookup); fall back to a local IP→Country DB
+    for direct/non-proxied and internal calls.
+  - **ASN:** bundle a local **IP→ASN MMDB** and read it with the pure-Python
+    `maxminddb` library. Recommended source: **DB-IP Lite (IP to ASN / IP to
+    Country)** — free, **no account**, monthly updates, **CC BY 4.0
+    (attribution only)**. Alternatives: **IPinfo Lite** (daily updates, country
+    + ASN, CC BY-SA 4.0) and **MaxMind GeoLite2** (free account, CC BY-SA 4.0).
+    Avoid per-lookup APIs (rate limits, latency, privacy).
+  - **Matching:** IP and **CIDR** bans need no lookup (parse + match); **ASN**
+    and **country** bans use the DB/header. Handle **IPv4 and IPv6** CIDRs.
+  - Honour attribution and each DB's license; refresh on a schedule
+    (`geoipupdate` for GeoLite2, monthly download for DB-IP).
 
 ## 17. Non-goals (this effort)
 
