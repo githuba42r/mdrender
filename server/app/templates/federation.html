@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Federation &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Federation</h1>
+<p class="lede">Slave push servers enrolled with this master. Deactivate to suspend, revoke to invalidate credentials, or remove entirely.</p>
+{% if master_url %}
+<p>This server's master: <code>{{ master_url }}</code></p>
+{% endif %}
+
+{% if servers %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Hostname</th><th>Server ID</th><th>Status</th><th>Last seen</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for s in servers %}
+    <tr>
+      <td>{{ s.hostname }}</td>
+      <td><code>{{ s.server_id }}</code></td>
+      <td><span class="chip {{ 'failed' if s.status in ('down','revoked','banned') else ('acked' if s.status == 'active' else '') }}">{{ s.status }}</span></td>
+      <td>{{ s.last_seen | dt }}</td>
+      <td>
+        {% if s.status == 'active' %}
+        <form method="POST" action="/federation/{{ s.server_id }}/deactivate" class="inline"
+              data-confirm="Deactivate '{{ s.hostname }}'? Its pushes will pause until reactivated."
+              data-confirm-ok="Deactivate"><button type="submit">Deactivate</button></form>
+        {% elif s.status == 'deactivated' %}
+        <form method="POST" action="/federation/{{ s.server_id }}/activate" class="inline">
+          <button type="submit">Activate</button></form>
+        {% endif %}
+        <form method="POST" action="/federation/{{ s.server_id }}/revoke" class="inline"
+              data-confirm="Revoke '{{ s.hostname }}'? Its credentials stop working immediately."
+              data-confirm-ok="Revoke"><button type="submit" class="btn-danger">Revoke</button></form>
+        <form method="POST" action="/federation/{{ s.server_id }}/delete" class="inline"
+              data-confirm="Remove '{{ s.hostname }}' and its queued messages?"
+              data-confirm-ok="Remove"><button type="submit" class="btn-danger">Remove</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No slave servers enrolled yet.</p>
+{% endif %}
+{% endblock %}

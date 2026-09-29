@@ -108,6 +108,43 @@ def test_replayed_request_is_rejected(fed_app):
     assert c.post("/api/federation/ping", headers=headers).status_code == 401
 
 
+def test_sweep_marks_down_then_recovers(fed_app):
+    _enrol(fed_app)
+    db = fed_app.config["_db"]
+    with db.connect() as conn:
+        # First failure is below threshold; the second marks it down.
+        assert federation.sweep_liveness(conn, probe=lambda row: False, threshold=2) == []
+        assert federation.sweep_liveness(conn, probe=lambda row: False, threshold=2) == ["srv-1"]
+        assert federation.get_server(conn, "srv-1")["status"] == "down"
+        # A successful probe brings it back.
+        assert federation.sweep_liveness(conn, probe=lambda row: True) == []
+        assert federation.get_server(conn, "srv-1")["status"] == "active"
+
+
+def test_federation_admin_lists_and_manages_servers(fed_app):
+    _enrol(fed_app)
+    c = fed_app.test_client()
+    assert c.get("/federation").status_code == 303  # session-gated
+    c.post("/login", data={"username": "admin", "password": "testpass"})
+
+    body = c.get("/federation").data
+    assert b"srv-1" in body and b"slave.example" in body
+
+    db = fed_app.config["_db"]
+    c.post("/federation/srv-1/deactivate")
+    with db.connect() as conn:
+        assert federation.get_server(conn, "srv-1")["status"] == "deactivated"
+    c.post("/federation/srv-1/activate")
+    with db.connect() as conn:
+        assert federation.get_server(conn, "srv-1")["status"] == "active"
+    c.post("/federation/srv-1/revoke")
+    with db.connect() as conn:
+        assert federation.get_server(conn, "srv-1")["status"] == "revoked"
+    c.post("/federation/srv-1/delete")
+    with db.connect() as conn:
+        assert federation.get_server(conn, "srv-1") is None
+
+
 def test_slave_verify_responder_signs_the_challenge(fed_app):
     body = fed_app.test_client().post("/api/federation/verify",
                                       json={"challenge": "abc123"}).get_json()

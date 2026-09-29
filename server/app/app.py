@@ -456,6 +456,30 @@ def create_app(config):
             master_url=getattr(config, "MASTER_URL", ""),
         )
 
+    @app.route("/federation", methods=["GET"])
+    def federation_page():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        return render_template("federation.html",
+                               servers=[dict(r) for r in federation.list_servers(g.db)],
+                               master_url=getattr(config, "MASTER_URL", ""))
+
+    @app.route("/federation/<server_id>/<action>", methods=["POST"])
+    def federation_action(server_id, action):
+        auth_error = require_form_session("/federation")
+        if auth_error:
+            return auth_error
+        if action == "revoke":
+            federation.revoke_server(g.db, server_id)
+        elif action == "deactivate":
+            federation.set_status(g.db, server_id, "deactivated")
+        elif action == "activate":
+            federation.set_status(g.db, server_id, "active")
+        elif action == "delete":
+            federation.delete_server(g.db, server_id)
+        return redirect("/federation", 303)
+
     @app.route("/devices", methods=["GET"])
     def devices():
         auth_error = require_page_session()

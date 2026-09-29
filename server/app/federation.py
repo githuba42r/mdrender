@@ -213,3 +213,52 @@ def verify_callback_signature(public_key_b64: str, challenge: str, signature_b64
         return crypto.verify(pub, challenge.encode(), base64.b64decode(signature_b64))
     except Exception:  # noqa: BLE001
         return False
+
+
+def probe_server(server_row, *, timeout: int = 10) -> bool:
+    """Master→slave liveness probe: challenge the slave and verify the reply."""
+    challenge = new_challenge()
+    try:
+        url = server_row["base_url"].rstrip("/") + "/api/federation/probe"
+        data = json.dumps({"challenge": challenge}).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            reply = json.loads(resp.read())
+    except Exception:  # noqa: BLE001 - unreachable/failed == down
+        return False
+    return verify_callback_signature(server_row["public_key"], challenge,
+                                     reply.get("signature", ""))
+
+
+def sweep_liveness(conn, *, probe=probe_server, threshold: int = 3,
+                   now: int | None = None) -> list[str]:
+    """Probe active/down slaves; mark down after `threshold` failed probes.
+
+    Returns the server ids newly marked down. Injectable `probe` keeps this
+    testable without a live slave.
+    """
+    now = int(now or time.time())
+    newly_down = []
+    rows = conn.execute(
+        "SELECT * FROM federated_servers WHERE status IN ('active', 'down')").fetchall()
+    for row in rows:
+        if probe(row):
+            conn.execute(
+                "UPDATE federated_servers SET last_probe = ?, status = 'active',"
+                " down_since = NULL, probe_failures = 0 WHERE server_id = ?",
+                (now, row["server_id"]))
+            continue
+        fails = (row["probe_failures"] or 0) + 1
+        if fails >= threshold and row["status"] != "down":
+            newly_down.append(row["server_id"])
+            conn.execute(
+                "UPDATE federated_servers SET last_probe = ?, status = 'down',"
+                " down_since = ?, probe_failures = ? WHERE server_id = ?",
+                (now, now, fails, row["server_id"]))
+        else:
+            conn.execute(
+                "UPDATE federated_servers SET last_probe = ?, probe_failures = ?"
+                " WHERE server_id = ?", (now, fails, row["server_id"]))
+    conn.commit()
+    return newly_down

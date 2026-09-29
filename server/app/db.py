@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS federated_servers (
   created_at INTEGER NOT NULL,
   last_seen INTEGER,
   down_since INTEGER,
-  last_probe INTEGER
+  last_probe INTEGER,
+  probe_failures INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS federated_nonces (
   server_id TEXT NOT NULL,
@@ -143,6 +144,9 @@ class Database:
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",
                 "target_folder": "TEXT NOT NULL DEFAULT ''",
                 "conflict": "TEXT NOT NULL DEFAULT 'rename'",
+            },
+            "federated_servers": {
+                "probe_failures": "INTEGER NOT NULL DEFAULT 0",
             },
         }
         for table, columns in wanted.items():
