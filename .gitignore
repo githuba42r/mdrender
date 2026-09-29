@@ -34,3 +34,8 @@ server/data/
 
 # Firebase CLI debug output
 firebase-debug.log
+
+# PyInstaller output
+dist/
+packaging/dist/
+/mdrender-send-*.pkg

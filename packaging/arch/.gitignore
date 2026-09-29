@@ -1,0 +1,8 @@
+# Staged by build.sh
+localsend-send.py
+README.md
+# makepkg artefacts
+pkg/
+src/
+*.pkg.tar.*
+*.tar.*

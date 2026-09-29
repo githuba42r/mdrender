@@ -1,0 +1,20 @@
+# Maintainer: Phil Gersekowski <philg@aspedia.net>
+# Local package. build.sh stages the tool source beside this file, then runs
+# makepkg; for an AUR package, replace `source` with the repo tarball URL.
+pkgname=mdrender-send
+pkgver=1.0.15
+pkgrel=1
+pkgdesc="Send files to MDRender (or any LocalSend receiver) from the command line"
+arch=('any')
+url="https://github.com/a42r/MDRender"
+license=('custom:Proprietary')
+depends=('python')
+provides=('localsend-send')
+conflicts=('localsend-send')
+source=("localsend-send.py" "README.md")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/localsend-send.py" "$pkgdir/usr/bin/mdrender-send"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

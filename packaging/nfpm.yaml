@@ -1,0 +1,25 @@
+# Build .deb / .rpm / .apk with nfpm (https://nfpm.goreleaser.com).
+#   Run from the repository root:
+#     nfpm package -f packaging/nfpm.yaml -p deb -t build/pkg
+#     nfpm package -f packaging/nfpm.yaml -p rpm -t build/pkg
+#     nfpm package -f packaging/nfpm.yaml -p apk -t build/pkg
+name: mdrender-send
+arch: all
+platform: linux
+version: "1.0.15"
+section: utils
+priority: optional
+maintainer: Phil Gersekowski <philg@aspedia.net>
+description: |
+  Send files to MDRender (or any LocalSend receiver) from the command line.
+  LAN discovery, local DNS resolution, and cloud-push.
+license: Proprietary
+depends:
+  - python3
+contents:
+  - src: tools/localsend-send/localsend-send.py
+    dst: /usr/bin/mdrender-send
+    file_info:
+      mode: 0755
+  - src: tools/localsend-send/README.md
+    dst: /usr/share/doc/mdrender-send/README.md

@@ -1,0 +1,117 @@
+name: package
+
+# Builds every mdrender-send package on a version tag (or manually) and uploads
+# them as artifacts. Native OS runners are required: PyInstaller cannot
+# cross-compile, Inno Setup is Windows-only, and pkgbuild is macOS-only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  # Standalone binary + .deb/.rpm/.apk
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build standalone binary
+        run: |
+          python -m pip install --upgrade pyinstaller
+          python -m PyInstaller --clean --noconfirm packaging/pyinstaller/mdrender-send.spec
+      - name: Install nfpm
+        run: |
+          version=$(curl -sSL https://api.github.com/repos/goreleaser/nfpm/releases/latest | grep -oE '"tag_name": "v[^"]+"' | cut -d'"' -f4)
+          curl -sSL -o nfpm.tgz "https://github.com/goreleaser/nfpm/releases/download/${version}/nfpm_${version#v}_Linux_x86_64.tar.gz"
+          tar -xzf nfpm.tgz nfpm
+          sudo mv nfpm /usr/local/bin/
+      - name: Build .deb / .rpm / .apk
+        run: |
+          mkdir -p packaging/dist
+          for p in deb rpm apk; do
+            nfpm package -f packaging/nfpm.yaml -p "$p" -t packaging/dist
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdrender-send-linux
+          path: |
+            dist/mdrender-send
+            packaging/dist/*
+          if-no-files-found: warn
+
+  # Arch .pkg.tar.zst
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - run: pacman -Sy --noconfirm base-devel git python sudo
+      - uses: actions/checkout@v4
+      - name: Build pacman package as a non-root user
+        run: |
+          useradd -m builder
+          chown -R builder .
+          su builder -c 'packaging/arch/build.sh'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdrender-send-arch
+          path: packaging/arch/*.pkg.tar.*
+
+  # Windows .exe + Inno Setup installer
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build standalone exe
+        run: |
+          python -m pip install --upgrade pyinstaller
+          python -m PyInstaller --clean --noconfirm packaging/pyinstaller/mdrender-send.spec
+      - name: Build installer (Inno Setup)
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\mdrender-send.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdrender-send-windows
+          path: |
+            dist/mdrender-send.exe
+            packaging/windows/Output/*.exe
+          if-no-files-found: warn
+
+  # macOS binary + .pkg
+  macos:
+    runs-on: macos-latest
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build standalone binary
+        run: |
+          python -m pip install --upgrade pyinstaller
+          python -m PyInstaller --clean --noconfirm packaging/pyinstaller/mdrender-send.spec
+      - name: Build .pkg
+        run: packaging/macos/build-pkg.sh
+      - name: Sign (optional)
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          echo "$MACOS_CERT_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p "" build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          codesign --options runtime --sign "Developer ID Application" dist/mdrender-send
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdrender-send-macos
+          path: |
+            dist/mdrender-send
+            mdrender-send-*.pkg
+          if-no-files-found: warn

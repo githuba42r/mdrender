@@ -35,13 +35,16 @@ import urllib.parse
 import urllib.request
 import uuid
 
+# Keep in step with the packaging manifests (packaging/).
+__version__ = "1.0.15"
+
 API = "/api/localsend/v2"
 CLOUD_API = "/api"  # cloud-push server base (NOT the LocalSend LAN protocol)
 
 # Every request carries this User-Agent. Cloudflare-fronted servers answer the
 # default "Python-urllib/3.x" signature with 403 error code 1010 (banned browser
 # signature), which breaks the cloud-push path (enrol, token, push).
-USER_AGENT = "localsend-send/1.0"
+USER_AGENT = f"mdrender-send/{__version__}"
 
 # How long `--enrol` waits for the operator to complete registration — by
 # approving in the browser or typing the short code.
@@ -559,6 +562,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(
         description="Send files to a LocalSend receiver by IP, or enrol this "
                     "CLI with the cloud-push server.")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("files", nargs="*", help="one or more file paths")
     p.add_argument("--host", default=None, help="receiver IP or hostname")
     p.add_argument("--name", default=None,
