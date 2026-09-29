@@ -10,7 +10,6 @@
   <p class="lede">Enter your email or phone number and we'll send you a sign-in link.</p>
   {% include "_firebase_auth.html" %}
   {% if signup_open %}<p class="login-foot">No account? <a href="/signup">Create one</a>.</p>{% endif %}
-  <p class="login-foot"><a href="/admin-login">Server administrator sign-in</a></p>
   {% else %}
   <p class="lede">Sign in to continue.</p>
   <form method="POST" action="/login">
