@@ -73,6 +73,22 @@ def test_add_admin_from_admin_ui(config, db_path):
                       data={"username": "ops", "password": "anotherpass1"}).status_code == 302
 
 
+def test_admin_can_log_in_with_username_or_email(config, db_path):
+    app = _app_without_bootstrap(config)
+    client = app.test_client()
+    client.post("/setup", data={"username": "phil", "password": "longenough1"})
+    with app.config["_db"].connect() as conn:
+        conn.execute("UPDATE admins SET email = 'phil@example.com' WHERE username = 'phil'")
+        conn.commit()
+
+    fresh = app.test_client()
+    assert fresh.post("/login",
+                      data={"username": "phil", "password": "longenough1"}).status_code == 302
+    assert fresh.post("/login",
+                      data={"username": "phil@example.com",
+                            "password": "longenough1"}).status_code == 302
+
+
 def test_bootstrap_admin_from_server_password(config, db_path):
     # conftest sets SERVER_PASSWORD="testpass"; a fresh app seeds admin/testpass.
     config.PUSH_STORAGE_DIR = os.path.join(os.path.dirname(config.DB_PATH), "push")

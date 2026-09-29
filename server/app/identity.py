@@ -30,6 +30,11 @@ def list_admins(conn):
         " FROM admins ORDER BY created_at").fetchall()
 
 
+def get_admin_by_email(conn, email):
+    return conn.execute("SELECT * FROM admins WHERE lower(email) = lower(?)",
+                        (email,)).fetchone()
+
+
 def get_admin(conn, admin_id):
     return conn.execute("SELECT * FROM admins WHERE admin_id = ?",
                         (admin_id,)).fetchone()
@@ -71,7 +76,8 @@ class LocalIdentityProvider(IdentityProvider):
     def authenticate(self, conn, username, password):
         if not username or not password:
             return None
-        row = get_admin_by_username(conn, username)
+        # The login field accepts either the username or the admin's email.
+        row = get_admin_by_username(conn, username) or get_admin_by_email(conn, username)
         if row is None or row["disabled_at"] is not None:
             return None
         if not row["password_hash"] or not verify_secret(password, row["password_hash"]):

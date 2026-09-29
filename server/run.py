@@ -17,6 +17,9 @@ def main():
     else:
         fcm_client = None
     threading.Thread(target=run_forever, args=(config, db, fcm_client), daemon=True).start()
+    from server.app import federation_worker
+    threading.Thread(target=federation_worker.run_forever, args=(config, db),
+                     daemon=True).start()
     host, port = config.LISTEN_ADDR.rsplit(":", 1)
     host = host or "0.0.0.0"
     from waitress import serve
