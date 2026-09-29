@@ -91,6 +91,52 @@ def list_accounts(conn):
     return conn.execute("SELECT * FROM accounts ORDER BY created_at").fetchall()
 
 
+def touch_login(conn, account_id, now=None) -> None:
+    """Record the account's most recent successful sign-in."""
+    conn.execute("UPDATE accounts SET last_login_at = ? WHERE account_id = ?",
+                 (int(now if now is not None else time.time()), account_id))
+    conn.commit()
+
+
+def stats(conn, account_id, now=None) -> dict:
+    """Dashboard figures for the account portal."""
+    now = int(now if now is not None else time.time())
+    week, month = now - 7 * 86400, now - 30 * 86400
+
+    def pushes_since(since):
+        return conn.execute(
+            "SELECT COUNT(*) FROM pushes WHERE account_id = ? AND date >= ?",
+            (account_id, since)).fetchone()[0]
+
+    def files_since(since):
+        row = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(f.size), 0) FROM push_files f"
+            " JOIN pushes p ON p.push_id = f.push_id"
+            " WHERE p.account_id = ? AND f.created_at >= ?",
+            (account_id, since)).fetchone()
+        return row[0], row[1]
+
+    pending = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(f.size), 0) FROM push_files f"
+        " JOIN pushes p ON p.push_id = f.push_id"
+        " WHERE p.account_id = ? AND f.status = 'pending'",
+        (account_id,)).fetchone()
+    week_files, week_bytes = files_since(week)
+    month_files, month_bytes = files_since(month)
+    account = get_account(conn, account_id)
+    return {
+        "last_login_at": account["last_login_at"] if account else None,
+        "messages_week": pushes_since(week),
+        "messages_month": pushes_since(month),
+        "files_week": week_files,
+        "bytes_week": week_bytes,
+        "files_month": month_files,
+        "bytes_month": month_bytes,
+        "pending_files": pending[0],
+        "pending_bytes": pending[1],
+    }
+
+
 def increment_messages(conn, account_id, n: int = 1) -> None:
     conn.execute("UPDATE accounts SET messages_sent = messages_sent + ?"
                  " WHERE account_id = ?", (n, account_id))

@@ -1,43 +1,42 @@
 {% extends "base.html" %}
-{% block title %}My account &middot; Cloud Push Server{% endblock %}
+{% block title %}Dashboard &middot; My account{% endblock %}
 {% block content %}
-<h1>My account</h1>
-<p class="lede">{{ account.name or account.email }}{% if account.name %} &middot; {{ account.email }}{% endif %}
-  {% if account.phone %}&middot; {{ account.phone }}{% endif %} &middot; hosted on <code>{{ account.host }}</code></p>
-<p class="lede">Pending storage: {{ usage.files }} file(s), {{ usage.bytes }} bytes
-  (quota {{ quota.max_files }} files / {{ quota.max_bytes }} bytes, purge after {{ quota.max_age_hours }}h).</p>
-<p class="lede"><a href="/account/profile">Account info</a> &middot; <a href="/account/pushes">Pushes</a>
-  &middot; <a href="/account/pending">Pending</a> &middot; <a href="/account/clients">Clients</a></p>
+<h1>{{ account.name or account.email }}</h1>
+<p class="lede">{{ account.email }}{% if account.phone %} &middot; {{ account.phone }}{% endif %}
+  &middot; hosted on <code>{{ account.host }}</code></p>
 
-<h2>Devices</h2>
-<p class="lede"><a href="/account/pair">Pair a new device</a> &middot; <a href="/account/devices">Manage devices</a></p>
-{% if devices %}
-<div class="table-wrap">
-<table>
-  <thead><tr><th>Device</th><th>Registered</th><th>Status</th><th></th></tr></thead>
-  <tbody>
-    {% for d in devices %}
-    <tr>
-      <td>{{ d.device_name }}</td>
-      <td>{{ d.registered_at | dt }}</td>
-      <td>{% if d.approved_at %}<span class="chip acked">approved</span>{% else %}<span class="chip pending">pending approval</span>{% endif %}</td>
-      <td>
-        {% if not d.approved_at %}
-        <form method="POST" action="/account/devices/{{ d.device_secret }}/approve" class="inline">
-          <button type="submit" class="btn-primary">Approve</button>
-        </form>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="stats">
+  <div class="stat">
+    <span class="stat-label">Last login</span>
+    <span class="stat-value">{% if stats.last_login_at %}{{ stats.last_login_at | dt }}{% else %}<span class="empty">&mdash;</span>{% endif %}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Messages this week</span>
+    <span class="stat-value">{{ stats.messages_week }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Messages this month</span>
+    <span class="stat-value">{{ stats.messages_month }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Files sent this week</span>
+    <span class="stat-value">{{ stats.files_week }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Files sent this month</span>
+    <span class="stat-value">{{ stats.files_month }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Pending files</span>
+    <span class="stat-value">{{ stats.pending_files }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Pending size</span>
+    <span class="stat-value">{{ stats.pending_bytes | filesize }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Storage quota</span>
+    <span class="stat-value">{{ quota.max_files }} files / {{ quota.max_bytes | filesize }}</span>
+  </div>
 </div>
-{% else %}
-<p class="empty">No devices yet. Pair the MDRender app from the link above.</p>
-{% endif %}
-
-<form method="POST" action="/account/logout" class="inline">
-  <button type="submit">Log out</button>
-</form>
 {% endblock %}

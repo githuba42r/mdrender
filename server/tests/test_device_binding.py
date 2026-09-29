@@ -48,7 +48,7 @@ def test_account_bound_pairing_requires_approval(config, db_path):
         assert dev["approved_at"] is None
 
     # The portal shows it pending and can approve it.
-    assert b"pending approval" in c.get("/account").data
+    assert b"pending approval" in c.get("/account/devices").data
     c.post("/account/devices/sec-1/approve")
     with app.config["_db"].connect() as conn:
         assert conn.execute("SELECT approved_at FROM devices WHERE device_secret = 'sec-1'"

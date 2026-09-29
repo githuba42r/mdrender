@@ -120,6 +120,19 @@ def create_app(config):
         except (TypeError, ValueError, OverflowError, OSError):
             return "-"
 
+    @app.template_filter("filesize")
+    def _fmt_filesize(size):
+        """Render a byte count as a short human-readable size."""
+        try:
+            value = float(size or 0)
+        except (TypeError, ValueError):
+            return "-"
+        for unit in ("B", "KB", "MB", "GB"):
+            if value < 1024 or unit == "GB":
+                return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+            value /= 1024
+        return f"{value:.1f} GB"
+
     @app.before_request
     def _open_db():
         g.db = app.config["_db"].connect()
@@ -545,6 +558,7 @@ def create_app(config):
         if account_id is None:
             return render_template("account_login.html",
                                    error="Invalid email or password."), 401
+        accounts.touch_login(g.db, account_id)
         token = create_session(g.db, config.session_secret, config,
                                principal_type="account", principal_id=account_id)
         resp = make_response(redirect(_return_to("/account")))
@@ -566,10 +580,11 @@ def create_app(config):
             return auth_error
         principal = _principal()
         account = accounts.get_account(g.db, principal["id"])
-        devices = list_account_devices(g.db, principal["id"])
-        return render_template("account.html", account=account, devices=devices,
-                               usage=storage.usage(g.db, principal["id"]),
-                               quota=storage.effective_quota(g.db, principal["id"], config))
+        return render_template(
+            "account.html", account=account,
+            stats=accounts.stats(g.db, principal["id"]),
+            usage=storage.usage(g.db, principal["id"]),
+            quota=storage.effective_quota(g.db, principal["id"], config))
 
     @app.route("/account/pair", methods=["GET"])
     def account_pair():
@@ -1342,6 +1357,7 @@ def create_app(config):
             accounts.set_firebase_uid(g.db, account["account_id"], uid)
         if account["status"] != accounts.ACTIVE:
             return jsonify({"error": f"account {account['status']}"}), 403
+        accounts.touch_login(g.db, account["account_id"])
         token = create_session(g.db, config.session_secret, config,
                                principal_type="account",
                                principal_id=account["account_id"])

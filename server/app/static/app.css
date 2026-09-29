@@ -180,6 +180,26 @@ h2 {
 
 p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
 
+/* ---- Stat cards ---- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.9rem;
+  margin: 1.4rem 0;
+}
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.stat-label { color: var(--muted); font-size: 0.82rem; }
+.stat-value { font-size: 1.35rem; font-weight: 600; letter-spacing: 0.01em; }
+
 /* ---- Tables ---- */
 
 .table-wrap {

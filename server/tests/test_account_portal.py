@@ -36,7 +36,7 @@ def test_account_login_and_portal_lists_devices(config, db_path):
             " VALUES ('dev-1','auth','Clever Juniper','tok','PUB','PUSH',1,1,?,1)",
             (account_id,))
         conn.commit()
-    body = c.get("/account").data
+    body = c.get("/account/devices").data
     assert b"Clever Juniper" in body
 
 

@@ -122,7 +122,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   host TEXT NOT NULL DEFAULT 'master',
   status TEXT NOT NULL DEFAULT 'active',
   balance INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  last_login_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS account_devices (
   server_id TEXT NOT NULL,
@@ -300,6 +301,7 @@ class Database:
                 "name": "TEXT",
                 "phone": "TEXT",
                 "firebase_uid": "TEXT",
+                "last_login_at": "INTEGER",
             },
             "clients": {
                 "account_id": "TEXT",

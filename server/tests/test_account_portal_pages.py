@@ -115,6 +115,22 @@ def test_pushes_and_pending_are_account_scoped(config, db_path):
         assert push_store.get_push_by_id(conn, "push-1") is None
 
 
+def test_dashboard_shows_stats(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_push(app, account_id)
+    page = c.get("/account")
+    assert page.status_code == 200
+    # Last login recorded at sign-in, and the seeded push counts as a message/file.
+    assert b"Last login" in page.data
+    assert b"Messages this week" in page.data and b"Pending files" in page.data
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id)["last_login_at"] is not None
+    # The dashboard is stats only — no in-page storage/device tables.
+    assert b"Files sent this month" in page.data
+    assert b"Storage quota" in page.data
+
+
 def test_account_menu_is_rendered(config, db_path):
     app = _app(config)
     c, _ = _account(app)
