@@ -8,8 +8,9 @@
   </div>
   {% if firebase %}
   <p class="lede">Enter your email or phone number and we'll send you a sign-in link.</p>
+  {% set auth_action = 'signin' %}{% set auth_next = next %}
   {% include "_firebase_auth.html" %}
-  {% if signup_open %}<p class="login-foot">No account? <a href="/signup">Create one</a>.</p>{% endif %}
+  {% if signup_open %}<p class="login-foot">No account? <a href="/signup{% if next %}?next={{ next | urlencode }}{% endif %}">Create one</a>.</p>{% endif %}
   {% else %}
   <p class="lede">Sign in to continue.</p>
   <form method="POST" action="/login">

@@ -493,10 +493,11 @@ def create_app(config):
     @app.route("/signup", methods=["GET", "POST"])
     def signup():
         """Public account (tenant) signup by email (design §9)."""
+        nxt = request.args.get("next", "")
         if not settings.signup_enabled(g.db):
-            return render_template("signup.html", closed=True), 403
+            return render_template("signup.html", closed=True, next=nxt), 403
         if request.method == "GET":
-            return render_template("signup.html")
+            return render_template("signup.html", next=nxt)
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password", "")
         valid_email = "@" in email and "." in email.rsplit("@", 1)[-1]
@@ -513,7 +514,8 @@ def create_app(config):
     @app.route("/account/login", methods=["GET", "POST"])
     def account_login():
         if request.method == "GET":
-            return render_template("account_login.html")
+            return render_template("account_login.html",
+                                   next=request.args.get("next", ""))
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password", "")
         account_id = accounts.verify_account_password(g.db, email, password)
@@ -522,7 +524,7 @@ def create_app(config):
                                    error="Invalid email or password."), 401
         token = create_session(g.db, config.session_secret, config,
                                principal_type="account", principal_id=account_id)
-        resp = make_response(redirect("/account"))
+        resp = make_response(redirect(_return_to("/account")))
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
                         secure=config.PUSH_PUBLIC_URL.startswith("https"))
         return resp

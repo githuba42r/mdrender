@@ -43,7 +43,11 @@ async function exchange(user) {
     });
     if (resp.ok) {
       const body = await resp.json().catch(() => ({}));
-      window.location = body.redirect || "/account";
+      const next = (window.__FIREBASE_NEXT__ || "").trim();
+      const dest = next.startsWith("/") && !next.startsWith("//")
+        ? next
+        : (body.redirect || "/account");
+      window.location = dest;
       return;
     }
     const body = await resp.json().catch(() => ({}));
@@ -72,7 +76,8 @@ async function sendMagicLink(email) {
       handleCodeInApp: true,
     });
     localStorage.setItem(EMAIL_KEY, email);
-    show("auth-message", "Sign-in link sent — open it on this device to finish.");
+    const what = window.__FIREBASE_ACTION__ === "signup" ? "Create-account link" : "Sign-in link";
+    show("auth-message", `${what} sent — open it on this device to finish.`);
   } catch (e) {
     show("auth-error", e.message || String(e));
   }

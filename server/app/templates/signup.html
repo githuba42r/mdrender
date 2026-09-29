@@ -11,13 +11,15 @@
   {% elif closed %}
   <p class="lede">Signup is currently closed. Please contact the operator.</p>
   {% elif firebase %}
-  <p class="lede">Sign up with a social account, phone code, or magic email link.</p>
+  <p class="lede">Sign up with an email or phone link, or a social account.</p>
+  {% set auth_action = 'signup' %}{% set auth_next = next %}
   {% include "_firebase_auth.html" %}
-  <p class="lede">Already registered? <a href="/account/login">Sign in</a>.</p>
+  <p class="login-foot">Already registered? <a href="/account/login{% if next %}?next={{ next | urlencode }}{% endif %}">Sign in</a>.</p>
   {% else %}
   <p class="lede">Sign up with your email to send files to your devices.</p>
   {% if error %}<p class="lede" style="color: var(--danger)">{{ error }}</p>{% endif %}
   <form method="POST" action="/signup">
+    <input type="hidden" name="next" value="{{ next }}">
     <label for="email">Email</label>
     <div class="field"><input type="text" id="email" name="email" autocomplete="email" autofocus required></div>
     <label for="password">Password</label>

@@ -8,19 +8,21 @@
   </div>
   {% if firebase %}
   <p class="lede">Sign in with a social account, phone code, or magic email link.</p>
+  {% set auth_action = 'signin' %}{% set auth_next = next %}
   {% include "_firebase_auth.html" %}
-  {% if signup_open %}<p class="lede">No account? <a href="/signup">Create one</a>.</p>{% endif %}
+  {% if signup_open %}<p class="login-foot">No account? <a href="/signup{% if next %}?next={{ next | urlencode }}{% endif %}">Create one</a>.</p>{% endif %}
   {% else %}
   <p class="lede">Sign in with your email to manage your devices and pending files.</p>
   {% if error %}<p class="lede" style="color: var(--danger)">{{ error }}</p>{% endif %}
   <form method="POST" action="/account/login">
+    <input type="hidden" name="next" value="{{ next }}">
     <label for="email">Email</label>
     <div class="field"><input type="text" id="email" name="email" autocomplete="email" autofocus required></div>
     <label for="password">Password</label>
     <div class="field"><input type="password" id="password" name="password" autocomplete="current-password" required></div>
     <button type="submit" class="btn-primary">Log in</button>
   </form>
-  <p class="lede">No account? <a href="/signup">Create one</a>.</p>
+  <p class="lede">No account? <a href="/signup{% if next %}?next={{ next | urlencode }}{% endif %}">Create one</a>.</p>
   {% endif %}
 </div>
 {% endblock %}

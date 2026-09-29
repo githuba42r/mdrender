@@ -1,5 +1,8 @@
-{# Generic Firebase sign-in: email/phone -> link or code, optional password,
-   plus social buttons. Include inside a card only when `firebase` is set. #}
+{# Generic Firebase sign-in / sign-up. Set `auth_action` ("signin"|"signup")
+   and `auth_next` before including. Sign-up offers the link + social only;
+   sign-in additionally offers the password option. #}
+{% set auth_action = auth_action | default('signin') %}
+{% set auth_next = auth_next | default('') %}
 <div class="auth-block">
   <div id="auth-identifier-panel">
     <label for="identifier">Email or phone number</label>
@@ -7,10 +10,15 @@
       <input type="text" id="identifier" autocomplete="username"
              placeholder="you@example.com or +61 400 000 000">
     </div>
-    <button type="button" class="btn-primary" onclick="mdrenderSend()">Send sign-in link</button>
+    <button type="button" class="btn-primary" onclick="mdrenderSend()">
+      {% if auth_action == 'signup' %}Send create account link{% else %}Send sign-in link{% endif %}
+    </button>
+    {% if auth_action != 'signup' %}
     <p class="login-alt"><a href="#" onclick="mdrenderTogglePassword();return false;">Sign in with a password instead</a></p>
+    {% endif %}
   </div>
 
+  {% if auth_action != 'signup' %}
   <div id="auth-password-panel" hidden>
     <label for="pw-email">Email</label>
     <div class="field"><input type="text" id="pw-email" autocomplete="username"></div>
@@ -19,6 +27,7 @@
     <button type="button" class="btn-primary" onclick="mdrenderPassword()">Sign in</button>
     <p class="login-alt"><a href="#" onclick="mdrenderTogglePassword();return false;">Use a sign-in link instead</a></p>
   </div>
+  {% endif %}
 
   <div class="divider"><span>or continue with</span></div>
   <div class="social-row">
@@ -42,6 +51,8 @@
   <p id="auth-message" class="login-msg"></p>
   <p id="auth-error" class="login-msg login-msg-error"></p>
   <div id="recaptcha-container"></div>
-  <script>window.__FIREBASE__ = {{ firebase | tojson }};</script>
+  <script>window.__FIREBASE__ = {{ firebase | tojson }};
+    window.__FIREBASE_ACTION__ = {{ auth_action | tojson }};
+    window.__FIREBASE_NEXT__ = {{ auth_next | tojson }};</script>
   <script type="module" src="{{ url_for('static', filename='firebase-auth.js') }}"></script>
 </div>

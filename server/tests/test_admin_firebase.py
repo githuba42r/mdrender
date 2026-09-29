@@ -122,6 +122,19 @@ def test_customer_cannot_take_an_admin_identity(config, db_path, monkeypatch):
     assert other.status_code == 403
 
 
+def test_signup_offers_link_only_but_login_has_password(config, db_path):
+    app = _app(config, FIREBASE_API_KEY="k", FIREBASE_AUTH_DOMAIN="proj.firebaseapp.com")
+    signup = app.test_client().get("/signup")
+    assert signup.status_code == 200
+    assert b"Send create account link" in signup.data
+    assert b"auth-password-panel" not in signup.data
+    assert b"Sign in with a password instead" not in signup.data
+
+    login = app.test_client().get("/login")
+    assert b"Send sign-in link" in login.data
+    assert b"auth-password-panel" in login.data
+
+
 def test_unlink_removes_the_binding(config, db_path, monkeypatch):
     app = _app(config, ADMIN_FIREBASE_LOGIN=True)
     c = app.test_client()
