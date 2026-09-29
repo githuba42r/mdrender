@@ -919,7 +919,9 @@ def create_app(config):
         if auth_error:
             return auth_error
         return render_template("pushes.html",
-                               pushes=[dict(r) for r in push_store.list_pushes(g.db)])
+                               pushes=push_store.list_pushes(g.db),
+                               stats=push_store.push_stats(g.db),
+                               by_account=push_store.pushes_by_account(g.db))
 
     @app.route("/pending", methods=["GET"])
     def pending():
@@ -1249,7 +1251,8 @@ def create_app(config):
         target_folder = (request.form.get("target_folder") or "").strip()
         conflict = push_store.normalise_conflict(request.form.get("conflict"))
         push_store.create_push(g.db, push_id, target_device, challenge_key,
-                               target_folder, conflict)
+                               target_folder, conflict,
+                               account_id=device["account_id"] if "account_id" in device.keys() else None)
         sent = 0
         for f in uploads:
             file_id = uuid.uuid4().hex

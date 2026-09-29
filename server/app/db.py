@@ -266,6 +266,7 @@ class Database:
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",
                 "target_folder": "TEXT NOT NULL DEFAULT ''",
                 "conflict": "TEXT NOT NULL DEFAULT 'rename'",
+                "account_id": "TEXT",
             },
             "federated_servers": {
                 "probe_failures": "INTEGER NOT NULL DEFAULT 0",

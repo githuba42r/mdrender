@@ -2,7 +2,43 @@
 {% block title %}Pushes &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Pushes</h1>
-<p class="lede">Every push this server has accepted, and whether the device has pulled its files.</p>
+<p class="lede">Pushes belong to user accounts. Below are totals and a per-account breakdown, then the full list.</p>
+
+<h2>Totals</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Period</th><th>Pushes</th><th>Pending</th></tr></thead>
+  <tbody>
+    <tr><td>Last hour</td><td>{{ stats.hour.total }}</td><td>{{ stats.hour.pending }}</td></tr>
+    <tr><td>Last day</td><td>{{ stats.day.total }}</td><td>{{ stats.day.pending }}</td></tr>
+    <tr><td>Last 30 days</td><td>{{ stats.month.total }}</td><td>{{ stats.month.pending }}</td></tr>
+    <tr><td>All time</td><td>{{ stats.total.total }}</td><td>{{ stats.total.pending }}</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>By account</h2>
+{% if by_account %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Account</th><th>Pushes</th><th>Pending</th><th>Last push</th></tr></thead>
+  <tbody>
+    {% for a in by_account %}
+    <tr>
+      <td>{% if a.email %}{{ a.email }}{% else %}<span class="empty">(unattributed)</span>{% endif %}</td>
+      <td>{{ a.total }}</td>
+      <td>{{ a.pending }}</td>
+      <td>{% if a.last_push %}{{ a.last_push | dt }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No pushes yet.</p>
+{% endif %}
+
+<h2>Recent pushes</h2>
 {% if pushes %}
 <div class="table-wrap">
 <table>

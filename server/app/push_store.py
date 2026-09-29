@@ -13,12 +13,13 @@ def normalise_conflict(value: str | None) -> str:
 
 
 def create_push(conn, push_id: str, target_device: str, challenge_key: str = "",
-                target_folder: str = "", conflict: str = "rename") -> None:
+                target_folder: str = "", conflict: str = "rename",
+                account_id: str | None = None) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO pushes (push_id, target_device, challenge_key, date, status,"
-        " target_folder, conflict) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        " target_folder, conflict, account_id) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
         (push_id, target_device, challenge_key, int(time.time()),
-         target_folder, normalise_conflict(conflict)),
+         target_folder, normalise_conflict(conflict), account_id),
     )
     conn.commit()
 
@@ -83,6 +84,43 @@ def purge_expired_bytes(conn, ttl_hours, now) -> list[str]:
                      (r["file_id"],))
     conn.commit()
     return [r["file_id"] for r in rows]
+
+
+def push_stats(conn, now=None) -> dict:
+    """Push totals for the last hour / day / 30 days / all time.
+
+    Each period carries the total number of pushes and the number of **pending**
+    pushes (those with at least one unacked file), so an admin can see traffic
+    and backlog at a glance. Pushes belong to accounts; these are aggregates.
+    """
+    now = int(now or time.time())
+    periods = {"hour": now - 3600, "day": now - 86400,
+               "month": now - 30 * 86400, "total": 0}
+    out = {}
+    for name, since in periods.items():
+        total = conn.execute("SELECT COUNT(*) FROM pushes WHERE date >= ?",
+                             (since,)).fetchone()[0]
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM pushes p WHERE p.date >= ? AND EXISTS"
+            " (SELECT 1 FROM push_files f WHERE f.push_id = p.push_id"
+            "  AND f.status = 'pending')", (since,)).fetchone()[0]
+        out[name] = {"total": total, "pending": pending}
+    return out
+
+
+def pushes_by_account(conn):
+    """Per-account push and pending-push counts, newest activity first."""
+    rows = conn.execute(
+        "SELECT p.account_id AS account_id, COALESCE(a.email, '') AS email,"
+        " COUNT(DISTINCT p.push_id) AS total,"
+        " COUNT(DISTINCT CASE WHEN f.status = 'pending' THEN p.push_id END) AS pending,"
+        " MAX(p.date) AS last_push"
+        " FROM pushes p"
+        " LEFT JOIN accounts a ON a.account_id = p.account_id"
+        " LEFT JOIN push_files f ON f.push_id = p.push_id"
+        " GROUP BY p.account_id ORDER BY total DESC, last_push DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def list_pushes(conn):
