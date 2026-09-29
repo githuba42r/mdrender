@@ -318,14 +318,12 @@ Build the foundation now; wire real providers later.
 - **Plans** are first-class and there can be **many**: admins create any number
   of plans per account scope (`slave` = flat access, `client` = metered), each
   with a price, currency, interval, included allowances, and overage rates.
-- **Groups**: accounts can be grouped and a plan applied to a group. Every
-  account also carries an optional individual plan assignment.
-  **Effective-plan precedence: account plan → group plan → default-group plan.**
-- A **default group** exists that **every account is automatically a member of**
-  (it cannot be deleted); its plan is the baseline used when there is no more
-  specific assignment. Membership is additive — an account can be in several
-  groups; where groups disagree, the **highest-priority group's plan** wins
-  (the default group is lowest priority).
+- **Groups**: an account belongs to **exactly one** group. A plan can be
+  applied to a group, and every account may also carry an individual plan.
+  **Effective plan: account plan (override) → the account's group plan.**
+- A **default group** exists for accounts with no explicit group (it cannot be
+  deleted); its plan is the baseline. Because an account is in only one group,
+  there is **no group precedence** to resolve.
 - **Entitlement layer**: every billable action checks an entitlement
   (`active`, `grace`, `suspended`) derived from a prepaid balance/period, so the
   payment provider is swappable.
@@ -364,8 +362,8 @@ Build the foundation now; wire real providers later.
 | `email_domain_rules` | allow/deny list for signup domains |
 | `billing_ledger` | charges/credits, reason, period, provider ref |
 | `billing_plans` | id, name, `scope` (slave\|client), price, currency, interval, included storage/messages, overage rates, active |
-| `billing_groups` | id, name, `plan_id` (nullable), `priority`, `is_default` |
-| `billing_group_members` | `group_id`, `account_type` (admin/slave/client), `account_id` |
+| `billing_groups` | id, name, `plan_id` (nullable), `is_default` |
+| `account_groups` | one row per account: `account_type` (admin/slave/client), `account_id` (unique), `group_id` (defaults to the default group) |
 | `account_plans` | per-account plan override: `account_type`, `account_id`, `plan_id` |
 
 Existing `devices`, `pushes`, `push_files`, `sessions`, `oauth clients`
@@ -403,8 +401,8 @@ ciphertext. `Cpriv` and the CEK never reach the server.
 **Master admin:** list/revoke/deactivate/delete/ban slaves;
 list/block/ban clients and email domains; **network bans (ip, cidr, asn,
 hostname, domain)**; quotas; billing/ledger; **plan CRUD (many plans);
-group CRUD + membership; assign a plan to an account or a group** (the default
-group auto-includes every account).
+group CRUD; assign an account to exactly one group (default group when unset);
+assign a plan to an account or a group.**
 
 **Ban management (shared vocabulary):** `GET/POST/DELETE /api/admin/bans` with a
 `kind` of `ip | cidr | asn | hostname | domain`, a `scope`
@@ -457,9 +455,9 @@ group auto-includes every account).
   device re-registration, per-client encryption toggle.
 - **G — Master admin.** slave list/revoke/deactivate/delete/ban (ip/host/domain);
   client list/block/ban; email-domain rules.
-- **H — Billing foundation.** multiple plans, groups + membership with
-  account → group → default-group precedence, the default group, entitlements,
-  ledger, provider interface (manual first), top-up page stub.
+- **H — Billing foundation.** multiple plans, groups (one per account, default
+  group fallback, account plan override), entitlements, ledger, provider
+  interface (manual first), top-up page stub.
 
 Each phase lands independently with tests; the app is untouched.
 
@@ -496,10 +494,10 @@ Each phase lands independently with tests; the app is untouched.
 - **D8 (resolved — no)** A slave will **not** also run its own FCM: it would
   require a custom APK and the Android namespace would collide with the Play
   Store app. A slave is always relay-only.
-- **D12** Plan resolution details: group priority ordering when an account is in
-  several groups, proration/effective-date on plan changes, whether the default
-  group's plan is free, and whether clients and slaves share one plan space or
-  separate ones.
+- **D12 (open)** Plan resolution details: proration/effective-date on plan
+  changes, whether the default group's plan is free, and whether clients and
+  slaves share one plan space or separate ones. (Group precedence is moot — an
+  account is in exactly one group.)
 - **D10 (folded into D3)** Provider selection is a short spike across Auth0 /
   Cognito / Firebase Auth (and other low-cost options) covering social set,
   magic-link/passkey support, and price.
