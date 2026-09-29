@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}My account &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>My account</h1>
+<p class="lede">{{ account.email }} &middot; hosted on <code>{{ account.host }}</code></p>
+
+<h2>Devices</h2>
+{% if devices %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Device</th><th>Updated</th></tr></thead>
+  <tbody>
+    {% for d in devices %}
+    <tr>
+      <td>{{ d.name or d.device_id }}</td>
+      <td>{{ d.updated_at | dt }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No devices registered yet. Pair the MDRender app from your push client.</p>
+{% endif %}
+
+<form method="POST" action="/account/logout" class="inline">
+  <button type="submit">Log out</button>
+</form>
+{% endblock %}

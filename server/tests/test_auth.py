@@ -38,7 +38,8 @@ def test_signed_token_without_a_session_row_is_rejected(config, db_path):
     conn.executescript(
         "CREATE TABLE IF NOT EXISTS sessions ("
         " token_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL,"
-        " expires_at INTEGER NOT NULL);"
+        " expires_at INTEGER NOT NULL,"
+        " principal_type TEXT NOT NULL DEFAULT 'admin', principal_id TEXT);"
     )
 
     # Signed but never recorded -> rejected.
@@ -66,7 +67,8 @@ def test_expired_session_row_is_rejected_and_pruned(config, db_path):
     conn.executescript(
         "CREATE TABLE IF NOT EXISTS sessions ("
         " token_hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL,"
-        " expires_at INTEGER NOT NULL);"
+        " expires_at INTEGER NOT NULL,"
+        " principal_type TEXT NOT NULL DEFAULT 'admin', principal_id TEXT);"
     )
     token = create_session(conn, config.session_secret, config)
     digest = session_token_hash(config.session_secret, token)

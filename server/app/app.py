@@ -22,8 +22,9 @@ from server.app import (accounts, crypto, federation, fcm as fcm_mod, pairing,
                         push_store, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
-                             hash_secret, issue_access_token, purge_expired_sessions,
-                             make_session, revoke_access_tokens, session_is_valid,
+                             hash_secret, issue_access_token, principal_of,
+                             purge_expired_sessions, make_session,
+                             revoke_access_tokens, session_is_valid,
                              validate_access_token, verify_secret, verify_session)
 from server.app.db import Database
 from server.app.deployment import (detect_role, get_or_create_identity,
@@ -121,14 +122,22 @@ def create_app(config):
         if conn is not None:
             conn.close()
 
+    def _principal():
+        return principal_of(g.db, config.session_secret,
+                            request.cookies.get(SESSION_COOKIE), config)
+
+    def _is_admin():
+        principal = _principal()
+        return principal is not None and principal["type"] == "admin"
+
     def require_session():
-        """Gate a page or endpoint on a live server-side session.
+        """Gate an admin endpoint on a live **admin** session.
 
         The signature check alone would keep accepting a logged-out token, so
-        the cookie is also required to have an unexpired row in `sessions`.
+        the cookie is also required to have an unexpired row in `sessions`; and
+        the principal must be an admin (account sessions are rejected).
         """
-        if session_is_valid(g.db, config.session_secret,
-                            request.cookies.get(SESSION_COOKIE), config):
+        if _is_admin():
             return None
         return jsonify({"error": "unauthorized"}), 401
 
@@ -140,11 +149,17 @@ def create_app(config):
         was headed and send them to the login form instead. Endpoints keep using
         require_session()'s JSON 401.
         """
-        if session_is_valid(g.db, config.session_secret,
-                            request.cookies.get(SESSION_COOKIE), config):
+        if _is_admin():
             return None
         nxt = urllib.parse.quote(request.path, safe="/")
         return redirect(f"/login?next={nxt}", 303)
+
+    def require_account_session():
+        """Gate an account (tenant) page on a live account session."""
+        principal = _principal()
+        if principal is not None and principal["type"] == "account":
+            return None
+        return redirect("/account/login", 303)
 
     def _return_to(default):
         """Where a POST sends the browser next, read from a hidden `next` field.
@@ -165,8 +180,7 @@ def create_app(config):
         lived on. The POST itself is not replayed. API/bearer endpoints keep
         require_session()'s JSON 401.
         """
-        if session_is_valid(g.db, config.session_secret,
-                            request.cookies.get(SESSION_COOKIE), config):
+        if _is_admin():
             return None
         nxt = urllib.parse.quote(_return_to(default), safe="/")
         return redirect(f"/login?next={nxt}", 303)
@@ -275,8 +289,7 @@ def create_app(config):
         Without this the nav renders on the login page too, which both leaks
         the page list to an anonymous visitor and offers links that 401.
         """
-        return {"logged_in": session_is_valid(
-            g.db, config.session_secret, request.cookies.get(SESSION_COOKIE), config)}
+        return {"logged_in": _is_admin()}
 
     @app.route("/")
     def index():
@@ -338,6 +351,40 @@ def create_app(config):
                                    error="That email is already registered."), 400
         accounts.create_account(g.db, email, password)
         return render_template("signup.html", done=True)
+
+    @app.route("/account/login", methods=["GET", "POST"])
+    def account_login():
+        if request.method == "GET":
+            return render_template("account_login.html")
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password", "")
+        account_id = accounts.verify_account_password(g.db, email, password)
+        if account_id is None:
+            return render_template("account_login.html",
+                                   error="Invalid email or password."), 401
+        token = create_session(g.db, config.session_secret, config,
+                               principal_type="account", principal_id=account_id)
+        resp = make_response(redirect("/account"))
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
+        return resp
+
+    @app.route("/account/logout", methods=["POST"])
+    def account_logout():
+        delete_session(g.db, config.session_secret, request.cookies.get(SESSION_COOKIE))
+        resp = make_response(redirect("/account/login"))
+        resp.delete_cookie(SESSION_COOKIE)
+        return resp
+
+    @app.route("/account", methods=["GET"])
+    def account_home():
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        principal = _principal()
+        account = accounts.get_account(g.db, principal["id"])
+        devices = accounts.list_devices(g.db, principal["id"], account["host"])
+        return render_template("account.html", account=account, devices=devices)
 
     @app.route("/login", methods=["POST"])
     def login():

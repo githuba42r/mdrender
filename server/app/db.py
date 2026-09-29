@@ -251,6 +251,10 @@ class Database:
             "federated_servers": {
                 "probe_failures": "INTEGER NOT NULL DEFAULT 0",
             },
+            "sessions": {
+                "principal_type": "TEXT NOT NULL DEFAULT 'admin'",
+                "principal_id": "TEXT",
+            },
         }
         for table, columns in wanted.items():
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Account login &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<div class="login-card">
+  <div class="login-head">
+    <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
+    <h1>Account login</h1>
+  </div>
+  <p class="lede">Sign in with your email to manage your devices and pending files.</p>
+  {% if error %}<p class="lede" style="color: var(--danger)">{{ error }}</p>{% endif %}
+  <form method="POST" action="/account/login">
+    <label for="email">Email</label>
+    <div class="field"><input type="text" id="email" name="email" autocomplete="email" autofocus required></div>
+    <label for="password">Password</label>
+    <div class="field"><input type="password" id="password" name="password" autocomplete="current-password" required></div>
+    <button type="submit" class="btn-primary">Log in</button>
+  </form>
+  <p class="lede">No account? <a href="/signup">Create one</a>.</p>
+</div>
+{% endblock %}

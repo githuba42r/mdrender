@@ -96,16 +96,35 @@ def session_token_hash(session_secret: str, token: str) -> str:
     return hmac.new(session_secret.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
-def create_session(conn, session_secret: str, config) -> str:
-    """Mint a signed session token and record it so it can be validated later."""
+def create_session(conn, session_secret: str, config, *, principal_type: str = "admin",
+                   principal_id: str | None = None) -> str:
+    """Mint a signed session token and record it (with its principal).
+
+    The principal identifies who is signed in: an admin (default) or an account
+    (tenant). Admin gates require ``principal_type == 'admin'``.
+    """
     token = make_session(session_secret, config)
     now = int(time.time())
     conn.execute(
-        "INSERT INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)",
-        (session_token_hash(session_secret, token), now, now + SESSION_TTL_SECONDS),
+        "INSERT INTO sessions (token_hash, created_at, expires_at, principal_type,"
+        " principal_id) VALUES (?, ?, ?, ?, ?)",
+        (session_token_hash(session_secret, token), now, now + SESSION_TTL_SECONDS,
+         principal_type, principal_id),
     )
     conn.commit()
     return token
+
+
+def principal_of(conn, session_secret: str, token: str | None, config):
+    """Return ``{"type", "id"}`` for a live session, or None."""
+    if not token or not verify_session(session_secret, token, config):
+        return None
+    row = conn.execute(
+        "SELECT principal_type, principal_id, expires_at FROM sessions"
+        " WHERE token_hash = ?", (session_token_hash(session_secret, token),)).fetchone()
+    if row is None or time.time() > row["expires_at"]:
+        return None
+    return {"type": row["principal_type"], "id": row["principal_id"]}
 
 
 def session_is_valid(conn, session_secret: str, token: str | None, config) -> bool:
