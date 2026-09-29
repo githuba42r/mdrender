@@ -1,8 +1,11 @@
-/* Firebase Auth for the account portal: social login + email magic link.
+/* Firebase Auth for the generic sign-in page.
  *
  * The page must set window.__FIREBASE__ (apiKey, authDomain, projectId, appId)
  * before loading this module. On success we exchange the Firebase ID token for
- * an MDRender account session at POST /auth/oidc. */
+ * an MDRender session at POST /auth/oidc.
+ *
+ * Primary flow: one identifier field — email sends a magic link, a phone number
+ * sends an SMS code. A password option and social buttons are secondary. */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth,
@@ -14,7 +17,7 @@ import {
   signInWithEmailLink,
   signInWithPhoneNumber,
   signInWithPopup,
-  signInWithRedirect,
+  signInWithEmailAndPassword,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 const app = initializeApp(window.__FIREBASE__);
@@ -26,6 +29,10 @@ function show(id, text) {
   if (el) el.textContent = text;
 }
 
+function val(id) {
+  return (document.getElementById(id)?.value || "").trim();
+}
+
 async function exchange(user) {
   try {
     const idToken = await user.getIdToken();
@@ -35,7 +42,8 @@ async function exchange(user) {
       body: JSON.stringify({ id_token: idToken }),
     });
     if (resp.ok) {
-      window.location = "/account";
+      const body = await resp.json().catch(() => ({}));
+      window.location = body.redirect || "/account";
       return;
     }
     const body = await resp.json().catch(() => ({}));
@@ -57,12 +65,20 @@ async function popup(provider) {
 window.mdrenderGoogle = () => popup(new GoogleAuthProvider());
 window.mdrenderGithub = () => popup(new GithubAuthProvider());
 
-window.mdrenderPhone = async () => {
-  const phone = (document.getElementById("phone-number")?.value || "").trim();
-  if (!phone) {
-    show("auth-error", "Enter your phone number first.");
-    return;
+async function sendMagicLink(email) {
+  try {
+    await sendSignInLinkToEmail(auth, email, {
+      url: window.location.origin + window.location.pathname,
+      handleCodeInApp: true,
+    });
+    localStorage.setItem(EMAIL_KEY, email);
+    show("auth-message", "Sign-in link sent — open it on this device to finish.");
+  } catch (e) {
+    show("auth-error", e.message || String(e));
   }
+}
+
+async function sendPhoneCode(phone) {
   try {
     const container = document.getElementById("recaptcha-container");
     const verifier = new RecaptchaVerifier(auth, container, { size: "invisible" });
@@ -75,23 +91,48 @@ window.mdrenderPhone = async () => {
   } catch (e) {
     show("auth-error", e.message || String(e));
   }
+}
+
+window.mdrenderSend = async () => {
+  const identifier = val("identifier");
+  if (!identifier) {
+    show("auth-error", "Enter your email or phone number first.");
+    return;
+  }
+  show("auth-error", "");
+  if (identifier.includes("@")) {
+    await sendMagicLink(identifier);
+  } else {
+    await sendPhoneCode(identifier);
+  }
 };
 
-window.mdrenderMagic = async () => {
-  const email = (document.getElementById("magic-email")?.value || "").trim();
-  if (!email) {
-    show("auth-error", "Enter your email first.");
+window.mdrenderPassword = async () => {
+  const email = val("pw-email") || val("identifier");
+  const password = document.getElementById("pw-password")?.value || "";
+  if (!email || !password) {
+    show("auth-error", "Enter your email and password.");
     return;
   }
   try {
-    await sendSignInLinkToEmail(auth, email, {
-      url: window.location.origin + window.location.pathname,
-      handleCodeInApp: true,
-    });
-    localStorage.setItem(EMAIL_KEY, email);
-    show("auth-message", "Magic link sent — open it on this device to sign in.");
+    const result = await signInWithEmailAndPassword(auth, email, password);
+    await exchange(result.user);
   } catch (e) {
     show("auth-error", e.message || String(e));
+  }
+};
+
+window.mdrenderTogglePassword = () => {
+  const idp = document.getElementById("auth-identifier-panel");
+  const pwp = document.getElementById("auth-password-panel");
+  if (!idp || !pwp) return;
+  const showPassword = pwp.hidden;
+  pwp.hidden = !showPassword;
+  idp.hidden = showPassword;
+  const email = val("identifier");
+  if (showPassword && email.includes("@")) {
+    const field = document.getElementById("pw-email");
+    if (field && !field.value) field.value = email;
   }
 };
 
