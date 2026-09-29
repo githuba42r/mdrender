@@ -25,6 +25,7 @@
       <a href="/pending" class="{{ 'active' if request.path.startswith('/pending') else '' }}">Pending</a>
       <a href="/admins" class="{{ 'active' if request.path.startswith('/admins') else '' }}">Admins</a>
       <a href="/bans" class="{{ 'active' if request.path.startswith('/bans') else '' }}">Bans</a>
+      <a href="/billing" class="{{ 'active' if request.path.startswith('/billing') else '' }}">Billing</a>
       <a href="/status" class="{{ 'active' if request.path.startswith('/status') else '' }}">Status</a>
     </nav>
     <form method="POST" action="/logout" class="logout">

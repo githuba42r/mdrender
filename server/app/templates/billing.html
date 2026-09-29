@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Billing &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Billing</h1>
+<p class="lede">Plans, groups, and prepaid credits. Slaves are billed a flat monthly fee; accounts hosted here are metered. Payment gateways plug in later — for now, add credits manually.</p>
+
+<h2>Plans</h2>
+{% if plans %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th>Scope</th><th>Price (cents)</th><th>Interval</th></tr></thead>
+  <tbody>
+    {% for p in plans %}
+    <tr><td>{{ p.name }}</td><td>{{ p.scope }}</td><td>{{ p.price_cents }}</td><td>{{ p.interval }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}<p class="empty">No plans yet.</p>{% endif %}
+
+<form method="POST" action="/billing/plans">
+  <label for="pname">New plan name</label>
+  <div class="field"><input type="text" id="pname" name="name" required></div>
+  <label for="pscope">Scope</label>
+  <div class="field"><select id="pscope" name="scope">
+    <option value="account">account</option><option value="slave">slave</option></select></div>
+  <label for="pprice">Price (cents)</label>
+  <div class="field"><input type="text" id="pprice" name="price_cents" value="0"></div>
+  <button type="submit" class="btn-primary">Create plan</button>
+</form>
+
+<h2>Groups</h2>
+{% if groups %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th>Plan</th><th>Default</th></tr></thead>
+  <tbody>
+    {% for gr in groups %}
+    <tr><td>{{ gr.name }}</td><td>{% if gr.plan_id %}<code>{{ gr.plan_id }}</code>{% else %}<span class="empty">none</span>{% endif %}</td><td>{{ "yes" if gr.is_default else "no" }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}<p class="empty">No groups yet.</p>{% endif %}
+
+<form method="POST" action="/billing/groups">
+  <label for="gname">New group name</label>
+  <div class="field"><input type="text" id="gname" name="name" required></div>
+  <label for="gplan">Plan ID (optional)</label>
+  <div class="field"><input type="text" id="gplan" name="plan_id"></div>
+  <button type="submit" class="btn-primary">Create group</button>
+</form>
+
+<h2>Add credit</h2>
+<form method="POST" action="/billing/credit">
+  <label for="atype">Account type</label>
+  <div class="field"><select id="atype" name="account_type">
+    <option value="account">account</option><option value="slave">slave</option></select></div>
+  <label for="aid">Account ID</label>
+  <div class="field"><input type="text" id="aid" name="account_id" required></div>
+  <label for="amt">Amount (cents, negative debits)</label>
+  <div class="field"><input type="text" id="amt" name="amount_cents" value="0"></div>
+  <label for="reason">Reason</label>
+  <div class="field"><input type="text" id="reason" name="reason" value="manual"></div>
+  <button type="submit" class="btn-primary">Add credit</button>
+</form>
+{% endblock %}

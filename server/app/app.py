@@ -18,8 +18,8 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import (accounts, bans, crypto, federation, fcm as fcm_mod,
-                        pairing, push_store, storage, trigger)
+from server.app import (accounts, bans, billing, crypto, federation,
+                        fcm as fcm_mod, pairing, push_store, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -621,6 +621,54 @@ def create_app(config):
             return auth_error
         bans.remove_ban(g.db, ban_id)
         return redirect("/bans", 303)
+
+    @app.route("/billing", methods=["GET"])
+    def billing_page():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        return render_template("billing.html",
+                               plans=[dict(p) for p in billing.list_plans(g.db)],
+                               groups=[dict(gr) for gr in billing.list_groups(g.db)])
+
+    @app.route("/billing/plans", methods=["POST"])
+    def billing_plan_create():
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        name = (request.form.get("name") or "").strip()
+        scope = request.form.get("scope", billing.SCOPE_ACCOUNT)
+        if name and scope in (billing.SCOPE_SLAVE, billing.SCOPE_ACCOUNT):
+            billing.create_plan(g.db, name, scope,
+                                price_cents=int(request.form.get("price_cents") or 0),
+                                interval=request.form.get("interval", "month"))
+        return redirect("/billing", 303)
+
+    @app.route("/billing/groups", methods=["POST"])
+    def billing_group_create():
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        name = (request.form.get("name") or "").strip()
+        if name:
+            billing.create_group(g.db, name, plan_id=request.form.get("plan_id") or None)
+        return redirect("/billing", 303)
+
+    @app.route("/billing/credit", methods=["POST"])
+    def billing_credit():
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        account_type = request.form.get("account_type", billing.SCOPE_ACCOUNT)
+        account_id = (request.form.get("account_id") or "").strip()
+        try:
+            amount = int(request.form.get("amount_cents") or 0)
+        except ValueError:
+            amount = 0
+        if account_id and amount:
+            billing.add_credit(g.db, account_type, account_id, amount,
+                               reason=request.form.get("reason") or "manual")
+        return redirect("/billing", 303)
 
     @app.route("/devices", methods=["GET"])
     def devices():
