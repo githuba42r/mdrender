@@ -67,6 +67,35 @@ Detection is advisory: an explicit `ROLE` always wins.
   devices/clients), with roles (`admin`, `operator`).
 - Login rate-limiting stays (reuse `LoginGate`), keyed per user+IP.
 
+### 4a. Identity provider (Auth0 / AWS Cognito / Firebase / local)
+
+Social login and passwordless should come from a managed identity provider, not
+hand-rolled. Put every provider behind one **`IdentityProvider` interface**
+(OIDC/JWT: verify the ID/access token, map to a local `user`, then mint our own
+session) so the concrete choice is swappable and a local fallback always works.
+
+| Option | Social | Passwordless | Trade-offs |
+|--------|--------|--------------|-----------|
+| **Firebase Authentication** (recommended default) | Google, Apple, GitHub, etc. | **Email link** (magic link), phone OTP, passkeys | Reuses the **existing Firebase project** (already used for FCM) — no new vendor. Web SDK on the frontend + Admin SDK on Flask to verify tokens. Email sending is handled by Firebase. |
+| **Auth0** | Broad social set | Email magic link, SMS OTP, passkeys/WebAuthn | Best passwordless/MFA DX and rules/actions; MAU-based pricing; another vendor + lock-in. |
+| **AWS Cognito** | Google/Facebook/Apple/SAML/OIDC | **No built-in email magic link** — needs `CUSTOM_AUTH` Lambda + SES (or phone OTP) | AWS-native and cheap at scale; passwordless is DIY and the hosted UI is less polished. |
+| **Self-hosted local** | — | magic link (own SMTP) | No per-MAU cost, full control; must own email deliverability, MFA, passkey/WebAuthn, and account security. |
+
+**Recommendation:** default to **Firebase Authentication** (it reuses the FCM
+project already owned by the master) with **Auth0** as the drop-in alternative;
+keep **local username/password** as the break-glass admin path and for
+deployments with no external IdP.
+
+- **Clients** (tenants) get social + passwordless (lower friction, self-serve).
+- **Admins/operators** stay on **local accounts or enterprise SSO with MFA** —
+  do not expose privileged accounts to consumer social login.
+- Account linking is by **verified email**; strict email verification is
+  required so an IdP email cannot impersonate an existing account.
+- Email-domain bans (§9) and IP/CIDR/ASN bans (§14) are applied after token
+  verification, before a session is issued.
+- The Android app may adopt the same IdP later (e.g. Firebase Auth), but the
+  app is out of scope for this effort.
+
 ## 5. Server identity and federation registration
 
 - On first run the server mints a **UUID `server_id`** and an **RSA keypair**
@@ -167,11 +196,12 @@ Build the foundation now; wire real providers later.
 
 | Table | Purpose |
 |-------|---------|
-| `admins` | username, password hash, role, created, disabled/blocked/banned |
+| `admins` | username, password hash (nullable when SSO), role, created, disabled/blocked/banned |
+| `identities` | provider (firebase/auth0/cognito/local), subject, email, `user_type` + `user_id`, email_verified, linked_at |
 | `server_identity` | `server_id` (uuid), federation keypair, hostname, role |
 | `federated_servers` | master's record of slaves: server_id, hostname, pubkey, secret hash, status, plan, period, last_seen |
 | `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| client`; reason, created_by, expires |
-| `clients` | email, password/auid, status (active/blocked/banned), balance |
+| `clients` | email, password hash (nullable), status (active/blocked/banned), balance |
 | `client_devices` | device_id, client_id, server_id, fcm_token, name |
 | `client_files` | pending files: client_id, size, created, stored_path, status |
 | `client_quotas` | per-client overrides (max bytes/count, max age) |
@@ -185,7 +215,10 @@ remain; the client/tenant layer wraps them.
 ## 13. API surface (proposed)
 
 **Auth (all deployments):** `GET/POST /setup` (first-run admin), `POST /login`
-(username+password), `POST /logout`, admin user CRUD.
+(username+password), `POST /logout`, admin user CRUD. External IdP:
+`GET /auth/providers` (enabled social/passwordless options) and
+`POST /auth/oidc` (verify the provider token via the `IdentityProvider`, then
+mint an MDRender session); local login always remains available.
 
 **Master ↔ slave (Bearer + optional signature):**
 `POST /api/federation/enrol/start`, `POST /api/federation/enrol`,
@@ -223,7 +256,9 @@ hostname, domain)**; quotas; billing/ledger; plans.
 ## 15. Phases (tracer bullets)
 
 - **A — Auth foundation.** username/password admins, first-run `/setup`,
-  multiple admins, roles, rate limits. Migrate existing `SERVER_PASSWORD`.
+  multiple admins, roles, rate limits (migrate existing `SERVER_PASSWORD`), the
+  `IdentityProvider` abstraction, and Firebase Auth for clients (email-link
+  passwordless + social) with local accounts for admins.
 - **B — Deployment modes.** Google/FCM detection, `ROLE` override, baked
   default master URL, server identity (uuid + keypair), config + UI surfacing.
 - **C — Federation enrolment.** slave enrol handshake, master registry,
@@ -256,6 +291,12 @@ Each phase lands independently with tests; the app is untouched.
 - **D7** Multi-tenant data isolation model (per-client encryption or directory
   scoping).
 - **D8** Whether a slave may also be a standalone (own FCM) for some tenants.
+- **D10** Identity provider: Firebase Auth (reuses the FCM project) vs Auth0 vs
+  Cognito vs self-hosted; which social providers; and whether passwordless is
+  email-link, passkey, or phone OTP.
+- **D11** Email deliverability for passwordless/verification (Firebase vs
+  SES/SMTP), plus signup abuse controls (rate limits, CAPTCHA, verified-email
+  requirement).
 - **D9** ASN/CIDR source and matching: a bundled IP→ASN database
   (e.g. MaxMind GeoLite2 ASN, self-updated) vs an external lookup; how to trust
   the forwarded client IP through Cloudflare; IPv4 vs IPv6 CIDR handling; and
