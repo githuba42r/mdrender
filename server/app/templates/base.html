@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="dark light">
   <title>{% block title %}Cloud Push Server{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icon.svg') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_css }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}?v={{ asset_js }}"></script>
 </head>
 <body class="{{ '' if logged_in else 'no-nav' }}">
   {% if logged_in %}
@@ -17,13 +17,10 @@
       <span class="brand-text"><b>MDRender</b><span>Cloud Push</span></span>
     </a>
     <nav>
-      <a href="/pair" class="{{ 'active' if request.path.startswith('/pair') else '' }}">Pair</a>
-      <a href="/devices" class="{{ 'active' if request.path.startswith('/devices') else '' }}">Devices</a>
       <a href="/accounts" class="{{ 'active' if request.path.startswith('/accounts') else '' }}">Users</a>
-      <a href="/federation" class="{{ 'active' if request.path.startswith('/federation') else '' }}">Federation</a>
-      <a href="/clients" class="{{ 'active' if request.path.startswith('/clients') else '' }}">Clients</a>
       <a href="/pushes" class="{{ 'active' if request.path.startswith('/pushes') else '' }}">Pushes</a>
       <a href="/pending" class="{{ 'active' if request.path.startswith('/pending') else '' }}">Pending</a>
+      <a href="/federation" class="{{ 'active' if request.path.startswith('/federation') else '' }}">Federation</a>
       <a href="/admins" class="{{ 'active' if request.path.startswith('/admins') else '' }}">Admins</a>
       <a href="/bans" class="{{ 'active' if request.path.startswith('/bans') else '' }}">Bans</a>
       <a href="/billing" class="{{ 'active' if request.path.startswith('/billing') else '' }}">Billing</a>

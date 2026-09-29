@@ -336,6 +336,16 @@ def create_app(config):
     # ---- Browser session-gated pages ----
 
     @app.context_processor
+    def _inject_assets():
+        """Cache-bust static assets by file mtime, so a deploy is picked up."""
+        def stamp(name):
+            try:
+                return int(os.path.getmtime(os.path.join(app.static_folder, name)))
+            except OSError:
+                return 0
+        return {"asset_css": stamp("app.css"), "asset_js": stamp("app.js")}
+
+    @app.context_processor
     def _inject_firebase():
         """Expose the Firebase web config to templates when it is configured."""
         api_key = getattr(config, "FIREBASE_API_KEY", "")

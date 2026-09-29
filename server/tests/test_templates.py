@@ -159,8 +159,12 @@ def test_root_redirects_to_pushes_once_logged_in(config, db_path):
     assert root.headers["Location"] == "/pushes"
 
     # And the menu is back once there is a session.
-    assert b'href="/devices"' in client.get("/pushes").data
-    assert b'href="/clients"' in client.get("/pushes").data
+    menu = client.get("/pushes").data
+    assert b'href="/accounts"' in menu and b'href="/admins"' in menu
+    # Account-scoped pages (pair/devices/clients) are not in the admin menu.
+    assert b'href="/devices"' not in menu
+    assert b'href="/clients"' not in menu
+    assert b'href="/pair"' not in menu
 
 
 def test_session_survives_a_restart_and_logout_revokes_it(config, db_path):
