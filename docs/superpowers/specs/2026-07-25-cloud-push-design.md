@@ -262,14 +262,25 @@ for `LOGIN_LOCKOUT_SECONDS`.
 2. The operator opens `/pair` in a browser. Without a session it shows the password form
    (`SERVER_PASSWORD`); after login it renders the pairing QR, whose payload is:
    ```json
-   { "v": 1, "server_url": "<PUSH_PUBLIC_URL>", "pk": "<base64 DER SPKI>",
-     "token": "<one-time pairing token>", "expires": "2026-08-27T12:00:00Z" }
+   { "v": 1, "server_url": "<PUSH_PUBLIC_URL>", "token": "<one-time pairing token>" }
    ```
    The pairing token is single-use, short-TTL (15 min), and authorizes exactly one device
    registration. The QR is shown **only after** the password is entered, so finding the
    URL is not enough to pair a device.
-3. The operator scans the QR with the phone. The QR is the trust anchor — the phone stores
-   the server public key from it.
+3. The operator scans the QR with the phone. The QR names the server and carries the token;
+   it does **not** carry the server public key. A 3072-bit key is ~740 base64 characters,
+   which on its own forces a high-density QR that is painful to scan off a screen.
+4. The phone registers, and the server returns its public key alongside the device
+   credential:
+   ```json
+   { "ok": true, "device_auth": "<hex>", "server_pk": "<base64 DER SPKI>" }
+   ```
+   The phone stores that key and uses it to verify manifest signatures. The key is no
+   less trustworthy arriving this way: the token already proves the user reached this
+   server's authenticated pairing page, and the response travels over TLS to the very
+   `server_url` the QR named — so whoever controls that endpoint already controls the key
+   it would return. Registration fails outright if the server withholds the key, rather
+   than leaving the phone paired but unable to verify any manifest.
 
 ### Tool enrolment (OAuth2 client credentials)
 

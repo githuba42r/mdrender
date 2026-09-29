@@ -117,11 +117,15 @@ class PushClientTest {
         val crypto = PushCrypto(
             mock<CloudPushKeyStore> { on { sign(any()) } doReturn signature.toByteArray() }
         )
+        val serverPk = "c2VydmVyLXB1Yi1rZXk="
         server.on("/api/register-device") {
-            TestHttpServer.Resp(200, """{"ok":true,"device_auth":"auth-new"}""")
+            TestHttpServer.Resp(
+                200, """{"ok":true,"device_auth":"auth-new","server_pk":"$serverPk"}"""
+            )
         }
 
         val result = client.registerDevice(
+            serverUrl = config.serverUrl,
             config = config,
             crypto = crypto,
             publicKeySpkiDer = "PUBKEY".toByteArray(),
@@ -129,7 +133,10 @@ class PushClientTest {
             pairingToken = "pair-1",
         )
 
-        assertEquals("auth-new", result.getOrThrow())
+        val registered = result.getOrThrow()
+        assertEquals("auth-new", registered.deviceAuth)
+        // The key arrives with the registration rather than in the QR code.
+        assertEquals(serverPk, registered.serverPublicKeyB64)
         val req = server.requests.single()
         assertEquals("POST", req.method)
         assertNull(req.query)
@@ -147,6 +154,30 @@ class PushClientTest {
         )
         // The doorbell key travels in the body and is covered by the signature.
         assertTrue(sent["push_key"]!!.jsonPrimitive.content.isNotEmpty())
+    }
+
+    @Test
+    fun `registerDevice fails when the server withholds its public key`() = runBlocking {
+        val crypto = PushCrypto(
+            mock<CloudPushKeyStore> {
+                on { sign(any()) } doReturn "c2ln".toByteArray()
+            }
+        )
+        server.on("/api/register-device") {
+            TestHttpServer.Resp(200, """{"ok":true,"device_auth":"auth-new"}""")
+        }
+
+        val result = client.registerDevice(
+            serverUrl = config.serverUrl,
+            config = config,
+            crypto = crypto,
+            publicKeySpkiDer = "PUBKEY".toByteArray(),
+            fcmToken = "fcm-1",
+            pairingToken = "pair-1",
+        )
+
+        // Pairing must not look successful without a key to verify manifests.
+        assertTrue(result.isFailure)
     }
 
     @Test

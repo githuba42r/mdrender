@@ -35,14 +35,21 @@ def consume_pairing_token(conn, token: str, now: float | None = None) -> bool:
     return True
 
 
-def pairing_payload(server_url, server_pk_b64, token, expires_iso):
-    return {"v": 1, "server_url": server_url, "pk": server_pk_b64,
-            "token": token, "expires": expires_iso}
+def pairing_payload(server_url, token):
+    # Deliberately minimal. The QR only has to name the server and carry a
+    # one-time token; the server public key is handed back in the registration
+    # response instead of being encoded here. A 3072-bit key costs ~740 base64
+    # characters, which is enough on its own to force a high-density QR that is
+    # painful to scan from a phone held over a screen. The token already proves
+    # the user stood at this server's authenticated /pair page, so a key
+    # delivered over that same TLS connection is no less trustworthy than one
+    # carried in the QR.
+    return {"v": 1, "server_url": server_url, "token": token}
 
 
-def build_pairing_qr(server_url, server_pk_b64, token, expires_iso) -> str:
+def build_pairing_qr(server_url, token) -> str:
     import json
-    return json.dumps(pairing_payload(server_url, server_pk_b64, token, expires_iso))
+    return json.dumps(pairing_payload(server_url, token))
 
 
 def registration_proof_input(device_secret, device_name, fcm_token, public_key_b64,

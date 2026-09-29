@@ -1,5 +1,6 @@
 package com.a42r.mdrender.cloudpush
 
+import com.a42r.mdrender.localsend.ConflictStrategy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,9 @@ class CloudPushManager @Inject constructor() {
         val pushId: String,
         val file: PushCrypto.ManifestFile,
         val serverUrl: String,
+        /** Destination folder path from the signed manifest, e.g. "Story/x". Blank = app default. */
+        val targetFolder: String = "",
+        val conflict: ConflictStrategy = ConflictStrategy.RENAME,
         val status: Status = Status.QUEUED,
         val progress: Float = 0f,
     ) {
@@ -51,18 +55,28 @@ class CloudPushManager @Inject constructor() {
     }
 
     /**
-     * Queue every file in [files] that this push has not been told about yet,
+     * Queue every file in [manifest] that this push has not been told about yet,
      * then wake the service — but only if there is genuinely new work. Waking on
      * a fully-known manifest would restart downloads that are already running.
+     *
+     * The destination folder and conflict strategy ride along on each task
+     * because they are signed manifest fields: taking them from here, rather
+     * than re-deriving them at import time, is what makes them trustworthy.
      */
-    fun enqueue(doorbell: PushCrypto.Doorbell, files: List<PushCrypto.ManifestFile>) {
+    fun enqueue(doorbell: PushCrypto.Doorbell, manifest: PushCrypto.Manifest) {
+        val conflict = ConflictStrategy.fromValue(manifest.conflict)
         val existing = _state.value
             .filter { it.pushId == doorbell.pushId }
             .map { it.file.fileId }
             .toSet()
-        val newTasks = files
+        val newTasks = manifest.files
             .filter { it.fileId !in existing }
-            .map { DownloadTask(doorbell.pushId, it, doorbell.serverUrl) }
+            .map {
+                DownloadTask(
+                    doorbell.pushId, it, doorbell.serverUrl,
+                    manifest.targetFolder, conflict,
+                )
+            }
         if (newTasks.isEmpty()) return
         _state.update { it + newTasks }
         readyCallbacks.toList().forEach { it(doorbell.pushId) }

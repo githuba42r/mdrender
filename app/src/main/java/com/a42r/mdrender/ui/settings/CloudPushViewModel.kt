@@ -65,8 +65,6 @@ class CloudPushViewModel @Inject constructor(
 
     fun clearMessage() = _status.update { it.copy(message = null) }
 
-    fun setServerUrl(url: String) = _status.update { it.copy(serverUrl = url) }
-
     fun cancelDownload(fileId: String) = manager.cancel(fileId)
 
     /** Pair from a scanned QR code. Safe to call with a code from the wrong app. */
@@ -78,17 +76,23 @@ class CloudPushViewModel @Inject constructor(
                 return@launch
             }
             runCatching {
-                config.serverUrl = info.serverUrl
-                config.serverPublicKeyPem = pairing.toPem(info.serverPublicKeyDer)
                 val publicKey = keyStore.getOrCreateKeyPair().public.encoded
-                val deviceAuth = client.registerDevice(
+                val registered = client.registerDevice(
+                    serverUrl = info.serverUrl,
                     config = config,
                     crypto = crypto,
                     publicKeySpkiDer = publicKey,
                     fcmToken = awaitFcmToken(),
                     pairingToken = info.token,
                 ).getOrThrow()
-                config.deviceAuth = deviceAuth
+                val serverPem = pairing.pemFromBase64(registered.serverPublicKeyB64)
+                    ?: throw IllegalStateException("server sent an unreadable public key")
+                // Commit only once registration has actually succeeded, so a
+                // failed or half-finished attempt cannot leave a stored server
+                // URL behind that the UI would then present as paired.
+                config.serverUrl = info.serverUrl
+                config.serverPublicKeyPem = serverPem
+                config.deviceAuth = registered.deviceAuth
             }.onSuccess {
                 _status.update { it.copy(message = "Paired with ${config.serverUrl}", isBusy = false) }
             }.onFailure { e ->

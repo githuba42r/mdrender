@@ -32,19 +32,31 @@ class PushClient @Inject constructor() {
     data class FetchedManifest(val body: String, val signature: String)
 
     /**
+     * What the server hands back once a device is registered: the credential it
+     * will authenticate with, and the server's public key so this device can
+     * verify manifest signatures.
+     */
+    data class Registered(val deviceAuth: String, val serverPublicKeyB64: String)
+
+    /**
      * Register this device and its freshly negotiated doorbell key.
      *
      * [crypto] signs a proof binding the device secret, name, FCM token, public
      * key, and the push key. The push key is inside the signature, so an attacker
      * cannot substitute a doorbell key of their own and have the server accept it.
+     *
+     * [serverUrl] is passed in rather than read from [config] so a caller can
+     * register against a candidate server before committing anything to its
+     * stored configuration; [config] still supplies the local secrets.
      */
     suspend fun registerDevice(
+        serverUrl: String,
         config: PushServerConfig,
         crypto: PushCrypto,
         publicKeySpkiDer: ByteArray,
         fcmToken: String,
         pairingToken: String,
-    ): Result<String> = call {
+    ): Result<Registered> = call {
         val publicKeyB64 = Base64.getEncoder().encodeToString(publicKeySpkiDer)
         val pushKeyB64 = config.pushKeyB64
         val digest = MessageDigest.getInstance("SHA-256").digest(
@@ -61,10 +73,16 @@ class PushClient @Inject constructor() {
             put("pairing_token", pairingToken)
             put("sig", crypto.signRegistration(digest))
         }
-        val response = postJson(config.serverUrl, "/api/register-device", body)
+        val response = postJson(serverUrl, "/api/register-device", body)
         if (response.code != 200) response.fail("register-device")
-        response.json()["device_auth"]?.jsonPrimitive?.content
+        val json = response.json()
+        val deviceAuth = json["device_auth"]?.jsonPrimitive?.content
             ?: throw IOException("server did not return device_auth")
+        // Refuse a registration that hands back no key: without it every
+        // manifest would fail to verify, and failing here says so plainly.
+        val serverPublicKeyB64 = json["server_pk"]?.jsonPrimitive?.content
+            ?: throw IOException("server did not return its public key")
+        Registered(deviceAuth, serverPublicKeyB64)
     }
 
     /** Tell the server this device's FCM token changed. */

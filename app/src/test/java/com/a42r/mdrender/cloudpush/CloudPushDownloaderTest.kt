@@ -1,5 +1,7 @@
 package com.a42r.mdrender.cloudpush
 
+import com.a42r.mdrender.data.dao.FileMetadata
+import com.a42r.mdrender.data.repository.FileBookmarks
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.data.repository.FolderRepository
 import com.a42r.mdrender.data.repository.PushHistoryRepository
@@ -11,7 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
-import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
@@ -51,8 +53,12 @@ class CloudPushDownloaderTest {
         config.deviceAuth = "auth-1"
         manager = CloudPushManager()
 
+        // The default conflict is rename, so every drain asks for a free name.
+        // Echoing the desired name back is the "nothing is in the way" case;
+        // tests that care about a collision stub it themselves.
         fileRepository = mock {
             onBlocking { mimeTypeFromExtension(any()) } doReturn "text/markdown"
+            onBlocking { uniqueNameInFolder(anyOrNull(), any()) } doAnswer { it.getArgument(1) }
         }
         folderRepository = mock {
             onBlocking { findOrCreateFolder(any(), anyOrNull()) } doReturn 7L
@@ -80,9 +86,21 @@ class CloudPushDownloaderTest {
     private fun doorbell(pushId: String = "push-1") =
         PushCrypto.Doorbell(config.serverUrl, pushId, "ck-1")
 
+    private fun manifest(
+        vararg files: PushCrypto.ManifestFile,
+        targetFolder: String = "",
+        conflict: String = "rename",
+    ) = PushCrypto.Manifest(
+        pushId = "push-1",
+        date = "2026-08-29T00:00:00+00:00",
+        targetFolder = targetFolder,
+        conflict = conflict,
+        files = files.toList(),
+    )
+
     @Test
     fun `downloads a file, imports it, acks it, and records history`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("f1")))
+        manager.enqueue(doorbell(), manifest(file("f1")))
 
         val imported = downloader.drain("push-1", tempDir) { started += it }
 
@@ -98,7 +116,7 @@ class CloudPushDownloaderTest {
 
     @Test
     fun `history records the real downloaded size, not the deleted temp file`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("f2")))
+        manager.enqueue(doorbell(), manifest(file("f2")))
 
         downloader.drain("push-1", tempDir) { }
 
@@ -108,20 +126,23 @@ class CloudPushDownloaderTest {
     }
 
     @Test
-    fun `a nested path becomes a chain of folders under Cloud Push`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("f1", path = "notes/2026/aug")))
+    fun `a per-file path is a chain of folders hanging off the app root`() = runBlocking {
+        manager.enqueue(doorbell(), manifest(file("f1", path = "notes/2026/aug")))
 
         downloader.drain("push-1", tempDir) { }
 
-        verifyBlocking(folderRepository) { findOrCreateFolder("Cloud Push", null) }
-        verifyBlocking(folderRepository) { findOrCreateFolder("notes", 7L) }
+        // Matches LocalSend: a sender's path is relative to the library root, so
+        // the first segment is created against null rather than under a
+        // transport-specific folder the user never asked for.
+        verifyBlocking(folderRepository) { findOrCreateFolder("notes", null) }
         verifyBlocking(folderRepository) { findOrCreateFolder("2026", 7L) }
         verifyBlocking(folderRepository) { findOrCreateFolder("aug", 7L) }
+        verifyBlocking(folderRepository, never()) { findOrCreateFolder("Cloud Push", null) }
     }
 
     @Test
     fun `a cancelled file is acked without being downloaded or imported`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("f1"), file("f2")))
+        manager.enqueue(doorbell(), manifest(file("f1"), file("f2")))
         manager.cancel("f1")
 
         downloader.drain("push-1", tempDir) { started += it }
@@ -136,7 +157,7 @@ class CloudPushDownloaderTest {
 
     @Test
     fun `a failed download leaves the task failed and does not ack`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("broken")))
+        manager.enqueue(doorbell(), manifest(file("broken")))
 
         val imported = downloader.drain("push-1", tempDir) { started += it }
 
@@ -152,7 +173,7 @@ class CloudPushDownloaderTest {
             .importFileFromTemp(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())
         org.mockito.Mockito.`when`(failing.mimeTypeFromExtension(anyOrNull()))
             .thenReturn("text/markdown")
-        manager.enqueue(doorbell(), listOf(file("f1")))
+        manager.enqueue(doorbell(), manifest(file("f1")))
 
         val imported = newDownloader(failing).drain("push-1", tempDir) { started += it }
 
@@ -164,7 +185,7 @@ class CloudPushDownloaderTest {
     @Test
     fun `reports progress for every file it drains`() = runBlocking {
         val progress = mutableListOf<String>()
-        manager.enqueue(doorbell(), listOf(file("f1"), file("f2")))
+        manager.enqueue(doorbell(), manifest(file("f1"), file("f2")))
 
         val imported = downloader.drain("push-1", tempDir) { progress += it }
 
@@ -177,7 +198,7 @@ class CloudPushDownloaderTest {
         server.on("/api/push/gone/download") {
             TestHttpServer.Resp(404, """{"error":"unknown device"}""")
         }
-        manager.enqueue(doorbell(), listOf(file("gone")))
+        manager.enqueue(doorbell(), manifest(file("gone")))
 
         downloader.drain("push-1", tempDir) { }
 
@@ -186,7 +207,7 @@ class CloudPushDownloaderTest {
 
     @Test
     fun `an ordinary server error does not demand re-pairing`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("broken")))
+        manager.enqueue(doorbell(), manifest(file("broken")))
 
         downloader.drain("push-1", tempDir) { }
 
@@ -196,7 +217,7 @@ class CloudPushDownloaderTest {
 
     @Test
     fun `an unknown push id drains nothing`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("f1")))
+        manager.enqueue(doorbell(), manifest(file("f1")))
 
         assertEquals(0, downloader.drain("push-999", tempDir) { started += it })
         assertTrue(ackedFileIds().isEmpty())
@@ -204,7 +225,7 @@ class CloudPushDownloaderTest {
 
     @Test
     fun `no temp files are left behind`() = runBlocking {
-        manager.enqueue(doorbell(), listOf(file("f1")))
+        manager.enqueue(doorbell(), manifest(file("f1")))
 
         downloader.drain("push-1", tempDir) { }
 
@@ -222,12 +243,120 @@ class CloudPushDownloaderTest {
                 TestHttpServer.Resp(200, "hello world".toByteArray())
             }
         }
-        manager.enqueue(doorbell(), listOf(file("f1")))
+        manager.enqueue(doorbell(), manifest(file("f1")))
         assertEquals(0, downloader.drain("push-1", tempDir) { started += it })
 
         assertEquals(1, downloader.drain("push-1", tempDir) { started += it })
         assertEquals(CloudPushManager.Status.DONE, manager.state.value.single().status)
         assertEquals(listOf("f1"), ackedFileIds())
+    }
+
+    @Test
+    fun `a push-wide target folder is created under the app root`() = runBlocking {
+        manager.enqueue(doorbell(), manifest(file("f1"), targetFolder = "Story/cloud-send-images"))
+
+        downloader.drain("push-1", tempDir) { }
+
+        // Unlike a per-file path, the sender's folder hangs off the app root so
+        // it lands where they will actually look for it.
+        verifyBlocking(folderRepository) { findOrCreateFolder("Story", null) }
+        verifyBlocking(folderRepository) { findOrCreateFolder("cloud-send-images", 7L) }
+        verifyBlocking(folderRepository, never()) { findOrCreateFolder("Cloud Push", null) }
+    }
+
+    @Test
+    fun `a blank target folder falls back to the Cloud Push root`() = runBlocking {
+        manager.enqueue(doorbell(), manifest(file("f1"), targetFolder = ""))
+
+        downloader.drain("push-1", tempDir) { }
+
+        verifyBlocking(folderRepository) { findOrCreateFolder("Cloud Push", null) }
+    }
+
+    @Test
+    fun `a per-file path overrides the push-wide target folder`() = runBlocking {
+        manager.enqueue(doorbell(), manifest(file("f1", path = "Elsewhere"), targetFolder = "Story/cloud-send-images"))
+
+        downloader.drain("push-1", tempDir) { }
+
+        verifyBlocking(folderRepository) { findOrCreateFolder("Elsewhere", null) }
+        verifyBlocking(folderRepository, never()) { findOrCreateFolder("Story", null) }
+    }
+
+    @Test
+    fun `replace keeps the reader's place in the file it overwrites`() = runBlocking {
+        val existing = FileMetadata(
+            id = 42L, name = "f1.md", mimeType = "text/markdown", fileSize = 11L,
+            scrollPosition = 300, playbackPosition = 9_000L,
+        )
+        val files = mock<FileRepository> {
+            onBlocking { mimeTypeFromExtension(any()) } doReturn "text/markdown"
+            onBlocking { findByName(7L, "f1.md") } doReturn existing
+            onBlocking { getLastOpenedAt(42L) } doReturn 1_700_000L
+        }
+        val d = newDownloader(files)
+        manager.enqueue(doorbell(), manifest(file("f1"), conflict = "replace"))
+
+        assertEquals(1, d.drain("push-1", tempDir) { })
+
+        verifyBlocking(files) {
+            replaceFileFromTemp(
+                any(), eq("f1.md"), eq("text/markdown"), eq(7L),
+                oldId = eq(42L),
+                bookmarks = eq(FileBookmarks(scrollPosition = 300, playbackPosition = 9_000L, lastOpenedAt = 1_700_000L)),
+            )
+        }
+        verifyBlocking(files, never()) { importFileFromTemp(any(), anyOrNull(), anyOrNull(), anyOrNull()) }
+    }
+
+    @Test
+    fun `skip acks without downloading when the name is already taken`() = runBlocking {
+        val existing = FileMetadata(id = 42L, name = "f1.md", mimeType = "text/markdown", fileSize = 11L)
+        val files = mock<FileRepository> {
+            onBlocking { mimeTypeFromExtension(any()) } doReturn "text/markdown"
+            onBlocking { findByName(7L, "f1.md") } doReturn existing
+        }
+        val d = newDownloader(files)
+        manager.enqueue(doorbell(), manifest(file("f1"), conflict = "skip"))
+
+        downloader.drain("push-1", tempDir) { }
+
+        // Nothing moves, but the server still has to be told we are done with it,
+        // otherwise it will offer the same file on the next doorbell forever.
+        assertEquals(listOf("f1"), ackedFileIds())
+        verifyBlocking(files, never()) { replaceFileFromTemp(any(), anyOrNull(), anyOrNull(), anyOrNull(), any(), anyOrNull()) }
+        assertEquals(CloudPushManager.Status.DONE, manager.state.value.single().status)
+    }
+
+    @Test
+    fun `rename stores a free name when the original is taken`() = runBlocking {
+        val existing = FileMetadata(id = 42L, name = "f1.md", mimeType = "text/markdown", fileSize = 11L)
+        val files = mock<FileRepository> {
+            onBlocking { mimeTypeFromExtension(any()) } doReturn "text/markdown"
+            onBlocking { findByName(7L, "f1.md") } doReturn existing
+            onBlocking { uniqueNameInFolder(7L, "f1.md") } doReturn "f1 (1).md"
+        }
+        val d = newDownloader(files)
+        manager.enqueue(doorbell(), manifest(file("f1"), conflict = "rename"))
+
+        assertEquals(1, d.drain("push-1", tempDir) { })
+
+        verifyBlocking(files) { importFileFromTemp(any(), eq("f1 (1).md"), eq("text/markdown"), eq(7L)) }
+    }
+
+    @Test
+    fun `replace with a free name just imports, since there is nothing to carry over`() = runBlocking {
+        val files = mock<FileRepository> {
+            onBlocking { mimeTypeFromExtension(any()) } doReturn "text/markdown"
+            onBlocking { findByName(7L, "f1.md") } doReturn null
+        }
+        val d = newDownloader(files)
+        manager.enqueue(doorbell(), manifest(file("f1"), conflict = "replace"))
+
+        assertEquals(1, d.drain("push-1", tempDir) { })
+
+        verifyBlocking(files) { importFileFromTemp(any(), eq("f1.md"), eq("text/markdown"), eq(7L)) }
+        verifyBlocking(files, never()) { replaceFileFromTemp(any(), anyOrNull(), anyOrNull(), anyOrNull(), any(), anyOrNull()) }
     }
 
     private class FakeSharedPreferences : android.content.SharedPreferences {

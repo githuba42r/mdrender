@@ -3,6 +3,7 @@
 import base64
 import datetime
 import os
+import shutil
 import time
 import uuid
 
@@ -15,9 +16,10 @@ from cryptography.hazmat.primitives import serialization
 
 from server.app import crypto, fcm as fcm_mod, pairing, push_store, trigger
 from server.app.config import load_config
-from server.app.auth import (LoginGate, hash_secret, issue_access_token,
-                             make_session, validate_access_token,
-                             verify_secret, verify_session)
+from server.app.auth import (LoginGate, create_session, delete_session,
+                             hash_secret, issue_access_token, purge_expired_sessions,
+                             make_session, session_is_valid,
+                             validate_access_token, verify_secret, verify_session)
 from server.app.db import Database
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
@@ -101,10 +103,26 @@ def create_app(config):
             conn.close()
 
     def require_session():
-        token = request.cookies.get(SESSION_COOKIE)
-        if not token or not verify_session(config.session_secret, token, config):
-            return jsonify({"error": "unauthorized"}), 401
-        return None
+        """Gate a page or endpoint on a live server-side session.
+
+        The signature check alone would keep accepting a logged-out token, so
+        the cookie is also required to have an unexpired row in `sessions`.
+        """
+        if session_is_valid(g.db, config.session_secret,
+                            request.cookies.get(SESSION_COOKIE), config):
+            return None
+        return jsonify({"error": "unauthorized"}), 401
+
+    def _return_to(default):
+        """Where a POST sends the browser next, read from a hidden `next` field.
+
+        Restricted to same-site paths so a crafted form cannot bounce an admin
+        off-site through the redirect.
+        """
+        nxt = request.form.get("next", "")
+        if nxt.startswith("/") and not nxt.startswith("//"):
+            return nxt
+        return default
 
     def bearer_client_id():
         header = request.headers.get("Authorization", "")
@@ -134,6 +152,24 @@ def create_app(config):
 
     # ---- Browser session-gated pages ----
 
+    @app.context_processor
+    def _inject_auth_state():
+        """Let every template hide the admin menu unless a session is live.
+
+        Without this the nav renders on the login page too, which both leaks
+        the page list to an anonymous visitor and offers links that 401.
+        """
+        return {"logged_in": session_is_valid(
+            g.db, config.session_secret, request.cookies.get(SESSION_COOKIE), config)}
+
+    @app.route("/")
+    def index():
+        """Landing page: the login form when anonymous, the push list otherwise."""
+        if not session_is_valid(g.db, config.session_secret,
+                                request.cookies.get(SESSION_COOKIE), config):
+            return render_template("login.html")
+        return redirect("/pushes")
+
     @app.route("/login", methods=["GET"])
     def login_page():
         return render_template("login.html")
@@ -144,8 +180,21 @@ def create_app(config):
         allowed, retry = app.config["_login_gate"].check(request.remote_addr, password)
         if not allowed:
             return jsonify({"error": "locked", "retry_after": retry}), 401
-        resp = make_response(redirect("/pair"))
-        resp.set_cookie(SESSION_COOKIE, make_session(config.session_secret, config))
+        # Opportunistic cleanup so a long-lived server does not accumulate rows
+        # for sessions nobody is holding any more.
+        purge_expired_sessions(g.db)
+        token = create_session(g.db, config.session_secret, config)
+        resp = make_response(redirect("/pushes"))
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
+        return resp
+
+    @app.route("/logout", methods=["POST"])
+    def logout():
+        """Drop the session server-side, so the old cookie is worthless."""
+        delete_session(g.db, config.session_secret, request.cookies.get(SESSION_COOKIE))
+        resp = make_response(redirect("/"))
+        resp.delete_cookie(SESSION_COOKIE)
         return resp
 
     @app.route("/pair", methods=["GET"])
@@ -159,9 +208,7 @@ def create_app(config):
         expires_iso = expires_at.isoformat()
         app.config["_test_pairing_token"] = token
         app.config["_pairing_tokens"] = {"token": token, "expires": expires_iso}
-        qr_text = pairing.build_pairing_qr(config.PUSH_PUBLIC_URL,
-                                           app.config["_server_pk_b64"],
-                                           token, expires_iso)
+        qr_text = pairing.build_pairing_qr(config.PUSH_PUBLIC_URL, token)
         # Inline SVG QR (qrcode SvgPathImage; no Pillow required). Uses
         # SvgPathImage, not SvgImage/SvgFragmentImage, because those emit
         # <svg:rect> children with a namespace prefix that browsers discard
@@ -206,7 +253,7 @@ def create_app(config):
         if auth_error:
             return auth_error
         return render_template("pending.html",
-                               pending=[dict(r) for r in push_store.list_pending(g.db)])
+                               pushes=push_store.list_pending_pushes(g.db))
 
     @app.route("/devices/<device_secret>", methods=["DELETE"])
     def devices_delete(device_secret):
@@ -285,7 +332,14 @@ def create_app(config):
             return jsonify({"error": "no files uploaded"}), 400
         push_id = uuid.uuid4().hex
         challenge_key = uuid.uuid4().hex
-        push_store.create_push(g.db, push_id, target_device, challenge_key)
+        # Where the device should file these, and what to do if a name is
+        # already taken. Both are per-push options, mirroring the LocalSend
+        # "mds" options, and are carried in the signed manifest so the device
+        # cannot be redirected between fetching it and importing.
+        target_folder = (request.form.get("target_folder") or "").strip()
+        conflict = push_store.normalise_conflict(request.form.get("conflict"))
+        push_store.create_push(g.db, push_id, target_device, challenge_key,
+                               target_folder, conflict)
         sent = 0
         for f in uploads:
             file_id = uuid.uuid4().hex
@@ -320,7 +374,15 @@ def create_app(config):
             )
             if device_auth is None:
                 return jsonify({"error": "registration failed"}), 400
-            return jsonify({"ok": True, "device_auth": device_auth})
+            # The device needs this key to verify the manifest signature, and it
+            # only ever learns it from here, so hand it over in the same response
+            # that completes pairing. The request arrived over the TLS connection
+            # to the very server named in the scanned QR.
+            return jsonify({
+                "ok": True,
+                "device_auth": device_auth,
+                "server_pk": app.config["_server_pk_b64"],
+            })
         device_secret = data.get("device_secret")
         device_auth = data.get("device_auth")
         if not device_secret or not device_auth:
@@ -369,6 +431,8 @@ def create_app(config):
                 push_row["date"], datetime.timezone.utc
             ).isoformat(),
             push_store.get_unacked_files(g.db, push_id),
+            push_row["target_folder"],
+            push_row["conflict"],
         )
         server_priv = _load_private(app.config["_server_pem"])
         body = trigger.manifest_bytes(manifest)
@@ -440,6 +504,21 @@ def create_app(config):
         if pending:
             _ring_doorbell(device, push_row)
         return jsonify({"ok": True, "files_sent": len(pending)})
+
+    @app.route("/pushes/<push_id>/delete", methods=["POST"])
+    def pushes_delete(push_id):
+        """Drop a push from the admin list, including any bytes left on disk.
+
+        Only a push that actually existed has its directory removed, so a
+        crafted id can never point the recursive delete at some other path.
+        """
+        auth_error = require_session()
+        if auth_error:
+            return auth_error
+        if push_store.delete_push(g.db, push_id):
+            shutil.rmtree(os.path.join(config.PUSH_STORAGE_DIR, push_id),
+                          ignore_errors=True)
+        return redirect(_return_to("/pushes"), 303)
 
     return app
 

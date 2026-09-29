@@ -20,22 +20,29 @@ class CloudPushPairing @Inject constructor() {
     @Serializable
     private data class PairingQr(
         val serverUrl: String,
-        val pk: String,
         val token: String,
     )
 
     data class PairingInfo(
         val serverUrl: String,
-        val serverPublicKeyDer: ByteArray,
         val token: String,
     )
 
-    /** Parse the JSON the server's `/pair` page encodes. Null if unusable. */
+    /**
+     * Parse the JSON the server's `/pair` page encodes. Null if unusable.
+     *
+     * The code carries only the server URL and a one-time token. The server
+     * public key is deliberately absent: at ~740 base64 characters for a
+     * 3072-bit key it dominated the payload and made the QR too dense to scan
+     * comfortably. The token proves the user stood at this server's
+     * authenticated pairing page, so the key is fetched from that same server
+     * during registration instead, over the TLS connection to the URL named
+     * here.
+     */
     fun parse(qrText: String): PairingInfo? = try {
         val qr = WIRE.decodeFromString<PairingQr>(qrText)
         PairingInfo(
             serverUrl = qr.serverUrl.trimEnd('/'),
-            serverPublicKeyDer = Base64.getDecoder().decode(qr.pk),
             token = qr.token,
         ).takeIf { it.serverUrl.isNotBlank() && it.token.isNotBlank() }
     } catch (_: Exception) {
@@ -43,9 +50,21 @@ class CloudPushPairing @Inject constructor() {
     }
 
     /**
-     * The server sends its public key as base64 DER; signature verification
-     * wants PEM. Wrapping those same bytes is the whole conversion, and getting
-     * it wrong would show up much later as every manifest failing to verify.
+     * The server hands its public key back as base64 DER in the registration
+     * response; signature verification wants PEM. Null if the server sent
+     * something we cannot read, so a malformed key fails loudly at pairing
+     * rather than silently rejecting every manifest later.
+     */
+    fun pemFromBase64(serverPkB64: String): String? = try {
+        if (serverPkB64.isBlank()) null else toPem(Base64.getDecoder().decode(serverPkB64))
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+
+    /**
+     * Wrap DER public-key bytes as PEM. Signature verification reads PEM, so
+     * this wrapping is the whole conversion, and getting it wrong would show up
+     * much later as every manifest failing to verify.
      */
     fun toPem(der: ByteArray): String {
         val b64 = Base64.getEncoder().encodeToString(der)
@@ -57,7 +76,7 @@ class CloudPushPairing @Inject constructor() {
     }
 
     private companion object {
-        /** `v` and `expires` are informational; ignore anything we do not know. */
+        /** `v` is informational; ignore anything we do not know. */
         val WIRE = Json {
             ignoreUnknownKeys = true
             namingStrategy = JsonNamingStrategy.SnakeCase

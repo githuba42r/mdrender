@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.a42r.mdrender.gesture.settings.UnhideSettingsContent
 import com.a42r.mdrender.gesture.settings.UnhideSettingsViewModel
 import com.a42r.mdrender.MDRenderApplication
+import com.a42r.mdrender.cloudpush.QrScannerScreen
 import com.a42r.mdrender.security.DeviceAuth
 
 private const val TAG = "SettingsScreen"
@@ -48,6 +49,11 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var currentSection by remember { mutableStateOf<SettingsSection?>(null) }
+    // The QR scanner is a full-screen Scaffold, so it cannot live inside the
+    // vertically-scrolling section Column (infinite max height => Compose
+    // IllegalStateException). It is hosted here, as a sibling of that Column.
+    var scanning by remember { mutableStateOf(false) }
+    val cloudPushViewModel: CloudPushViewModel = hiltViewModel()
     val context = LocalContext.current
     val activity = context as? FragmentActivity
 
@@ -59,8 +65,8 @@ fun SettingsScreen(
         ActivityResultContracts.RequestPermission()
     ) { /* transfer dialog still works in-app without it */ }
 
-    BackHandler(enabled = currentSection != null) {
-        currentSection = null
+    BackHandler(enabled = scanning || currentSection != null) {
+        if (scanning) scanning = false else currentSection = null
     }
 
     Scaffold(
@@ -78,7 +84,20 @@ fun SettingsScreen(
             )
         }
     ) { padding ->
-        if (currentSection == SettingsSection.PUSHES) {
+        if (scanning) {
+            // Full-screen takeover, hosted outside the scrollable Column so it
+            // gets bounded constraints (a nested full-screen Scaffold inside
+            // verticalScroll is measured at infinite height and throws).
+            Box(modifier = Modifier.padding(padding)) {
+                QrScannerScreen(
+                    onResult = {
+                        scanning = false
+                        cloudPushViewModel.pairWithQr(it)
+                    },
+                    onCancel = { scanning = false },
+                )
+            }
+        } else if (currentSection == SettingsSection.PUSHES) {
             // PushHistoryScreen renders a LazyColumn; nesting it inside the
             // verticalScroll Column below would measure it with infinite max
             // height and throw IllegalStateException. Host it in a plain
@@ -110,7 +129,10 @@ fun SettingsScreen(
                         context = context,
                         notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
                     )
-                    SettingsSection.CLOUDPUSH -> CloudPushSettings()
+                    SettingsSection.CLOUDPUSH -> CloudPushSettings(
+                        viewModel = cloudPushViewModel,
+                        onScan = { scanning = true },
+                    )
                     SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
                     SettingsSection.ABOUT -> AboutSection(uiState = uiState)
                     SettingsSection.PUSHES -> Unit // handled above; unreachable here

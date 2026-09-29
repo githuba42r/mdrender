@@ -1,12 +1,24 @@
 # server/app/push_store.py
 import time
 
+# Mirrors the device's ConflictStrategy. Anything unrecognised falls back to
+# "rename" rather than being rejected, matching how the app parses the value:
+# the safest outcome for a surprise is to keep both copies, never to clobber.
+CONFLICT_STRATEGIES = ("replace", "skip", "rename")
 
-def create_push(conn, push_id: str, target_device: str, challenge_key: str = "") -> None:
+
+def normalise_conflict(value: str | None) -> str:
+    v = (value or "").strip().lower()
+    return v if v in CONFLICT_STRATEGIES else "rename"
+
+
+def create_push(conn, push_id: str, target_device: str, challenge_key: str = "",
+                target_folder: str = "", conflict: str = "rename") -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO pushes (push_id, target_device, challenge_key, date, status)"
-        " VALUES (?, ?, ?, ?, 'pending')",
-        (push_id, target_device, challenge_key, int(time.time())),
+        "INSERT OR IGNORE INTO pushes (push_id, target_device, challenge_key, date, status,"
+        " target_folder, conflict) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        (push_id, target_device, challenge_key, int(time.time()),
+         target_folder, normalise_conflict(conflict)),
     )
     conn.commit()
 
@@ -74,20 +86,67 @@ def purge_expired_bytes(conn, ttl_hours, now) -> list[str]:
 
 
 def list_pushes(conn):
-    return conn.execute(
-        "SELECT p.push_id, p.target_device, p.date, p.status,"
-        " COUNT(f.file_id) AS file_count,"
-        " COALESCE(SUM(CASE WHEN f.status = 'acked' THEN 1 ELSE 0 END), 0) AS acked_count"
-        " FROM pushes p LEFT JOIN push_files f ON f.push_id = p.push_id"
-        " GROUP BY p.push_id ORDER BY p.date DESC"
-    ).fetchall()
+    """Pushes for the admin list, with everything the row displays.
+
+    `status` is derived from the per-file statuses rather than read from
+    `pushes.status`: that column has a 'pending' default and nothing ever
+    updated it, so it reported "pending" for every push forever. Deriving here
+    keeps the page honest without needing a write on every ack.
+    """
+    rows = [
+        dict(r) for r in conn.execute(
+            "SELECT p.push_id, p.target_device, p.date, p.target_folder, p.conflict,"
+            " COUNT(f.file_id) AS file_count,"
+            " COALESCE(SUM(CASE WHEN f.status = 'acked' THEN 1 ELSE 0 END), 0) AS acked_count,"
+            " COALESCE(SUM(CASE WHEN f.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count,"
+            " COALESCE(SUM(CASE WHEN f.status = 'exhausted' THEN 1 ELSE 0 END), 0) AS exhausted_count,"
+            " COALESCE(GROUP_CONCAT(f.file_name, ', '), '') AS file_names"
+            " FROM pushes p LEFT JOIN push_files f ON f.push_id = p.push_id"
+            " GROUP BY p.push_id ORDER BY p.date DESC"
+        ).fetchall()
+    ]
+    for r in rows:
+        r["status"] = _rollup_status(
+            r["file_count"], r["pending_count"], r["exhausted_count"]
+        )
+    return rows
 
 
-def list_pending(conn):
-    return conn.execute(
-        "SELECT f.*, p.target_device FROM push_files f JOIN pushes p ON p.push_id = f.push_id"
-        " WHERE f.status = 'pending' ORDER BY f.created_at DESC"
+def _rollup_status(file_count: int, pending: int, exhausted: int) -> str:
+    if file_count == 0:
+        return "empty"
+    if pending:
+        return "pending"
+    if exhausted:
+        return "failed"
+    return "acked"
+
+
+def list_pending_pushes(conn):
+    """Outstanding files, grouped by the push they came in on.
+
+    The admin acts on whole pushes — remove, re-push — so the grouping rule
+    lives here rather than being re-derived in the template. Groups follow the
+    query order, so the newest push is first.
+    """
+    rows = conn.execute(
+        "SELECT f.*, p.target_device, p.target_folder, p.conflict, p.date AS push_date"
+        " FROM push_files f JOIN pushes p ON p.push_id = f.push_id"
+        " WHERE f.status = 'pending'"
+        " ORDER BY p.date DESC, f.created_at"
     ).fetchall()
+    grouped: dict[str, dict] = {}
+    for r in rows:
+        group = grouped.setdefault(r["push_id"], {
+            "push_id": r["push_id"],
+            "target_device": r["target_device"],
+            "target_folder": r["target_folder"],
+            "conflict": r["conflict"],
+            "date": r["push_date"],
+            "files": [],
+        })
+        group["files"].append(dict(r))
+    return list(grouped.values())
 
 
 def reset_push_retries(conn, push_id, now) -> None:
@@ -114,3 +173,17 @@ def increment_retry(conn, file_id, now, interval_minutes) -> None:
 
 def get_push_by_id(conn, push_id):
     return conn.execute("SELECT * FROM pushes WHERE push_id = ?", (push_id,)).fetchone()
+
+
+def delete_push(conn, push_id) -> bool:
+    """Remove a push and every file row that belongs to it.
+
+    Returns whether the push existed, which the caller uses to decide if the
+    on-disk tree is worth removing: `stored_path` is nulled on ack and on
+    exhaustion, so the database can no longer find bytes that are still sitting
+    under the storage root, but `storage_dir/<push_id>/` always can.
+    """
+    cur = conn.execute("DELETE FROM pushes WHERE push_id = ?", (push_id,))
+    conn.execute("DELETE FROM push_files WHERE push_id = ?", (push_id,))
+    conn.commit()
+    return cur.rowcount > 0

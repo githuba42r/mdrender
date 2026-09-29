@@ -72,6 +72,66 @@ def verify_session(session_secret: str, token: str, config) -> bool:
     return True
 
 
+# ---- Server-side session records -------------------------------------------
+#
+# The HMAC above proves a cookie was minted by this server; the table below is
+# what makes a session *retained*: it survives a restart, can be listed and
+# revoked, and expires against a server-held deadline rather than whatever the
+# cookie claims. Only the SHA-256 of the token is stored, so a leaked database
+# cannot be replayed as a live session.
+
+
+def session_token_hash(session_secret: str, token: str) -> str:
+    return hmac.new(session_secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+
+
+def create_session(conn, session_secret: str, config) -> str:
+    """Mint a signed session token and record it so it can be validated later."""
+    token = make_session(session_secret, config)
+    now = int(time.time())
+    conn.execute(
+        "INSERT INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)",
+        (session_token_hash(session_secret, token), now, now + SESSION_TTL_SECONDS),
+    )
+    conn.commit()
+    return token
+
+
+def session_is_valid(conn, session_secret: str, token: str | None, config) -> bool:
+    """True only when the cookie is correctly signed *and* still has a live row.
+
+    Both checks matter: the signature alone would accept a token that was
+    logged out, and the row alone would accept anything an attacker guessed.
+    """
+    if not token or not verify_session(session_secret, token, config):
+        return False
+    row = conn.execute(
+        "SELECT expires_at FROM sessions WHERE token_hash = ?",
+        (session_token_hash(session_secret, token),),
+    ).fetchone()
+    if row is None:
+        return False
+    if time.time() > row["expires_at"]:
+        # Expired rows are pruned lazily; nothing reads them again.
+        delete_session(conn, session_secret, token)
+        return False
+    return True
+
+
+def delete_session(conn, session_secret: str, token: str | None) -> None:
+    if not token:
+        return
+    conn.execute("DELETE FROM sessions WHERE token_hash = ?",
+                 (session_token_hash(session_secret, token),))
+    conn.commit()
+
+
+def purge_expired_sessions(conn, now: float | None = None) -> None:
+    now = now or time.time()
+    conn.execute("DELETE FROM sessions WHERE expires_at < ?", (int(now),))
+    conn.commit()
+
+
 ACCESS_TOKENS: dict[str, tuple[str, float]] = {}  # token -> (client_id, expires_at)
 
 

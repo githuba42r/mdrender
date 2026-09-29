@@ -2,25 +2,47 @@
 {% block title %}Pending files &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Pending files</h1>
-{% if pending %}
-<table>
-  <thead>
-    <tr><th>File</th><th>Path</th><th>Size</th><th>Created</th><th>Status</th><th>Retries</th><th>Target device</th></tr>
-  </thead>
-  <tbody>
-    {% for f in pending %}
-    <tr>
-      <td>{{ f.file_name }}</td>
-      <td>{{ f.file_path }}</td>
-      <td>{{ f.size }}</td>
-      <td>{{ f.created_at | dt }}</td>
-      <td>{{ f.status }}</td>
-      <td>{{ f.retries }}</td>
-      <td>{{ f.target_device }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% if pushes %}
+{% for p in pushes %}
+<section class="push-group">
+  <h2>
+    <code>{{ p.push_id }}</code>
+    <span class="empty">&rarr; {{ p.target_device }}</span>
+  </h2>
+  <p>
+    Destination:
+    {% if p.target_folder %}
+      <code>{{ p.target_folder }}</code>
+    {% else %}
+      <span class="empty">(app default)</span>
+    {% endif %}
+    &middot; Conflict: {{ p.conflict }}
+    &middot; Queued: {{ p.date | dt }}
+    <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
+          onsubmit="return confirm('Delete this entire push and all {{ p.files | length }} pending file(s)?');">
+      <input type="hidden" name="next" value="/pending">
+      <button type="submit">Delete entire push</button>
+    </form>
+  </p>
+  <table>
+    <thead>
+      <tr><th>File</th><th>Path</th><th>Size</th><th>Created</th><th>Status</th><th>Retries</th></tr>
+    </thead>
+    <tbody>
+      {% for f in p.files %}
+      <tr>
+        <td>{{ f.file_name }}</td>
+        <td>{{ f.file_path }}</td>
+        <td>{{ f.size }}</td>
+        <td>{{ f.created_at | dt }}</td>
+        <td>{{ f.status }}</td>
+        <td>{{ f.retries }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
 {% else %}
 <p class="empty">No pending files.</p>
 {% endif %}

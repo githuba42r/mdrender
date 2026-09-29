@@ -71,10 +71,13 @@ def open_trigger(push_key: bytes, sealed: dict):
         return None
 
 
-def build_manifest(push_id: str, date_iso: str, rows) -> dict:
+def build_manifest(push_id: str, date_iso: str, rows, target_folder: str = "",
+                   conflict: str = "rename") -> dict:
     return {
         "push_id": push_id,
         "date": date_iso,
+        "target_folder": target_folder or "",
+        "conflict": conflict or "rename",
         "files": [
             {"file_id": r["file_id"], "name": r["file_name"],
              "path": r["file_path"] or "", "size": r["size"],

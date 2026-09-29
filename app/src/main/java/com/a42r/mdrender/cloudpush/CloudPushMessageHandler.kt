@@ -45,12 +45,13 @@ class CloudPushMessageHandler @Inject constructor(
         val fetched = client.fetchManifest(doorbell).getOrNull()
             ?: return Outcome.Dropped(Drop.MANIFEST_UNAVAILABLE)
 
-        val files = crypto.verifyManifest(
+        val manifest = crypto.verifyManifest(
             fetched.body, fetched.signature, config.serverPublicKeyPem
         ) ?: return Outcome.Dropped(Drop.BAD_MANIFEST_SIGNATURE)
 
-        // Only now is any file name or retrieval key trusted.
-        manager.enqueue(doorbell, files)
+        // Only now is any file name, retrieval key, or destination folder
+        // trusted: the whole manifest arrived under the server's signature.
+        manager.enqueue(doorbell, manifest)
         return Outcome.Enqueued
     }
 }

@@ -5,20 +5,47 @@
 {% if pushes %}
 <table>
   <thead>
-    <tr><th>Push ID</th><th>Target device</th><th>Date</th><th>Status</th><th>Files</th><th>Acked</th><th></th></tr>
+    <tr>
+      <th>Push ID</th>
+      <th>Device</th>
+      <th>Destination folder</th>
+      <th>Conflict</th>
+      <th>Files</th>
+      <th>Date</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
   </thead>
   <tbody>
     {% for p in pushes %}
     <tr>
       <td><code>{{ p.push_id }}</code></td>
       <td>{{ p.target_device }}</td>
+      <td>
+        {% if p.target_folder %}
+          <code>{{ p.target_folder }}</code>
+        {% else %}
+          <span class="empty">(app default)</span>
+        {% endif %}
+      </td>
+      <td>{{ p.conflict }}</td>
+      <td>
+        {% if p.file_names %}
+          {{ p.file_names }}
+          <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
+        {% else %}
+          <span class="empty">none</span>
+        {% endif %}
+      </td>
       <td>{{ p.date | dt }}</td>
       <td>{{ p.status }}</td>
-      <td>{{ p.file_count }}</td>
-      <td>{{ p.acked_count }}</td>
       <td>
-        <form method="POST" action="/api/push/{{ p.push_id }}/retry">
+        <form method="POST" action="/api/push/{{ p.push_id }}/retry" class="inline">
           <button type="submit">Re-push pending</button>
+        </form>
+        <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
+              onsubmit="return confirm('Remove this push and any stored files?');">
+          <button type="submit">Remove</button>
         </form>
       </td>
     </tr>

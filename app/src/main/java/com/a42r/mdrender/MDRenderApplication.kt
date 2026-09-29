@@ -143,19 +143,30 @@ class MDRenderApplication : Application() {
             override fun onActivityPaused(activity: Activity) {
                 if (!isTransient(activity)) {
                     if (activity.isChangingConfigurations) return
-                    if (isForeground && startedActivities <= 1) {
-                        val didLock = appLock.onBackground()
+                    // A translucent system activity on top of us (e.g. the
+                    // runtime camera-permission prompt) pauses us WITHOUT
+                    // stopping us, so a pause alone does NOT mean the user left
+                    // the app. Only secure the window here — it must be set
+                    // before the recents snapshot. The relock + task removal
+                    // live in onActivityStopped, which a translucent overlay
+                    // never triggers.
+                    if (isForeground) {
                         activity.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                        if (didLock && !isAudioActive()) {
-                            activity.finishAndRemoveTask()
-                        }
                     }
                     isForeground = false
                 }
             }
             override fun onActivityStopped(activity: Activity) {
-                if (!isTransient(activity)) {
-                    startedActivities = (startedActivities - 1).coerceAtLeast(0)
+                if (isTransient(activity)) return
+                startedActivities = (startedActivities - 1).coerceAtLeast(0)
+                if (startedActivities > 0) return
+                if (activity.isChangingConfigurations) return
+                // Every activity stopped => the app is truly backgrounded. A
+                // translucent overlay only pauses us, so this fires only on a
+                // real background transition, never on an in-app/system dialog.
+                val didLock = appLock.onBackground()
+                if (didLock && !isAudioActive()) {
+                    (foregroundActivity?.get() ?: activity).finishAndRemoveTask()
                 }
             }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}

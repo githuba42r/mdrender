@@ -13,6 +13,11 @@ CREATE TABLE IF NOT EXISTS pairing_tokens (
   expires_at INTEGER NOT NULL,
   used INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS clients (
   client_id TEXT PRIMARY KEY,
   client_secret_hash TEXT NOT NULL,
@@ -36,7 +41,9 @@ CREATE TABLE IF NOT EXISTS pushes (
   target_device TEXT NOT NULL,
   challenge_key TEXT NOT NULL,
   date INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
+  status TEXT NOT NULL DEFAULT 'pending',
+  target_folder TEXT NOT NULL DEFAULT '',
+  conflict TEXT NOT NULL DEFAULT 'rename'
 );
 CREATE TABLE IF NOT EXISTS push_files (
   file_id TEXT PRIMARY KEY,
@@ -80,7 +87,11 @@ class Database:
         """
         wanted = {
             "devices": {"push_key": "TEXT NOT NULL DEFAULT ''"},
-            "pushes": {"challenge_key": "TEXT NOT NULL DEFAULT ''"},
+            "pushes": {
+                "challenge_key": "TEXT NOT NULL DEFAULT ''",
+                "target_folder": "TEXT NOT NULL DEFAULT ''",
+                "conflict": "TEXT NOT NULL DEFAULT 'rename'",
+            },
         }
         for table, columns in wanted.items():
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}

@@ -40,6 +40,14 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
     data class Manifest(
         val pushId: String,
         val date: String,
+        /**
+         * Folder path relative to root, e.g. "Story/cloud-send-images".
+         * Blank means the app's default Cloud Push root. Defaults keep a
+         * manifest from a server that predates these options parseable.
+         */
+        val targetFolder: String = "",
+        /** One of ConflictStrategy's wire values; anything else falls back to RENAME. */
+        val conflict: String = "rename",
         val files: List<ManifestFile>,
     )
 
@@ -80,8 +88,8 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
     }
 
     /**
-     * Verify [manifestJson] against [sigB64] using the key the QR code pinned at
-     * pairing, and return the file list only if that check passes.
+     * Verify [manifestJson] against [sigB64] using the server key the phone pinned at
+     * pairing, and return the whole manifest only if that check passes.
      *
      * The signature is checked over the exact bytes passed in, never over a
      * re-serialisation of the parsed object: the server signs one canonical
@@ -93,7 +101,7 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
         manifestJson: String,
         sigB64: String,
         serverPublicKeyPem: String,
-    ): List<ManifestFile>? {
+    ): Manifest? {
         return try {
             val pem = serverPublicKeyPem
                 .replace("-----BEGIN PUBLIC KEY-----", "")
@@ -106,7 +114,7 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
                 update(manifestJson.toByteArray(Charsets.UTF_8))
                 verify(Base64.getDecoder().decode(sigB64))
             }
-            if (!ok) null else WIRE.decodeFromString<Manifest>(manifestJson).files
+            if (!ok) null else WIRE.decodeFromString<Manifest>(manifestJson)
         } catch (_: Exception) {
             null
         }

@@ -2,6 +2,7 @@ package com.a42r.mdrender.cloudpush
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,9 +22,8 @@ class CloudPushPairingTest {
 
     private fun qr(
         url: String = "https://push.example.com",
-        pk: String = Base64.getEncoder().encodeToString(der),
         token: String = "tok-1",
-    ) = """{"v":1,"server_url":"$url","pk":"$pk","token":"$token","expires":"2026-01-01T00:00:00+00:00"}"""
+    ) = """{"v":1,"server_url":"$url","token":"$token"}"""
 
     @Test
     fun `parses a valid pairing code`() {
@@ -31,7 +31,6 @@ class CloudPushPairingTest {
 
         assertEquals("https://push.example.com", info?.serverUrl)
         assertEquals("tok-1", info?.token)
-        assertTrue("key must survive the round trip", der.contentEquals(info!!.serverPublicKeyDer))
     }
 
     @Test
@@ -54,6 +53,22 @@ class CloudPushPairingTest {
     }
 
     @Test
+    fun `reads the server key the registration response hands back`() {
+        val pem = pairing.pemFromBase64(Base64.getEncoder().encodeToString(der))
+
+        assertNotNull(pem)
+        assertEquals(pairing.toPem(der), pem)
+    }
+
+    @Test
+    fun `rejects a server key the registration response garbled`() {
+        // Failing here says "bad key" at pairing time. Silently storing nothing
+        // would instead surface much later as every manifest failing to verify.
+        assertNull(pairing.pemFromBase64("not!base64!"))
+        assertNull(pairing.pemFromBase64(""))
+    }
+
+    @Test
     fun `PEM lines are wrapped to 64 characters`() {
         val lines = pairing.toPem(der).trim().lines()
         assertEquals("-----BEGIN PUBLIC KEY-----", lines.first())
@@ -69,15 +84,22 @@ class CloudPushPairingTest {
 
     @Test
     fun `rejects a code missing any required field`() {
-        assertNull(pairing.parse("""{"v":1,"pk":"${Base64.getEncoder().encodeToString(der)}"}"""))
-        assertNull(pairing.parse("""{"v":1,"server_url":"https://x","token":"t"}"""))
-        assertNull(pairing.parse("""{"v":1,"server_url":"https://x","pk":"AAAA"}"""))
-        assertNull(pairing.parse("""{"v":1,"server_url":"  ","pk":"AAAA","token":"t"}"""))
+        assertNull(pairing.parse("""{"v":1}"""))
+        assertNull(pairing.parse("""{"v":1,"token":"t"}"""))
+        assertNull(pairing.parse("""{"v":1,"server_url":"https://x"}"""))
+        assertNull(pairing.parse("""{"v":1,"server_url":"  ","token":"t"}"""))
     }
 
     @Test
-    fun `rejects a key that is not valid base64`() {
-        assertNull(pairing.parse(qr(pk = "not!base64!")))
+    fun `still accepts a code carrying fields we no longer use`() {
+        // Older pair pages (and a future one) may add informational keys; an
+        // unrecognised field must not be mistaken for a malformed code.
+        val info = pairing.parse(
+            """{"v":1,"server_url":"https://x","token":"t","expires":"2026-01-01T00:00:00+00:00"}"""
+        )
+
+        assertEquals("https://x", info?.serverUrl)
+        assertEquals("t", info?.token)
     }
 
     @Test

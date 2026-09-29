@@ -93,6 +93,9 @@ def test_full_push_flow(config, db_path, monkeypatch):
     assert reg.json["ok"] is True
     device_auth = reg.json["device_auth"]
     assert device_auth
+    # The device learns the server's signing key here rather than from the QR.
+    # It must be the key that signed the manifests it will later verify.
+    assert reg.json["server_pk"] == app.config["_server_pk_b64"]
 
     # Push with a target_device (required)
     r = client.post("/api/push",

@@ -41,29 +41,29 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.a42r.mdrender.cloudpush.CloudPushManager
-import com.a42r.mdrender.cloudpush.QrScannerScreen
 
+/**
+ * Cloud Push settings section.
+ *
+ * The QR scanner is NOT rendered here: it is a full-screen Scaffold, and this
+ * section is hosted inside a vertically-scrolling Column. A nested full-screen
+ * Scaffold there is measured with infinite max height and Compose throws
+ * IllegalStateException (Size(w x Int.MAX_VALUE)). Instead this section just
+ * signals [onScan]; the host (SettingsScreen) shows the scanner as a sibling of
+ * the scrollable content, with bounded constraints.
+ */
 @Composable
-fun CloudPushSettings(viewModel: CloudPushViewModel = hiltViewModel()) {
+fun CloudPushSettings(
+    viewModel: CloudPushViewModel = hiltViewModel(),
+    onScan: () -> Unit = {},
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var scanning by remember { mutableStateOf(false) }
     var confirmRotate by remember { mutableStateOf(false) }
 
     val cameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> scanning = granted }
-
-    if (scanning) {
-        QrScannerScreen(
-            onResult = {
-                scanning = false
-                viewModel.pairWithQr(it)
-            },
-            onCancel = { scanning = false },
-        )
-        return
-    }
+    ) { granted -> if (granted) onScan() }
 
     Column(
         modifier = Modifier.padding(16.dp),
@@ -107,20 +107,26 @@ fun CloudPushSettings(viewModel: CloudPushViewModel = hiltViewModel()) {
             )
         }
 
-        OutlinedTextField(
-            value = uiState.serverUrl,
-            onValueChange = viewModel::setServerUrl,
-            label = { Text("Server URL") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        // Only meaningful once pairing has succeeded. Before that there is no
+        // server to point at, and an editable box would suggest otherwise; the
+        // URL is set by scanning the pairing code, not typed.
+        if (uiState.isPaired) {
+            OutlinedTextField(
+                value = uiState.serverUrl,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Server URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         Button(
             onClick = {
                 val granted = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.CAMERA
                 ) == PackageManager.PERMISSION_GRANTED
-                if (granted) scanning = true
+                if (granted) onScan()
                 else cameraPermission.launch(Manifest.permission.CAMERA)
             },
             modifier = Modifier.fillMaxWidth(),

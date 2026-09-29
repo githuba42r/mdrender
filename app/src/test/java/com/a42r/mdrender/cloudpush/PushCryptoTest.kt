@@ -94,16 +94,44 @@ class PushCryptoTest {
         val rsa = rsaKeyPair()
         val body = manifestJson()
 
-        val files = crypto.verifyManifest(body, sign(rsa, body), pemEncode(rsa.public.encoded))
+        val manifest = crypto.verifyManifest(body, sign(rsa, body), pemEncode(rsa.public.encoded))
 
-        assertNotNull(files)
-        assertEquals(2, files!!.size)
+        assertNotNull(manifest)
+        val files = manifest!!.files
+        assertEquals(2, files.size)
         assertEquals("notes.md", files[0].name)
         assertEquals("Docs/Reports", files[0].path)
         assertEquals(1234L, files[0].size)
         assertEquals("rk-1", files[0].retrievalKey)
         assertEquals("f1", files[0].fileId)
         assertEquals("other.md", files[1].name)
+        // A manifest that predates the options still opens, and lands on the
+        // documented defaults rather than on an empty folder.
+        assertEquals("", manifest.targetFolder)
+        assertEquals("rename", manifest.conflict)
+    }
+
+    @Test
+    fun `verifyManifest returns the target folder and conflict the sender chose`() {
+        val rsa = rsaKeyPair()
+        val body = manifestJsonWithOptions("Story/cloud-send-images", "replace")
+
+        val manifest = crypto.verifyManifest(body, sign(rsa, body), pemEncode(rsa.public.encoded))
+
+        assertNotNull(manifest)
+        assertEquals("Story/cloud-send-images", manifest!!.targetFolder)
+        assertEquals("replace", manifest.conflict)
+    }
+
+    @Test
+    fun `verifyManifest rejects a retargeted folder`() {
+        val rsa = rsaKeyPair()
+        val body = manifestJsonWithOptions("Story/cloud-send-images", "replace")
+        // The folder is inside the signed bytes, so moving the file elsewhere is
+        // exactly as detectable as renaming it.
+        val moved = body.replace("Story/cloud-send-images", "Story/cloud-send-images/..")
+
+        assertNull(crypto.verifyManifest(moved, sign(rsa, body), pemEncode(rsa.public.encoded)))
     }
 
     @Test
@@ -168,6 +196,16 @@ class PushCryptoTest {
             """{"file_id":"f1","name":"notes.md","path":"Docs/Reports","retrieval_key":"rk-1","size":1234},""" +
             """{"file_id":"f2","name":"other.md","path":"","retrieval_key":"rk-2","size":10}""" +
             """],"push_id":"push-1"}"""
+
+    /**
+     * The same manifest, but carrying the push-level folder and conflict options
+     * a sender can now choose. These two tests pin the fact that the options are
+     * part of the signed body: a server that added them is signing over them.
+     */
+    private fun manifestJsonWithOptions(targetFolder: String, conflict: String): String =
+        """{"conflict":"$conflict","date":"2026-08-29T00:00:00+00:00","files":[""" +
+            """{"file_id":"f1","name":"notes.md","path":"","retrieval_key":"rk-1","size":1234}""" +
+            """],"push_id":"push-1","target_folder":"$targetFolder"}"""
 
     private fun pemEncode(der: ByteArray): String {
         val b64 = Base64.getEncoder().encodeToString(der)
