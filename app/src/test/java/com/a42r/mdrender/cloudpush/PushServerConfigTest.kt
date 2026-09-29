@@ -81,6 +81,19 @@ class PushServerConfigTest {
     }
 
     @Test
+    fun `clear regenerates the device secret rather than leaving it empty`() {
+        val secretBefore = config.deviceSecret
+        config.clear()
+
+        val secretAfter = config.deviceSecret
+
+        // An empty device secret would make every registration attempt fail at
+        // the server, and it would look paired from the app's side.
+        assertTrue("device secret must not be blank", secretAfter.isNotBlank())
+        assertNotEquals(secretBefore, secretAfter)
+    }
+
+    @Test
     fun `values written are visible to a second instance over the same prefs`() {
         config.serverUrl = "https://push.example.com"
         val second = PushServerConfig(prefs, mock<LocalSendPrefs> { on { alias } doReturn "Pixel 9" })

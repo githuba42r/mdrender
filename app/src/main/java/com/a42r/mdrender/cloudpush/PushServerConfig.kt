@@ -61,8 +61,11 @@ class PushServerConfig @Inject constructor(
             .putString(KEY_SERVER_URL, "")
             .putString(KEY_SERVER_PUBLIC_KEY, "")
             .putString(KEY_DEVICE_AUTH, "")
-            .putString(KEY_DEVICE_SECRET, "")
-            .putString(KEY_PUSH_KEY, "")
+            // Removed rather than blanked: these two are generated on first read,
+            // and only a missing entry triggers that. Storing "" would leave a
+            // re-paired device with an empty device secret and push key.
+            .remove(KEY_DEVICE_SECRET)
+            .remove(KEY_PUSH_KEY)
             .apply()
     }
 

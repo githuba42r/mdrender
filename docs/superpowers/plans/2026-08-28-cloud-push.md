@@ -193,7 +193,7 @@ git commit -m "chore(server): scaffold Python push server + pytest harness"
 **Interfaces:**
 - Produces: `firebase-messaging`, `com.google.mlkit:barcode-scanning`, CameraX on the classpath; the `com.google.gms.google-services` plugin applied.
 
-- [ ] **Step 1: Add versions to `gradle/libs.versions.toml`**
+- [x] **Step 1: Add versions to `gradle/libs.versions.toml`**
 
 ```toml
 firebaseBom = "33.0.0"
@@ -210,8 +210,13 @@ camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.r
 camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraX" }
 camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "cameraX" }
 ```
+> Implemented with `firebaseBom = "33.7.0"` rather than 33.0.0, which was already stale.
 
 - [ ] **Step 2: Add the google-services plugin to the top-level `build.gradle.kts`**
+> Deferred together with Step 4. The plugin fails the build without
+> `app/google-services.json`, which the maintainer has not created yet, so applying it
+> would break every Android build. All other Phase B work compiles and is tested
+> without it. Do not fabricate the file.
 
 ```kotlin
 plugins {
@@ -220,7 +225,8 @@ plugins {
 }
 ```
 
-- [ ] **Step 3: Apply the plugin and deps in `app/build.gradle.kts`**
+- [x] **Step 3: Apply the plugin and deps in `app/build.gradle.kts`**
+> Deps applied; the plugin half waits on Step 2.
 
 ```kotlin
 plugins {
@@ -248,18 +254,18 @@ dependencies {
 ```
 If the maintainer has not run the script yet, block here and report; do **not** fabricate the file. While blocked, continue with Phase A tasks.
 
-- [ ] **Step 5: Add `android.permission.CAMERA` to `app/src/main/AndroidManifest.xml`**
+- [x] **Step 5: Add `android.permission.CAMERA` to `app/src/main/AndroidManifest.xml`**
 
 ```xml
 <uses-permission android:name="android.permission.CAMERA" />
 ```
 
-- [ ] **Step 6: Verify a build now compiles**
+- [x] **Step 6: Verify a build now compiles**
 
 Run: `./gradlew :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL (with `google-services.json` present).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add gradle/libs.versions.toml build.gradle.kts app/build.gradle.kts \
@@ -2666,7 +2672,7 @@ git commit -m "feat(android): PushClient HTTP + manifest fetch + JSON body auth"
 **Interfaces:**
 - Produces: `@Composable fun QrScannerScreen(onResult: (String) -> Unit, onCancel: () -> Unit)` — a CameraX `PreviewView` + `ImageAnalysis` feeding ML Kit `BarcodeScanner`; on a successful QR parse, calls `onResult(rawText)`.
 
-- [ ] **Step 1: Write `QrPairingScanner.kt` + `QrScannerScreen.kt`**
+- [x] **Step 1: Write `QrPairingScanner.kt` + `QrScannerScreen.kt`**
 
 ```kotlin
 // QrPairingScanner.kt
@@ -2703,12 +2709,12 @@ class QrPairingScanner(
 
 `QrScannerScreen.kt`: a Compose screen with `AndroidView` hosting a `PreviewView`; bind `ProcessCameraProvider.getInstance(context).bindToLifecycle(lifecycleOwner, cameraSelector, preview, analysis)` where `analysis.setAnalyzer(executor, QrPairingScanner(onResult))`. Launched as a full screen from Settings (Task B9).
 
-- [ ] **Step 2: Verify it compiles**
+- [x] **Step 2: Verify it compiles**
 
 Run: `./gradlew :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/QrScannerScreen.kt app/src/main/java/com/a42r/mdrender/cloudpush/QrPairingScanner.kt
@@ -2735,7 +2741,7 @@ git commit -m "feat(android): QR pairing scanner (ML Kit + CameraX)"
   - `fun cancel(fileId: String)` — sets status CANCELLED; the service discards the temp copy and acks as received.
   - `fun onFinished(fileId: String, success: Boolean)`
 
-- [ ] **Step 1: Write the failing test** `CloudPushManagerTest.kt`
+- [x] **Step 1: Write the failing test** `CloudPushManagerTest.kt`
 
 ```kotlin
 @Test fun `enqueue adds every file in a manifest`() { /* assert 2 tasks, callback fired once */ }
@@ -2749,12 +2755,12 @@ git commit -m "feat(android): QR pairing scanner (ML Kit + CameraX)"
 *(Use `kotlinx-coroutines-test` (`runTest`, `StandardTestDispatcher`) with the manager's
 scope injected.)*
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "com.a42r.mdrender.cloudpush.*"`
 Expected: FAIL — class not found.
 
-- [ ] **Step 3: Write `CloudPushManager.kt`**
+- [x] **Step 3: Write `CloudPushManager.kt`**
 
 ```kotlin
 package com.a42r.mdrender.cloudpush
@@ -2821,12 +2827,12 @@ class CloudPushManager @Inject constructor() {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "com.a42r.mdrender.cloudpush.*"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/CloudPushManager.kt app/src/test/java/com/a42r/mdrender/cloudpush/
@@ -2850,7 +2856,7 @@ git commit -m "feat(android): download queue for a complete signed manifest"
   - `cancel(fileId)` discards the temp file and calls `ackReceived` (removes it server-side).
   - `stopSelf()` when the queue for this push is drained; cancels the foreground state.
 
-- [ ] **Step 1: Declare the service in `AndroidManifest.xml`**
+- [x] **Step 1: Declare the service in `AndroidManifest.xml`**
 
 ```xml
 <service
@@ -2859,7 +2865,7 @@ git commit -m "feat(android): download queue for a complete signed manifest"
     android:foregroundServiceType="dataSync" />
 ```
 
-- [ ] **Step 2: Write `CloudPushDownloadService.kt`** (core loop, abbreviated)
+- [x] **Step 2: Write `CloudPushDownloadService.kt`** (core loop, abbreviated)
 
 ```kotlin
 package com.a42r.mdrender.cloudpush
@@ -2977,12 +2983,12 @@ class CloudPushDownloadService : Service() {
 
 *(`buildNotification` uses `Notification.Builder(this, CHANNEL_ID)` with a small `setContentText`; wire `CloudPushManager.onPushReady { CloudPushDownloadService.start(this, it) }` from `MDRenderApplication.onCreate()` after Hilt injection.)*
 
-- [ ] **Step 2: Verify it compiles**
+- [x] **Step 2: Verify it compiles**
 
 Run: `./gradlew :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/CloudPushDownloadService.kt app/src/main/AndroidManifest.xml
@@ -2999,10 +3005,11 @@ git commit -m "feat(android): Cloud Push foreground download service"
 - Consumes: `PushCrypto`, `CloudPushManager`, `PushServerConfig`, `PushClient`.
 - Produces (`com.a42r.mdrender.cloudpush.PushFcmService`, `@AndroidEntryPoint class ... : FirebaseMessagingService()`):
   - `onMessageReceived(message)` — read `message.data["p"]` and `message.data["i"]`, `PushCrypto.decryptTrigger(p, i, config.pushKey)` (off main thread). On a null doorbell, log and drop. Otherwise `PushClient.fetchManifest(doorbell)` → `PushCrypto.verifyManifest(rawBody, sig, config.serverPublicKeyPem)`; **only if that signature verifies** call `manager.enqueue(doorbell, files)`. Any failure drops the message silently.
-  - The whole sequence runs in `goAsync()` with a bounded timeout — FCM grants only a few seconds of wall clock, and a manifest fetch plus RSA verify must complete inside it.
+  - The whole sequence runs on the worker thread Firebase already delivers `onMessageReceived` on, with a bounded timeout — FCM grants only a few seconds of wall clock, and a manifest fetch plus RSA verify must complete inside it.
+  - **Do not use `goAsync()`.** `Service.goAsync()` and `Service.PendingResult` do not exist in this project's Android SDK (verified absent from `android-32` through `android-36` stubs); only `BroadcastReceiver.goAsync()` does. `EnhancedIntentService` dispatches on its own `ExecutorService` and keeps the service alive only while `onMessageReceived` is on the stack, so the correct pattern is `runBlocking { withTimeout(...) }`. A detached `launch` would be killed the moment the executor task returns.
   - `onNewToken(token)` — re-register with the paired server: `PushClient.rotateToken(config, token)`.
 
-- [ ] **Step 1: Register the service in `AndroidManifest.xml`**
+- [x] **Step 1: Register the service in `AndroidManifest.xml`**
 
 ```xml
 <service
@@ -3014,7 +3021,7 @@ git commit -m "feat(android): Cloud Push foreground download service"
 </service>
 ```
 
-- [ ] **Step 2: Write `PushFcmService.kt`**
+- [x] **Step 2: Write `PushFcmService.kt`**
 
 ```kotlin
 package com.a42r.mdrender.cloudpush
@@ -3093,12 +3100,12 @@ class PushFcmService : FirebaseMessagingService() {
 }
 ```
 
-- [ ] **Step 3: Verify it compiles**
+- [x] **Step 3: Verify it compiles**
 
 Run: `./gradlew :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/PushFcmService.kt app/src/main/AndroidManifest.xml
@@ -3125,18 +3132,18 @@ git commit -m "feat(android): FCM doorbell service (decrypt + enqueue, token rot
   - **Pending / active downloads** — `CloudPushManager.state` collected; each row shows name + status + progress, with a **Cancel** `IconButton` → `manager.cancel(fileId)`.
   - Status label: "Paired with <server>" + files-received count, or the re-registration prompt.
 
-- [ ] **Step 1: Add the section to `SettingsScreen.kt`** — add `CLOUDPUSH("Cloud Push")` to the enum, a `ListItem` in `SettingsMenu`, and a `SettingsSection.CLOUDPUSH -> CloudPushSettings(viewModel = cloudPushViewModel)` branch in the `when`.
+- [x] **Step 1: Add the section to `SettingsScreen.kt`** — add `CLOUDPUSH("Cloud Push")` to the enum, a `ListItem` in `SettingsMenu`, and a `SettingsSection.CLOUDPUSH -> CloudPushSettings(viewModel = cloudPushViewModel)` branch in the `when`.
 
-- [ ] **Step 2: Write `CloudPushViewModel.kt`** — holds `config`, exposes `uiState: StateFlow<CloudPushUiState>` (isPaired, deviceName, serverUrl, deviceSecret, downloads from `manager.state`, checkRegistration result), and actions `pairWithQr(qrText)`, `setServerUrl(url)`, `checkRegistration()`, `rotateKeys()`, `cancelDownload(fileId)`.
+- [x] **Step 2: Write `CloudPushViewModel.kt`** — holds `config`, exposes `uiState: StateFlow<CloudPushUiState>` (isPaired, deviceName, serverUrl, deviceSecret, downloads from `manager.state`, checkRegistration result), and actions `pairWithQr(qrText)`, `setServerUrl(url)`, `checkRegistration()`, `rotateKeys()`, `cancelDownload(fileId)`.
 
-- [ ] **Step 3: Write `CloudPushSettings.kt`** — the composable described above. Reuse `rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission())` for CAMERA (same pattern as `POST_NOTIFICATIONS` in `LocalSendSettings`).
+- [x] **Step 3: Write `CloudPushSettings.kt`** — the composable described above. Reuse `rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission())` for CAMERA (same pattern as `POST_NOTIFICATIONS` in `LocalSendSettings`).
 
-- [ ] **Step 4: Verify it compiles**
+- [x] **Step 4: Verify it compiles**
 
 Run: `./gradlew :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/ui/settings/
@@ -3153,7 +3160,7 @@ git commit -m "feat(android): Cloud Push settings section with pairing + downloa
 - Consumes: `PushClient`, `PushServerConfig`.
 - Produces: on app **foreground** (in the existing `onActivityResumed` lifecycle callback), if `config.isPaired`, fire a one-shot `checkRegistration` on a background scope; on false (404), surface a "needs re-registration" signal (`CloudPushManager` gains a `StateFlow<Boolean> needsReRegistration` that the settings status label observes). Also flip `needsReRegistration` when `PushClient` calls fail with 401/404 during a push/ack.
 
-- [ ] **Step 1: Wire the foreground check in `MDRenderApplication`**
+- [x] **Step 1: Wire the foreground check in `MDRenderApplication`**
 
 ```kotlin
 // MDRenderApplication.kt — after Hilt injection
@@ -3173,14 +3180,14 @@ if (pushConfig.isPaired && !registeredCheckTriggered) {
 
 *(`registeredCheckTriggered` is a volatile field reset on `onActivityStopped` — or simply re-check each foreground; the plan's intent is "check on foreground", the exact throttle is implementer's choice.)*
 
-- [ ] **Step 2: Add `setReRegistrationNeeded(Boolean)` + `val needsReRegistration: StateFlow<Boolean>` to `CloudPushManager`**, and call it from `CloudPushDownloadService` when `ackReceived`/`downloadFile` returns a 401/404.
+- [x] **Step 2: Add `setReRegistrationNeeded(Boolean)` + `val needsReRegistration: StateFlow<Boolean>` to `CloudPushManager`**, and call it from `CloudPushDownloadService` when `ackReceived`/`downloadFile` returns a 401/404.
 
-- [ ] **Step 3: Verify it compiles**
+- [x] **Step 3: Verify it compiles**
 
 Run: `./gradlew :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/MDRenderApplication.kt app/src/main/java/com/a42r/mdrender/cloudpush/CloudPushManager.kt
