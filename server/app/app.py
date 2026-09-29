@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, encryption,
                         federation, federation_client, fcm as fcm_mod, geoip,
-                        oidc, pairing, push_store, storage, trigger)
+                        oidc, pairing, push_store, settings, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -415,6 +415,8 @@ def create_app(config):
     @app.route("/signup", methods=["GET", "POST"])
     def signup():
         """Public account (tenant) signup by email (design §9)."""
+        if not settings.signup_enabled(g.db):
+            return render_template("signup.html", closed=True), 403
         if request.method == "GET":
             return render_template("signup.html")
         email = (request.form.get("email") or "").strip()
@@ -793,6 +795,29 @@ def create_app(config):
             encryption=("on" if _encryption_required() else "off"),
         )
 
+    @app.route("/settings", methods=["GET"])
+    def settings_page():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        return render_template(
+            "settings.html",
+            federation_env=bool(getattr(config, "FEDERATION_ENABLED", True)),
+            accept_new_slaves=settings.accept_new_slaves(g.db),
+            signup_enabled=settings.signup_enabled(g.db),
+        )
+
+    @app.route("/settings", methods=["POST"])
+    def settings_update():
+        auth_error = require_form_session("/settings")
+        if auth_error:
+            return auth_error
+        settings.set_value(g.db, "accept_new_slaves",
+                           "on" if request.form.get("accept_new_slaves") else "off")
+        settings.set_value(g.db, "signup_enabled",
+                           "on" if request.form.get("signup_enabled") else "off")
+        return redirect("/settings", 303)
+
     @app.route("/federation", methods=["GET"])
     def federation_page():
         auth_error = require_page_session()
@@ -999,7 +1024,9 @@ def create_app(config):
         account = accounts.get_account_by_email(g.db, email)
         if account is None:
             # A first verified login creates the account (signup via the same
-            # flow), subject to the operator's email-domain rules (design §9).
+            # flow), subject to the signup toggle and email-domain rules (§9).
+            if not settings.signup_enabled(g.db):
+                return jsonify({"error": "signup disabled"}), 403
             if not accounts.domain_allowed(g.db, email):
                 return jsonify({"error": "email domain not allowed"}), 403
             accounts.create_account(g.db, email)
@@ -1025,7 +1052,13 @@ def create_app(config):
         """A slave enrols: verify it via the signed callback, then activate.
 
         Automatic (D2) — no operator approval; bans/revocation still apply.
+        Gated by the master's federation settings (design §8): the feature must
+        be enabled by env, and the admin must be accepting new slaves.
         """
+        if not bool(getattr(config, "FEDERATION_ENABLED", True)):
+            return jsonify({"error": "federation disabled"}), 403
+        if not settings.accept_new_slaves(g.db):
+            return jsonify({"error": "not accepting new slaves"}), 403
         data = request.get_json(silent=True) or {}
         server_id = data.get("server_id")
         hostname = data.get("hostname")

@@ -46,6 +46,9 @@ DEFAULTS = {
     "FIREBASE_APP_ID": "",
     # Server-enforced content encryption: on (clients must encrypt) | off.
     "ENCRYPTION_MODE": "off",
+    # Whether this master exposes federation at all (env gate). The admin
+    # Settings page can then toggle accepting new slaves while this is on.
+    "FEDERATION_ENABLED": True,
     # DB-IP Lite MMDB paths for local ASN/country lookups (D9).
     "GEOIP_ASN_DB": "",
     "GEOIP_COUNTRY_DB": "",
@@ -64,7 +67,7 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS", "STORAGE_BILL_AFTER_HOURS"):
             env[k] = int(env[k])
-    for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT"):
+    for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT", "FEDERATION_ENABLED"):
         env[flag] = str(env.get(flag, DEFAULTS.get(flag, False))).lower() in (
             "1", "true", "yes", "on")
     if overrides:

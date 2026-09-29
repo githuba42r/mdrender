@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Settings &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="lede">Server options. Whether a feature exists at all is set by the operator's environment; these switches control whether an available feature is currently on.</p>
+
+<form method="POST" action="/settings">
+  <h2>Federation</h2>
+  {% if federation_env %}
+  <p class="lede">This master exposes federation. Control whether new slave servers may enrol.</p>
+  <label>
+    <input type="checkbox" name="accept_new_slaves" {% if accept_new_slaves %}checked{% endif %}>
+    Accept new slave servers
+  </label>
+  {% else %}
+  <p class="lede">Federation is disabled on this server by configuration
+    (<code>FEDERATION_ENABLED=0</code>). Enrolment is refused.</p>
+  <input type="hidden" name="accept_new_slaves_available" value="0">
+  {% endif %}
+
+  <h2>Signup</h2>
+  <label>
+    <input type="checkbox" name="signup_enabled" {% if signup_enabled %}checked{% endif %}>
+    Allow new account signup
+  </label>
+  <p class="lede">When off, the signup page is closed and a first social / magic-link
+    login will not create a new account.</p>
+
+  <div class="confirm-actions">
+    <button type="submit" class="btn-primary">Save settings</button>
+  </div>
+</form>
+{% endblock %}

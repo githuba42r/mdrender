@@ -8,6 +8,8 @@
   </div>
   {% if done %}
   <p class="lede">Account created. You'll use this email to register devices and push files.</p>
+  {% elif closed %}
+  <p class="lede">Signup is currently closed. Please contact the operator.</p>
   {% elif firebase %}
   <p class="lede">Sign up with a social account, phone code, or magic email link.</p>
   {% include "_firebase_auth.html" %}
