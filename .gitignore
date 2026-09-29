@@ -31,3 +31,6 @@ server/.venv/
 # Local push-server instance: contains SERVER_PASSWORD and generated state
 server/docker-compose.yml
 server/data/
+
+# Firebase CLI debug output
+firebase-debug.log

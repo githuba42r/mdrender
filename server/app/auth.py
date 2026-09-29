@@ -150,3 +150,16 @@ def validate_access_token(config, token: str) -> str | None:
         ACCESS_TOKENS.pop(token, None)
         return None
     return client_id
+
+
+def revoke_access_tokens(client_id: str) -> int:
+    """Drop every live access token minted for *client_id*.
+
+    Revoking a client must take effect immediately, not whenever its last
+    issued token happens to expire (up to ACCESS_TOKEN_TTL_SECONDS later).
+    Returns how many tokens were dropped.
+    """
+    stale = [t for t, (cid, _) in ACCESS_TOKENS.items() if cid == client_id]
+    for t in stale:
+        ACCESS_TOKENS.pop(t, None)
+    return len(stale)

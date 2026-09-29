@@ -1,11 +1,15 @@
 package com.a42r.mdrender.localsend
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * LocalSend v2 protocol messages (receive side).
  * See https://github.com/localsend/localsend/blob/main/documents/protocol/README.md
  */
+/** Advertised app identity; lets senders recognise an MDRender receiver. */
+const val APP_NAME = "MDRender"
+
 object LocalSendProtocol {
     const val PORT = 53317
     const val MULTICAST_GROUP = "224.0.0.167"
@@ -37,6 +41,13 @@ data class DeviceInfo(
         put("port", port)
         put("protocol", protocol)
         put("download", false)
+        // LocalSend's hello has no vendor/app field, so identify as MDRender
+        // explicitly (app + deviceModel) and advertise the extension. Senders
+        // (localsend-send --list) read these to tell MDRender from a generic
+        // LocalSend client and to know the "mds" options (destination folder,
+        // conflict strategy) are supported. Vanilla clients ignore unknown keys.
+        put("app", APP_NAME)
+        put("extensions", JSONArray().put(MDRenderOptions.KEY))
         if (announce != null) put("announce", announce)
     }
 }
@@ -70,7 +81,8 @@ data class MDRenderOptions(
     val conflict: ConflictStrategy = ConflictStrategy.RENAME
 ) {
     companion object {
-        private const val KEY = "mds"
+        /** Namespaced key for the extension, advertised in device discovery. */
+        const val KEY = "mds"
 
         fun fromRequestBody(body: JSONObject): MDRenderOptions {
             val mds = body.optJSONObject(KEY) ?: return MDRenderOptions()

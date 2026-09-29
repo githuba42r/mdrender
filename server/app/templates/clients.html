@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Clients &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>CLI clients</h1>
+<p>This is a list of command line clients that are authorized to push to MDRender.</p>
+{% if clients %}
+<table>
+  <thead>
+    <tr><th>Name</th><th>Client ID</th><th>Created</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for c in clients %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><code>{{ c.client_id }}</code></td>
+      <td>{{ c.created_at | dt }}</td>
+      <td>
+        <form method="POST" action="/clients/{{ c.client_id }}/revoke"
+              onsubmit="return confirm('Revoke this client? Its tokens stop working.');">
+          <button type="submit">Revoke</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No clients enrolled yet.</p>
+{% endif %}
+
+<h2>Register a new client</h2>
+<ol>
+  <li>
+    On the machine that will push, run:
+    <pre>tools/localsend-send/localsend-send.py --enrol --server {{ server_url }}</pre>
+  </li>
+  <li>
+    It prints a verification URL. Open it in this signed-in browser and either
+    click <strong>Complete registration</strong>, or read the short one-time
+    code off the page and type it into the waiting terminal. Either way the tool
+    writes <code>~/.config/mdrender/push-credentials.json</code>.
+  </li>
+  <li>
+    Push files to a paired device by name:
+    <pre>tools/localsend-send/localsend-send.py --name "&lt;device-name&gt;" file.pdf</pre>
+    The curl wrapper works the same way:
+    <pre>tools/push-to-phone.sh --target "&lt;device-name&gt;" file.pdf</pre>
+  </li>
+</ol>
+{% endblock %}

@@ -12,6 +12,8 @@ DEFAULTS = {
     "LOGIN_LOCKOUT_SECONDS": 300,
     "ENROL_TOKEN_TTL_HOURS": 1,
     "ENROL_SESSION_TTL_MINUTES": 15,
+    "ENROL_CODE_TTL_SECONDS": 60,
+    "ENROL_CODE_MAX_ATTEMPTS": 5,
     "ACCESS_TOKEN_TTL_SECONDS": 3600,
     "PUSH_STORAGE_DIR": "/data/push",
     "DB_PATH": "/data/push/server.db",
@@ -31,6 +33,7 @@ def load_config(*, overrides: dict | None = None) -> Config:
     for k in env:
         if k in ("LOGIN_MAX_ATTEMPTS", "LOGIN_LOCKOUT_SECONDS",
                  "ENROL_TOKEN_TTL_HOURS", "ENROL_SESSION_TTL_MINUTES",
+                 "ENROL_CODE_TTL_SECONDS", "ENROL_CODE_MAX_ATTEMPTS",
                  "ACCESS_TOKEN_TTL_SECONDS", "PUSH_FILE_TTL_HOURS",
                  "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
                  "DEVICE_TTL_DAYS"):

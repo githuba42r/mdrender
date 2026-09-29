@@ -40,26 +40,29 @@ def test_full_push_flow(config, db_path, monkeypatch):
     # Health (unauthenticated)
     assert client.get("/api/health").json == {"ok": True}
 
-    # Session-gated: /pair before login -> 401
-    assert client.get("/pair").status_code == 401
+    # Session-gated: /pair before login redirects to the login form,
+    # remembering where the visitor was headed.
+    anon = client.get("/pair")
+    assert anon.status_code == 303
+    assert anon.headers["Location"] == "/login?next=/pair"
 
     # Password login (session cookie)
     r = client.post("/login", data={"password": "testpass"})
     assert r.status_code == 302
     assert client.post("/login", data={"password": "wrong"}).status_code == 401
 
-    # Enrol a tool via a one-time key
+    # Enrol a tool via the one-time code
     enrol = client.post("/api/enrol/start", json={}).json
     eid = enrol["enrolment_id"]
-    key = app.config["_enrol_keys"][eid]["key"]
-    creds = client.post("/api/enrol", json={"enrolment_id": eid, "key": key}).json
+    code = app.config["_enrol_keys"][eid]["code"]
+    creds = client.post("/api/enrol", json={"enrolment_id": eid, "code": code}).json
     assert "client_id" in creds and "client_secret" in creds
 
-    # One-time key is consumed after use
+    # One-time code is consumed after use
     assert eid not in app.config["_enrol_keys"]
 
-    # Wrong enrolment key -> 401
-    bad = client.post("/api/enrol", json={"enrolment_id": eid, "key": "nope"})
+    # Wrong enrolment code -> 401
+    bad = client.post("/api/enrol", json={"enrolment_id": eid, "code": "ZZZZZZ"})
     assert bad.status_code == 401
 
     # OAuth2 client-credentials token

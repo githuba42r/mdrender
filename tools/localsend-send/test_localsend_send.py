@@ -14,10 +14,10 @@ flow" invariant honest.
 """
 import argparse
 import importlib.util
+import io
 import json
 import os
 import threading
-import unittest.mock
 import urllib.error
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,6 +47,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
+        self.state.setdefault("user_agents", []).append(
+            self.headers.get("User-Agent"))
 
         if self.path == "/api/enrol/start":
             payload = json.loads(body)
@@ -69,10 +71,20 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(body)
             eid = payload.get("enrolment_id")
             expected = self.state.get("enrol_keys", {}).get(eid)
-            if expected is not None and payload.get("key") == expected:
+            if expected is not None and payload.get("code") == expected:
                 self._json({"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET})
             else:
-                self._json({"error": "invalid enrolment key"}, status=401)
+                self._json({"error": "invalid enrolment code"}, status=401)
+        elif self.path == "/api/enrol/complete":
+            payload = json.loads(body)
+            eid = payload.get("enrolment_id")
+            if eid in self.state.get("approved", {}):
+                self._json({"status": "approved",
+                            **self.state["approved"].pop(eid)})
+            elif eid in self.state.get("enrol_keys", {}):
+                self._json({"status": "pending"})
+            else:
+                self._json({"status": "unknown"}, status=404)
         elif self.path == "/oauth/token":
             self.state["oauth_hits"] = self.state.get("oauth_hits", 0) + 1
             assert self.headers.get("Content-Type", "").startswith(
@@ -108,7 +120,8 @@ class _Handler(BaseHTTPRequestHandler):
 @pytest.fixture()
 def cloud_server():
     """Yield (server_url, state) for a mock cloud-push server on a free port."""
-    state = {"enrol_start_hits": 0, "enrol_seq": 0, "enrol_keys": {}, "oauth_hits": 0}
+    state = {"enrol_start_hits": 0, "enrol_seq": 0, "enrol_keys": {},
+             "approved": {}, "oauth_hits": 0}
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0),
         lambda *args, **kwargs: _Handler(*args, state=state, **kwargs))
@@ -172,29 +185,27 @@ def test_enrol_flow_wrong_key_rejected(tmp_path, cloud_server):
     assert not creds_path.exists()
 
 
-def test_cmd_enrol_single_start(tmp_path, cloud_server, monkeypatch):
-    """cmd_enrol performs exactly ONE /api/enrol/start and enrols successfully.
+def test_cmd_enrol_performs_one_start_and_saves_after_approval(
+        tmp_path, cloud_server, monkeypatch):
+    """cmd_enrol performs exactly ONE /api/enrol/start, then polls for approval.
 
-    Regression test for the double-start defect: cmd_enrol used to call
-    /api/enrol/start itself and _enrol_flow started AGAIN, minting a second
-    enrolment_id whose key never matched the operator's — a guaranteed 401 in
-    production. The mock mints a fresh id+key per start and validates key-vs-id
-    strictly, so a double start fails this test.
+    Regression for the double-start defect (cmd_enrol used to start once and
+    _enrol_flow start again, minting an id whose key never matched) and for the
+    manual key prompt — the browser approval is collected by polling instead.
     """
     server_url, state = cloud_server
     creds_path = tmp_path / "push-credentials.json"
     hits_before = state["enrol_start_hits"]
 
-    # The key is minted server-side by the single start cmd_enrol performs, so
-    # it cannot be known up front; patch input() with a function that reads back
-    # the key the mock just issued for that id.
-    def fake_input(_prompt):
-        return state["enrol_keys"][state["last_enrol_id"]]
-
     monkeypatch.delenv("DISPLAY", raising=False)  # keep xdg-open out of the test
-    with unittest.mock.patch("builtins.input", side_effect=fake_input):
-        rc = ls.cmd_enrol(
-            argparse.Namespace(server=server_url, creds=str(creds_path)))
+    # Simulate the operator clicking Complete registration in the browser.
+    monkeypatch.setattr(ls, "_await_enrolment",
+                        lambda url, eid, **k: {"client_id": CLIENT_ID,
+                                               "client_secret": CLIENT_SECRET,
+                                               "server_url": url})
+
+    rc = ls.cmd_enrol(
+        argparse.Namespace(server=server_url, creds=str(creds_path)))
 
     assert rc == 0
     assert state["enrol_start_hits"] == hits_before + 1  # exactly one start
@@ -204,6 +215,77 @@ def test_cmd_enrol_single_start(tmp_path, cloud_server, monkeypatch):
         "server_url": server_url,
     }
     assert creds_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_await_enrolment_via_browser_approval(cloud_server, monkeypatch):
+    server_url, state = cloud_server
+    eid, _ = ls._start_enrolment(server_url)
+    # Empty stdin (immediate EOF): the browser approves server-side.
+    monkeypatch.setattr(ls.sys, "stdin", io.StringIO(""))
+    state["approved"][eid] = {"client_id": CLIENT_ID,
+                              "client_secret": CLIENT_SECRET}
+
+    rec = ls._await_enrolment(server_url, eid, timeout=5, interval=0.05)
+    assert rec == {"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+                   "server_url": server_url}
+
+
+def test_await_enrolment_via_pasted_code(cloud_server, monkeypatch):
+    server_url, state = cloud_server
+    eid, _ = ls._start_enrolment(server_url)
+    code = state["enrol_keys"][eid]
+    # The operator types the short code; there is no browser approval.
+    monkeypatch.setattr(ls.sys, "stdin", io.StringIO(code + "\n"))
+
+    rec = ls._await_enrolment(server_url, eid, timeout=5, interval=0.05)
+    assert rec == {"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+                   "server_url": server_url}
+
+
+def test_await_enrolment_accepts_a_code_while_the_poll_is_pending(
+        cloud_server, monkeypatch):
+    """A typed code is picked up concurrently with the approval poll.
+
+    Regression: the HTTP poll used to run inline, so stdin was only read
+    between requests and typing during a slow poll did nothing.
+    """
+    server_url, state = cloud_server
+    eid, _ = ls._start_enrolment(server_url)
+    code = state["enrol_keys"][eid]
+
+    # Make the approval poll slow (still pending) and let the code arrive
+    # mid-flight; the code must win without waiting for the poll to return.
+    monkeypatch.setattr(ls.sys, "stdin", io.StringIO(code + "\n"))
+    rec = ls._await_enrolment(server_url, eid, timeout=5, interval=5.0)
+    assert rec == {"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+                   "server_url": server_url}
+
+
+def test_await_enrolment_times_out(cloud_server, monkeypatch):
+    server_url, state = cloud_server
+    eid, _ = ls._start_enrolment(server_url)
+    monkeypatch.setattr(ls.sys, "stdin", io.StringIO(""))
+    assert ls._await_enrolment(server_url, eid, timeout=0.3,
+                               interval=0.05) is None
+
+
+def test_open_browser_detaches_from_the_terminal(monkeypatch):
+    """xdg-open must not inherit the tty, or its logs clobber the CLI prompt."""
+    calls = {}
+
+    class FakePopen:
+        def __init__(self, args, **kwargs):
+            calls["args"] = args
+            calls["kwargs"] = kwargs
+
+    monkeypatch.setattr(ls.subprocess, "Popen", FakePopen)
+    ls._open_browser("https://example.com/enrol/abc")
+
+    assert calls["args"] == ["xdg-open", "https://example.com/enrol/abc"]
+    assert calls["kwargs"]["stdin"] is ls.subprocess.DEVNULL
+    assert calls["kwargs"]["stdout"] is ls.subprocess.DEVNULL
+    assert calls["kwargs"]["stderr"] is ls.subprocess.DEVNULL
+    assert calls["kwargs"]["start_new_session"] is True
 
 
 def test_get_token_hits_oauth_endpoint(cloud_server):
@@ -226,6 +308,142 @@ def test_get_access_token_from_file(tmp_path, cloud_server):
     assert ls.get_access_token(str(creds_path), server_url) == ACCESS_TOKEN
     # server_url read from the credentials file when not passed
     assert ls.get_access_token(str(creds_path)) == ACCESS_TOKEN
+
+
+def test_cloud_requests_send_a_non_default_user_agent(tmp_path, cloud_server):
+    """Every cloud request must avoid urllib's default User-Agent.
+
+    Cloudflare answers the default ``Python-urllib/3.x`` signature with 403
+    error code 1010, which broke enrolment against the tunneled server. All of
+    the enrolment, token and push requests must carry the client's own UA.
+    """
+    server_url, state = cloud_server
+    assert not ls.USER_AGENT.startswith("Python-urllib")
+
+    eid, _ = ls._start_enrolment(server_url)
+    creds_path = tmp_path / "push-credentials.json"
+    ls._enrol_flow(server_url, eid, state["enrol_keys"][eid], str(creds_path))
+    ls._get_token({"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET},
+                  server_url)
+
+    assert state["user_agents"]  # at least start + enrol + token
+    assert all(ua == ls.USER_AGENT for ua in state["user_agents"])
+
+
+def test_discover_all_collects_every_client_and_flags_mdrender(monkeypatch):
+    replies = [
+        {"alias": "Clever Juniper", "version": "2.1", "deviceModel": "Pixel 8",
+         "deviceType": "mobile", "app": "MDRender", "port": 53317,
+         "protocol": "https", "extensions": ["mds"], "announce": False},
+        {"alias": "Laptop", "version": "2.1", "deviceModel": "ThinkPad",
+         "deviceType": "desktop", "port": 53318, "protocol": "https",
+         "extensions": [], "announce": False},
+    ]
+    ips = ["10.0.0.5", "10.0.0.6"]
+    state = {"i": 0}
+
+    class FakeSocket:
+        def setsockopt(self, *a):
+            pass
+
+        def settimeout(self, t):
+            pass
+
+        def sendto(self, data, addr):
+            pass
+
+        def recvfrom(self, bufsize):
+            i = state["i"]
+            if i < len(replies):
+                state["i"] += 1
+                return json.dumps(replies[i]).encode(), (ips[i], 53317)
+            raise ls.socket.timeout("empty LAN")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ls.socket, "socket", lambda *a, **k: FakeSocket())
+    found = ls._discover(timeout=0.3)
+
+    assert set(found) == {"Clever Juniper", "Laptop"}
+    assert found["Clever Juniper"]["ip"] == "10.0.0.5"
+    assert found["Clever Juniper"]["app"] == "MDRender"
+    assert found["Laptop"]["port"] == 53318
+    assert ls.is_mdrender(found["Clever Juniper"]) is True
+    assert ls.is_mdrender(found["Laptop"]) is False
+
+
+def test_is_mdrender_accepts_each_advertised_signal():
+    assert ls.is_mdrender({"extensions": ["mds"]})
+    assert ls.is_mdrender({"app": "MDRender", "extensions": []})
+    assert ls.is_mdrender({"deviceModel": "MDRender (Pixel 8)"})
+    assert not ls.is_mdrender({"app": "LocalSend", "extensions": [],
+                               "deviceModel": "Pixel 8"})
+    assert not ls.is_mdrender({})
+
+
+def test_cmd_list_prints_lan_clients_and_registered_devices(monkeypatch, capsys):
+    monkeypatch.setattr(ls, "_discover", lambda timeout=3.0: {
+        "Clever Juniper": {"ip": "10.0.0.5", "port": 53317, "protocol": "https",
+                           "deviceModel": "Pixel 8", "deviceType": "mobile",
+                           "version": "2.1", "extensions": ["mds"]},
+        "Laptop": {"ip": "10.0.0.6", "port": 53317, "protocol": "https",
+                   "deviceModel": "ThinkPad", "deviceType": "desktop",
+                   "version": "2.1", "extensions": []},
+    })
+    monkeypatch.setattr(ls, "list_push_devices",
+                        lambda creds, server_url=None: [
+                            {"name": "Clever Juniper", "registered_at": 0,
+                             "last_seen": 0}])
+
+    rc = ls.cmd_list(argparse.Namespace(discover_timeout=0.01,
+                                        server="https://push.example.com",
+                                        creds=None))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "LocalSend clients (2):" in out
+    assert "Clever Juniper" in out and "MDRender (mds: folder, conflict)" in out
+    assert "Laptop" in out and "LocalSend" in out
+    assert "Registered push devices on https://push.example.com (1):" in out
+
+
+def test_resolve_dns_tries_name_then_slug_then_local(monkeypatch):
+    seen = []
+
+    def fake_gethostbyname(host):
+        seen.append(host)
+        if host == "clever-juniper.local":
+            return "10.0.0.9"
+        raise ls.socket.gaierror("not found")
+
+    monkeypatch.setattr(ls.socket, "gethostbyname", fake_gethostbyname)
+    assert ls.resolve_dns("Clever Juniper") == "10.0.0.9"
+    # Tried in order, stopping at the first hit.
+    assert seen == ["Clever Juniper", "clever-juniper", "clever-juniper.local"]
+
+
+def test_resolve_dns_returns_none_when_nothing_resolves(monkeypatch):
+    monkeypatch.setattr(ls.socket, "gethostbyname",
+                        lambda h: (_ for _ in ()).throw(ls.socket.gaierror("no")))
+    assert ls.resolve_dns("Ghost") is None
+
+
+def test_resolve_name_prefers_local_dns_over_discovery(monkeypatch):
+    monkeypatch.setattr(ls, "resolve_dns", lambda name: "10.0.0.7")
+    discovery_calls = []
+    monkeypatch.setattr(ls, "discover_lan",
+                        lambda names, timeout=3.0: discovery_calls.append(names) or {})
+    assert ls.resolve_name("Falcon") == "10.0.0.7"
+    assert discovery_calls == []  # discovery is skipped when DNS answers
+
+
+def test_resolve_name_falls_back_to_discovery_then_gives_up(monkeypatch):
+    monkeypatch.setattr(ls, "resolve_dns", lambda name: None)
+    monkeypatch.setattr(ls, "discover_lan",
+                        lambda names, timeout=3.0: {"Falcon": "10.0.0.5"})
+    assert ls.resolve_name("Falcon") == "10.0.0.5"
+    assert ls.resolve_name("Ghost") is None
 
 
 def test_discover_lan_parses_response(monkeypatch):
@@ -304,6 +522,8 @@ def test_push_to_server_multipart(tmp_path, cloud_server):
     assert rc == 0
     assert state["oauth_hits"] == 1  # a fresh token was fetched
     assert state["push_auth"] == f"Bearer {ACCESS_TOKEN}"
+    assert state["user_agents"] and all(ua == ls.USER_AGENT
+                                        for ua in state["user_agents"])
     ct = state["push_content_type"]
     assert ct.startswith("multipart/form-data; boundary=")
     boundary = ct.split("boundary=", 1)[1]

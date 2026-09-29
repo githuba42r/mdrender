@@ -51,7 +51,11 @@ def get_client(conn, client_id):
 
 
 def list_clients(conn):
-    return conn.execute("SELECT client_id, name, created_at, revoked_at FROM clients").fetchall()
+    """Active clients only; a revoked client disappears from the admin list."""
+    return conn.execute(
+        "SELECT client_id, name, created_at, revoked_at FROM clients "
+        "WHERE revoked_at IS NULL ORDER BY created_at"
+    ).fetchall()
 
 
 def revoke_client(conn, client_id):

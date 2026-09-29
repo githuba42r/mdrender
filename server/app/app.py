@@ -2,9 +2,12 @@
 """Flask application factory wiring every route for the Cloud Push server."""
 import base64
 import datetime
+import hmac
 import os
+import secrets
 import shutil
 import time
+import urllib.parse
 import uuid
 
 import qrcode
@@ -18,12 +21,13 @@ from server.app import crypto, fcm as fcm_mod, pairing, push_store, trigger
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, purge_expired_sessions,
-                             make_session, session_is_valid,
+                             make_session, revoke_access_tokens, session_is_valid,
                              validate_access_token, verify_secret, verify_session)
 from server.app.db import Database
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
-                              get_or_create_server_keypair, list_devices,
+                              get_or_create_server_keypair, list_clients,
+                              list_devices, revoke_client,
                               session_secret_from_pem, touch_last_seen,
                               update_device_name, update_device_push_key,
                               update_device_token)
@@ -113,6 +117,20 @@ def create_app(config):
             return None
         return jsonify({"error": "unauthorized"}), 401
 
+    def require_page_session():
+        """Gate a GET browser page, bouncing anonymous visitors through login.
+
+        Returning the API's raw JSON 401 to a browser is a dead end — the tool
+        enrolment flow opens such a URL directly — so remember where the visitor
+        was headed and send them to the login form instead. Endpoints keep using
+        require_session()'s JSON 401.
+        """
+        if session_is_valid(g.db, config.session_secret,
+                            request.cookies.get(SESSION_COOKIE), config):
+            return None
+        nxt = urllib.parse.quote(request.path, safe="/")
+        return redirect(f"/login?next={nxt}", 303)
+
     def _return_to(default):
         """Where a POST sends the browser next, read from a hidden `next` field.
 
@@ -124,11 +142,94 @@ def create_app(config):
             return nxt
         return default
 
+    def require_form_session(default):
+        """Gate a browser form POST the same way as a page.
+
+        A logged-out admin's session may have expired mid-use, so rather than
+        show raw JSON, send them through login and back to the page the form
+        lived on. The POST itself is not replayed. API/bearer endpoints keep
+        require_session()'s JSON 401.
+        """
+        if session_is_valid(g.db, config.session_secret,
+                            request.cookies.get(SESSION_COOKIE), config):
+            return None
+        nxt = urllib.parse.quote(_return_to(default), safe="/")
+        return redirect(f"/login?next={nxt}", 303)
+
     def bearer_client_id():
         header = request.headers.get("Authorization", "")
         if not header.startswith("Bearer "):
             return None
         return validate_access_token(config, header[7:])
+
+    def _new_code() -> str:
+        """Six characters from an unambiguous set, for typing by hand.
+
+        No 0/O, 1/I/L: the code is read off a screen and typed on a headless or
+        remote machine, so confusable glyphs are removed.
+        """
+        alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(6))
+
+    def _refresh_code(entry):
+        entry["code"] = _new_code()
+        entry["code_expires"] = time.time() + config.ENROL_CODE_TTL_SECONDS
+        entry["code_attempts"] = 0
+
+    def _check_code(entry, submitted: str) -> bool:
+        """Validate a manually entered code, with a short TTL and attempt cap.
+
+        The code is short enough to type, so it is deliberately short-lived and
+        burns out after ENROL_CODE_MAX_ATTEMPTS wrong guesses.
+        """
+        if not submitted:
+            return False
+        if entry["code_attempts"] >= config.ENROL_CODE_MAX_ATTEMPTS:
+            return False
+        if time.time() > entry["code_expires"]:
+            return False
+        if hmac.compare_digest(entry["code"], submitted.strip().upper()):
+            return True
+        entry["code_attempts"] += 1
+        return False
+
+    def _mint_enrolment(name: str = "cli") -> str:
+        """Create a one-time enrolment and return its id.
+
+        Shared by the CLI-facing /api/enrol/start and the browser /clients/new
+        so both mint from the same single-use registry. An enrolment starts
+        unapproved. It can be completed two ways: the operator clicks Complete
+        registration in the browser (which mints the OAuth client and the CLI
+        collects the credentials by polling /api/enrol/complete), or — for a
+        headless/remote machine — the short code is entered into the CLI, which
+        exchanges it at /api/enrol.
+        """
+        eid = uuid.uuid4().hex
+        entry = {
+            "name": name or "cli",
+            "expires": time.time() + config.ENROL_TOKEN_TTL_HOURS * 3600,
+            "approved": False,
+            "creds": None,
+        }
+        _refresh_code(entry)
+        app.config["_enrol_keys"][eid] = entry
+        return eid
+
+    def _approve_enrolment(eid: str):
+        """Mint the OAuth client for an enrolment and stash its credentials.
+
+        Runs in a request context (uses g.db). Idempotent: a second approval
+        returns the same credentials rather than creating another client.
+        """
+        entry = app.config["_enrol_keys"].get(eid)
+        if entry is None:
+            return None
+        if entry["creds"] is None:
+            secret = uuid.uuid4().hex
+            client_id = create_client(g.db, entry["name"], hash_secret(secret))
+            entry["creds"] = {"client_id": client_id, "client_secret": secret}
+            entry["approved"] = True
+        return entry["creds"]
 
     def _ring_doorbell(device, push_row) -> bool:
         """Send the one FCM message that tells a device a push is waiting.
@@ -172,7 +273,7 @@ def create_app(config):
 
     @app.route("/login", methods=["GET"])
     def login_page():
-        return render_template("login.html")
+        return render_template("login.html", next=request.args.get("next", ""))
 
     @app.route("/login", methods=["POST"])
     def login():
@@ -184,7 +285,9 @@ def create_app(config):
         # for sessions nobody is holding any more.
         purge_expired_sessions(g.db)
         token = create_session(g.db, config.session_secret, config)
-        resp = make_response(redirect("/pushes"))
+        # Honour the page the visitor was originally headed for (e.g. the enrol
+        # URL a CLI just opened); _return_to rejects off-site targets.
+        resp = make_response(redirect(_return_to("/pushes")))
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
                         secure=config.PUSH_PUBLIC_URL.startswith("https"))
         return resp
@@ -199,7 +302,7 @@ def create_app(config):
 
     @app.route("/pair", methods=["GET"])
     def pair():
-        auth_error = require_session()
+        auth_error = require_page_session()
         if auth_error:
             return auth_error
         token = pairing.create_pairing_token(g.db, config.ENROL_SESSION_TTL_MINUTES)
@@ -224,24 +327,79 @@ def create_app(config):
 
     @app.route("/enrol/<eid>", methods=["GET"])
     def enrol_page(eid):
-        auth_error = require_session()
+        auth_error = require_page_session()
         if auth_error:
             return auth_error
         entry = app.config["_enrol_keys"].get(eid)
-        key = entry["key"] if entry else None
-        return render_template("enrol.html", key=key)
+        if (entry is not None and not entry["approved"]
+                and time.time() > entry["code_expires"]):
+            # The code's clock starts when it was minted, but the operator has
+            # to sign in before they can see it — often longer than the TTL.
+            # Refresh on view so the code they read is always still valid.
+            _refresh_code(entry)
+        return render_template("enrol.html",
+                               eid=eid,
+                               code=entry["code"] if entry else None,
+                               code_expires=entry["code_expires"] if entry else None,
+                               approved=bool(entry and entry["approved"]))
+
+    @app.route("/enrol/<eid>/approve", methods=["POST"])
+    def enrol_approve(eid):
+        """Complete an enrolment: create the client, then tell the CLI to collect.
+
+        The signed-in browser session is the authorisation — it is what proves a
+        human at this server approved the tool.
+        """
+        auth_error = require_form_session(f"/enrol/{eid}")
+        if auth_error:
+            return auth_error
+        if _approve_enrolment(eid) is None:
+            return render_template("enrol.html", eid=eid, code=None,
+                                   code_expires=None, approved=False), 404
+        return render_template("enrol_done.html")
+
+    @app.route("/enrol/<eid>/new-code", methods=["POST"])
+    def enrol_new_code(eid):
+        """Issue a fresh short code for an enrolment whose code expired."""
+        auth_error = require_form_session(f"/enrol/{eid}")
+        if auth_error:
+            return auth_error
+        entry = app.config["_enrol_keys"].get(eid)
+        if entry is not None and not entry["approved"]:
+            _refresh_code(entry)
+        return redirect(f"/enrol/{eid}", 303)
 
     @app.route("/devices", methods=["GET"])
     def devices():
-        auth_error = require_session()
+        auth_error = require_page_session()
         if auth_error:
             return auth_error
         return render_template("devices.html",
                                devices=[dict(r) for r in list_devices(g.db)])
 
+    @app.route("/clients", methods=["GET"])
+    def clients():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        return render_template("clients.html",
+                               clients=[dict(r) for r in list_clients(g.db)],
+                               server_url=config.PUSH_PUBLIC_URL)
+
+    @app.route("/clients/<client_id>/revoke", methods=["POST"])
+    def clients_revoke(client_id):
+        auth_error = require_form_session("/clients")
+        if auth_error:
+            return auth_error
+        revoke_client(g.db, client_id)
+        # Drop any live bearer tokens so the client stops working now, and the
+        # row vanishes from /clients (list_clients only shows active ones).
+        revoke_access_tokens(client_id)
+        return redirect("/clients", 303)
+
     @app.route("/pushes", methods=["GET"])
     def pushes():
-        auth_error = require_session()
+        auth_error = require_page_session()
         if auth_error:
             return auth_error
         return render_template("pushes.html",
@@ -249,7 +407,7 @@ def create_app(config):
 
     @app.route("/pending", methods=["GET"])
     def pending():
-        auth_error = require_session()
+        auth_error = require_page_session()
         if auth_error:
             return auth_error
         return render_template("pending.html",
@@ -257,7 +415,7 @@ def create_app(config):
 
     @app.route("/devices/<device_secret>", methods=["DELETE"])
     def devices_delete(device_secret):
-        auth_error = require_session()
+        auth_error = require_form_session("/devices")
         if auth_error:
             return auth_error
         delete_device(g.db, device_secret)
@@ -265,7 +423,7 @@ def create_app(config):
 
     @app.route("/devices/<device_secret>/delete", methods=["POST"])
     def devices_delete_post(device_secret):
-        auth_error = require_session()
+        auth_error = require_form_session("/devices")
         if auth_error:
             return auth_error
         delete_device(g.db, device_secret)
@@ -277,29 +435,66 @@ def create_app(config):
     def health():
         return jsonify({"ok": True})
 
+    @app.route("/api/devices", methods=["GET"])
+    def api_devices():
+        """List registered push targets so a client can see where it can send.
+
+        Bearer-gated like /api/push; the device secret is never returned.
+        """
+        if bearer_client_id() is None:
+            return jsonify({"error": "unauthorized"}), 401
+        return jsonify({"devices": [
+            {"name": r["device_name"],
+             "registered_at": r["registered_at"],
+             "last_seen": r["last_seen"]}
+            for r in list_devices(g.db)
+        ]})
+
     @app.route("/api/enrol/start", methods=["POST"])
     def enrol_start():
-        eid = uuid.uuid4().hex
-        key = uuid.uuid4().hex
-        app.config["_enrol_keys"][eid] = {
-            "key": key, "expires": time.time() + config.ENROL_TOKEN_TTL_HOURS * 3600,
-        }
+        data = request.get_json(silent=True) or {}
+        name = (data.get("info") or {}).get("alias") or data.get("name") or "cli"
+        eid = _mint_enrolment(name)
         return jsonify({"enrolment_id": eid,
                         "verification_uri": f"{config.PUSH_PUBLIC_URL}/enrol/{eid}"})
+
+    @app.route("/api/enrol/complete", methods=["POST"])
+    def enrol_complete():
+        """Collect the credentials once the browser has approved the enrolment.
+
+        The CLI polls this with the enrolment_id (a value only it and the
+        browser URL hold). Credentials are handed over exactly once.
+        """
+        data = request.get_json(silent=True) or {}
+        eid = data.get("enrolment_id", "")
+        entry = app.config["_enrol_keys"].get(eid)
+        if entry is None:
+            return jsonify({"status": "unknown"}), 404
+        if time.time() > entry["expires"]:
+            app.config["_enrol_keys"].pop(eid, None)
+            return jsonify({"status": "expired"}), 401
+        if not entry["approved"]:
+            return jsonify({"status": "pending"})
+        creds = entry["creds"]
+        app.config["_enrol_keys"].pop(eid, None)
+        return jsonify({"status": "approved", **creds})
 
     @app.route("/api/enrol", methods=["POST"])
     def enrol():
         data = request.get_json(silent=True) or {}
-        entry = app.config["_enrol_keys"].get(data.get("enrolment_id", ""))
-        if entry is None or entry["key"] != data.get("key"):
-            return jsonify({"error": "invalid enrolment key"}), 401
+        eid = data.get("enrolment_id", "")
+        entry = app.config["_enrol_keys"].get(eid)
+        # `code` is the short manually-typed code; `key` is accepted for
+        # backward compatibility with earlier clients.
+        submitted = data.get("code") or data.get("key") or ""
+        if entry is None or not _check_code(entry, submitted):
+            return jsonify({"error": "invalid enrolment code"}), 401
         if time.time() > entry["expires"]:
-            app.config["_enrol_keys"].pop(data["enrolment_id"], None)
+            app.config["_enrol_keys"].pop(eid, None)
             return jsonify({"error": "enrolment expired"}), 401
-        app.config["_enrol_keys"].pop(data["enrolment_id"], None)
+        app.config["_enrol_keys"].pop(eid, None)
         secret = uuid.uuid4().hex
-        secret_hash = hash_secret(secret)
-        client_id = create_client(g.db, data.get("name", "cli"), secret_hash)
+        client_id = create_client(g.db, entry["name"], hash_secret(secret))
         return jsonify({"client_id": client_id, "client_secret": secret})
 
     @app.route("/oauth/token", methods=["POST"])
@@ -488,7 +683,7 @@ def create_app(config):
 
     @app.route("/api/push/<push_id>/retry", methods=["POST"])
     def push_retry(push_id):
-        auth_error = require_session()
+        auth_error = require_form_session("/pushes")
         if auth_error:
             return auth_error
         push_row = push_store.get_push_by_id(g.db, push_id)
@@ -512,7 +707,7 @@ def create_app(config):
         Only a push that actually existed has its directory removed, so a
         crafted id can never point the recursive delete at some other path.
         """
-        auth_error = require_session()
+        auth_error = require_form_session("/pushes")
         if auth_error:
             return auth_error
         if push_store.delete_push(g.db, push_id):

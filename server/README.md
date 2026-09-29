@@ -68,8 +68,10 @@ All configuration is via environment variables. Defaults come from
 | `PUSH_STORAGE_DIR` | `/data/push` | Directory for uploaded file trees (`<push_id>/<file_id>/…`). |
 | `LOGIN_MAX_ATTEMPTS` | `5` | Failed `/login` attempts before the client IP is locked out. |
 | `LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration after too many failed logins. |
-| `ENROL_TOKEN_TTL_HOURS` | `1` | Tool-enrolment key lifetime (the key shown at `/enrol/<eid>`). |
+| `ENROL_TOKEN_TTL_HOURS` | `1` | Tool-enrolment lifetime (the whole `/enrol/<eid>` session). |
 | `ENROL_SESSION_TTL_MINUTES` | `15` | Pairing-token lifetime; drives QR expiry. |
+| `ENROL_CODE_TTL_SECONDS` | `60` | Lifetime of the short manual-entry enrolment code. |
+| `ENROL_CODE_MAX_ATTEMPTS` | `5` | Wrong code guesses before the short code burns out. |
 | `ACCESS_TOKEN_TTL_SECONDS` | `3600` | OAuth access-token lifetime for the CLI. |
 | `PUSH_FILE_TTL_HOURS` | `24` | Uploaded files are purged after this many hours. |
 | `PUSH_RETRY_COUNT` | `5` | FCM re-push attempts per file not acked within the retry window. |
@@ -101,31 +103,45 @@ with the base64 RSA-SHA256 signature in the `X-Push-Manifest-Signature` header.
 The body is byte-for-byte what was signed, so the app verifies exactly what it
 received rather than re-encoding a parsed object.
 
-The browser UI also exposes `/devices` (list/delete), `/pushes` (all pushes),
+The browser UI also exposes `/devices` (list/delete), `/clients` (enrolled CLI
+clients, with revoke and registration instructions), `/pushes` (all pushes),
 and `/pending` (un-acked files), all behind the login session.
+
+Push clients can list the targets they may send to with
+`GET /api/devices` (Bearer-token gated, like `POST /api/push`); it returns
+`{"devices": [{name, registered_at, last_seen}]}` and never the device secret.
+`localsend-send.py --list` uses it.
 
 ## Tool enrolment (CLI)
 
-`tools/localsend-send/localsend-send.py` gains cloud-push subcommands in a
-later task. The intended flow, which the server already implements:
+The browser `/clients` page lists the enrolled clients and shows the steps
+below; it can also mint an enrolment for you with **Register a new client**.
+The flow, which the server already implements:
 
 ```bash
-# One-time: enrol this machine → prints client_id / client_secret
+# One-time: enrol this machine → writes ~/.config/mdrender/push-credentials.json
 tools/localsend-send/localsend-send.py --enrol --server <url>
 
-# Get an OAuth access token, then push files to a device by name
-tools/localsend-send/localsend-send.py --oauth
-tools/localsend-send/localsend-send.py --push <device-name> file.pdf
+# Push files to a paired device by name (LAN first, cloud fallback)
+tools/localsend-send/localsend-send.py --name <device-name> file.pdf
 ```
 
 Server-side, enrolment is:
 `POST /api/enrol/start` → open the returned `verification_uri`
-(`/enrol/<enrolment_id>`) in a signed-in browser and read the key →
-`POST /api/enrol` with the key → `{client_id, client_secret}` →
-`POST /oauth/token` (client-credentials grant) → a Bearer `access_token` →
+(`/enrol/<enrolment_id>`) in a signed-in browser, then either:
+
+- click **Complete registration** (session-gated `POST /enrol/<id>/approve`,
+  which mints the OAuth client) and the CLI collects the credentials by polling
+  `POST /api/enrol/complete`; or
+- for a headless/remote machine, read the short **6-character code** shown on
+  the page and type it into the CLI, which exchanges it at `POST /api/enrol`
+  (case-insensitive; expires after `ENROL_CODE_TTL_SECONDS`; burns out after
+  `ENROL_CODE_MAX_ATTEMPTS` wrong guesses; **New code** reissues it).
+
+Then `POST /oauth/token` (client-credentials grant) → a Bearer `access_token` →
 `POST /api/push` with that token to push files.
 
-Enrolment keys expire after `ENROL_TOKEN_TTL_HOURS`; access tokens after
+Enrolment sessions expire after `ENROL_TOKEN_TTL_HOURS`; access tokens after
 `ACCESS_TOKEN_TTL_SECONDS`.
 
 ## FCM setup
