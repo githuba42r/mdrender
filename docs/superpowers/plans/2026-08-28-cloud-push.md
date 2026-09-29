@@ -12,6 +12,14 @@
 
 ## Global Constraints
 
+> **Progress note (2026-08-29).** Tick marks reflect work that is actually done.
+> Tasks 0.1, 0.2, all of Phase A (server) and all of Phase C (tools) are
+> complete. A1, A3, A6, A7, A9 and A10 were re-done against the doorbell design
+> when it replaced envelope batching. Phase 0.3 and all of Phase B (Android) are not started. Earlier task
+> briefs and reports in `.superpowers/sdd/2026-08-28-cloud-push/` predate the
+> redesign and still describe the envelope design; where they disagree with this
+> plan, this plan wins.
+
 Verbatim rules that apply to every task:
 
 - **Branch = `feature/cloud-push`.** Do NOT bump `version.properties` (main-branch release). Device installs on this branch use the `-rc.N` version tag via the existing build scripts.
@@ -93,7 +101,7 @@ graphify update .
 **Interfaces:**
 - Produces: a runnable `pytest` harness under `server/`; the `server.app` package root that later tasks fill in.
 
-- [ ] **Step 1: Write `server/requirements.txt`**
+- [x] **Step 1: Write `server/requirements.txt`**
 
 ```
 flask==3.0.3
@@ -102,7 +110,7 @@ requests==2.32.3
 pytest==8.3.3
 ```
 
-- [ ] **Step 2: Write `server/pytest.ini`**
+- [x] **Step 2: Write `server/pytest.ini`**
 
 ```ini
 [pytest]
@@ -110,19 +118,19 @@ testpaths = tests
 addopts = -q
 ```
 
-- [ ] **Step 3: Write the failing smoke test** `server/tests/test_smoke.py`
+- [x] **Step 3: Write the failing smoke test** `server/tests/test_smoke.py`
 
 ```python
 def test_app_imports():
     import server.app.app  # noqa: F401  (imports app factory)
 ```
 
-- [ ] **Step 4: Run to verify it fails**
+- [x] **Step 4: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest`
 Expected: FAIL with `ModuleNotFoundError: No module named 'server.app.app'`.
 
-- [ ] **Step 5: Write `server/app/__init__.py`** (empty file) and `server/tests/conftest.py`
+- [x] **Step 5: Write `server/app/__init__.py`** (empty file) and `server/tests/conftest.py`
 
 ```python
 # server/tests/conftest.py
@@ -146,7 +154,7 @@ def config(db_path):
     return load_config(overrides={"DB_PATH": db_path, "SERVER_PASSWORD": "testpass"})
 ```
 
-- [ ] **Step 6: Add `server/app/app.py` as a stub so the import passes**
+- [x] **Step 6: Add `server/app/app.py` as a stub so the import passes**
 
 ```python
 # server/app/app.py
@@ -159,12 +167,12 @@ def create_app(config):
     return app
 ```
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [x] **Step 7: Run the test to verify it passes**
 
 Run: `cd server && python3 -m pytest`
 Expected: PASS (1 passed).
 
-- [ ] **Step 8: Install deps and commit**
+- [x] **Step 8: Install deps and commit**
 
 ```bash
 python3 -m pip install -r server/requirements.txt
@@ -276,7 +284,7 @@ git commit -m "feat: add Firebase Messaging, ML Kit barcode, CameraX, and google
   - `load_config(*, overrides: dict | None = None) -> Config` where `Config` has attributes named exactly like the env vars: `SERVER_PASSWORD`, `LOGIN_MAX_ATTEMPTS: int`, `LOGIN_LOCKOUT_SECONDS: int`, `ENROL_TOKEN_TTL_HOURS: int`, `ENROL_SESSION_TTL_MINUTES: int`, `ACCESS_TOKEN_TTL_SECONDS: int`, `PUSH_STORAGE_DIR: str`, `DB_PATH: str`, `PUSH_FILE_TTL_HOURS: int`, `PUSH_RETRY_COUNT: int`, `PUSH_RETRY_INTERVAL_MINUTES: int`, `DEVICE_TTL_DAYS: int`, `FCM_SERVER_KEY: str`, `PUSH_PUBLIC_URL: str`, `LISTEN_ADDR: str`. Defaults from the spec's table.
   - `class Database`: `__init__(self, path: str)`, `connect() -> sqlite3.Connection` (sets `PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`, `row_factory=sqlite3.Row`), `init_schema(conn)`, and one helper per table group (documented in later tasks).
 
-- [ ] **Step 1: Write the failing schema test** `server/tests/test_db.py`
+- [x] **Step 1: Write the failing schema test** `server/tests/test_db.py`
 
 ```python
 def test_schema_creates_tables(db_path):
@@ -293,12 +301,12 @@ def test_schema_creates_tables(db_path):
             "pushes", "push_files"}.issubset(names)
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_db.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'server.app.db'`.
 
-- [ ] **Step 3: Write `server/app/config.py`**
+- [x] **Step 3: Write `server/app/config.py`**
 
 ```python
 # server/app/config.py
@@ -343,7 +351,7 @@ def load_config(*, overrides: dict | None = None) -> Config:
     return Config(**env)
 ```
 
-- [ ] **Step 4: Write `server/app/db.py`**
+- [x] **Step 4: Write `server/app/db.py`**
 
 ```python
 # server/app/db.py
@@ -435,12 +443,12 @@ class Database:
 
 (Note: `os` is imported at module top in a real file; the inline import above is for plan brevity — write it at the top.)
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest`
 Expected: PASS (2 passed).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add server/ && git commit -m "feat(server): config loading + SQLite schema"
@@ -463,7 +471,7 @@ git add server/ && git commit -m "feat(server): config loading + SQLite schema"
   - `sign(private_key, data: bytes) -> bytes` (RSA-SHA256, PKCS1v15)
   - `verify(public_key, data: bytes, sig: bytes) -> bool`
 
-- [ ] **Step 1: Write the failing crypto test** `server/tests/test_crypto.py`
+- [x] **Step 1: Write the failing crypto test** `server/tests/test_crypto.py`
 
 ```python
 def test_roundtrip_oaep_and_aes():
@@ -490,12 +498,12 @@ def test_sign_verify():
     assert not verify(pub, b"ek||iv||Cx", sig)
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_crypto.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/crypto.py`**
+- [x] **Step 3: Write `server/app/crypto.py`**
 
 ```python
 # server/app/crypto.py
@@ -574,12 +582,12 @@ def verify(public_key, data: bytes, sig: bytes) -> bool:
         return False
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_crypto.py -v`
 Expected: PASS (2 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/crypto.py server/tests/test_crypto.py
@@ -618,7 +626,7 @@ tampered IV fails the tag check. The value of the derivation is on the **server*
 it guarantees the server never repeats a (key, IV) pair under a long-lived key, and makes
 a retry byte-identical. The phone just uses the IV it is given.
 
-- [ ] **Step 1: Write the failing test** `server/tests/test_trigger.py`
+- [x] **Step 1: Write the failing test** `server/tests/test_trigger.py`
 
 ```python
 import os
@@ -682,12 +690,12 @@ def test_trigger_size_is_independent_of_file_count():
     assert max(sizes.values()) - min(sizes.values()) < 32
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_trigger.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/trigger.py`**
+- [x] **Step 3: Write `server/app/trigger.py`**
 
 ```python
 # server/app/trigger.py
@@ -762,12 +770,12 @@ def manifest_bytes(manifest: dict) -> bytes:
     return json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_trigger.py -v`
 Expected: PASS (7 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/trigger.py server/tests/test_trigger.py
@@ -789,7 +797,7 @@ git commit -m "feat(server): encrypted doorbell trigger replaces envelope + batc
   - `class LoginGate`: `__init__(self, config)`, `check(ip: str, password: str) -> tuple[bool, int]` → `(allowed, retry_after_seconds)`. Tracks failures per IP in memory; locks the IP for `LOGIN_LOCKOUT_SECONDS` after `LOGIN_MAX_ATTEMPTS` failures. Correct password resets the counter.
   - `make_session(secret: str, config) -> str` / `verify_session(secret: str, token: str, config) -> bool` — HMAC-signed cookie token (secret derived from the server key PEM; see Task A5 step 1 where the keypair is created; the plan wires it in Task A9). For now, `make_session` uses a `config.session_secret` attribute that Task A9 sets.
 
-- [ ] **Step 1: Write the failing rate-limit test** `server/tests/test_auth.py`
+- [x] **Step 1: Write the failing rate-limit test** `server/tests/test_auth.py`
 
 ```python
 def test_login_gate_locks_out(config):
@@ -817,12 +825,12 @@ def test_session_token_roundtrip(config):
     assert verify_session(config.session_secret, "forged", config) is False
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_auth.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/auth.py`**
+- [x] **Step 3: Write `server/app/auth.py`**
 
 ```python
 # server/app/auth.py
@@ -899,12 +907,12 @@ def verify_session(session_secret: str, token: str, config) -> bool:
     return True
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_auth.py -v`
 Expected: PASS (2 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/auth.py server/tests/test_auth.py
@@ -930,7 +938,7 @@ git commit -m "feat(server): password login, signed sessions, rate limit + locko
 - Produces (`server.app.auth` additions):
   - `issue_access_token(config, client_id) -> str` and `validate_access_token(config, token) -> str | None` (client_id) — in-memory dict; TTL `config.ACCESS_TOKEN_TTL_SECONDS`.
 
-- [ ] **Step 1: Write the failing OAuth test** `server/tests/test_oauth.py`
+- [x] **Step 1: Write the failing OAuth test** `server/tests/test_oauth.py`
 
 ```python
 def test_client_credentials_flow(config, db_path):
@@ -949,12 +957,12 @@ def test_client_credentials_flow(config, db_path):
         assert validate_access_token(config, "bogus") is None
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_oauth.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/store.py`**
+- [x] **Step 3: Write `server/app/store.py`**
 
 ```python
 # server/app/store.py
@@ -1024,7 +1032,7 @@ def revoke_client(conn, client_id):
 
 *(Clean up the redundant `public_from_spki_pem` line in Step 3's real file — `get_or_create_server_keypair` ends with `_load_private(pem)`; the mid-function call is dead code shown here for review clarity. Write it correctly: generate → store PEM → `_load_private` → return `(pem, spki_der_b64)`.)*
 
-- [ ] **Step 4: Append OAuth2 to `server/app/auth.py`**
+- [x] **Step 4: Append OAuth2 to `server/app/auth.py`**
 
 ```python
 ACCESS_TOKENS: dict[str, tuple[str, float]] = {}  # token -> (client_id, expires_at)
@@ -1047,12 +1055,12 @@ def validate_access_token(config, token: str) -> str | None:
     return client_id
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_oauth.py -v`
 Expected: PASS (1 passed).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add server/app/store.py server/app/auth.py server/tests/test_oauth.py
@@ -1085,7 +1093,7 @@ git commit -m "feat(server): server keypair in DB + OAuth2 client-credentials to
   - `list_devices(conn) -> list[sqlite3.Row]`
   - `sweep_stale_devices(conn, ttl_days) -> list[str]`
 
-- [ ] **Step 1: Write the failing registry test** `server/tests/test_registry.py`
+- [x] **Step 1: Write the failing registry test** `server/tests/test_registry.py`
 
 ```python
 import base64, hashlib, time
@@ -1149,12 +1157,12 @@ def test_register_and_replace_on_name_collision(config, db_path):
         assert not update_device_token(conn, "sec-2", "wrong-auth", "tok-4")
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_registry.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/pairing.py`** (with the store helpers for devices appended to `store.py`)
+- [x] **Step 3: Write `server/app/pairing.py`** (with the store helpers for devices appended to `store.py`)
 
 ```python
 # server/app/pairing.py
@@ -1304,12 +1312,12 @@ def sweep_stale_devices(conn, ttl_days: int) -> list[str]:
     return [r["device_secret"] for r in rows]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_registry.py -v`
 Expected: PASS (1 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/store.py server/app/pairing.py server/tests/test_registry.py
@@ -1341,7 +1349,7 @@ git commit -m "feat(server): pairing tokens + device registry with name-collisio
 - Test coverage (endpoint-level, via Flask test client — full `create_app` is wired in Task A9, so this task tests the store functions directly):
   - push files are stored with a file-linked key (two downloads with the same key both succeed — enforced by the download endpoint in Task A8).
 
-- [ ] **Step 1: Write the failing store test** `server/tests/test_push.py`
+- [x] **Step 1: Write the failing store test** `server/tests/test_push.py`
 
 ```python
 def test_push_file_lifecycle(config, db_path):
@@ -1366,12 +1374,12 @@ def test_push_file_lifecycle(config, db_path):
         assert pushes[0]["file_count"] == 1 and pushes[0]["acked_count"] == 1
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_push.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/push_store.py`**
+- [x] **Step 3: Write `server/app/push_store.py`**
 
 ```python
 # server/app/push_store.py
@@ -1477,12 +1485,12 @@ def get_push_by_id(conn, push_id):
     return conn.execute("SELECT * FROM pushes WHERE push_id = ?", (push_id,)).fetchone()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_push.py -v`
 Expected: PASS (1 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/push_store.py server/tests/test_push.py
@@ -1502,7 +1510,7 @@ git commit -m "feat(server): push + file store with ack/purge lifecycle"
   - `class FcmClient`: `__init__(self, service_account: dict)`, `mint_token() -> str` (cached until ~1h expiry; JWT RS256 `{iss: client_email, scope: "https://www.googleapis.com/auth/firebase.messaging", aud: token_uri, iat, exp}` with header `{alg, typ, kid: private_key_id}`), `send(data_message: dict, fcm_token: str) -> None` (POSTs `POST {FCM_ENDPOINT}/projects/{project_id}/messages:send`, body `{"message":{"token": fcm_token, "data": data_message}}`; raises `FcmError` on non-2xx). `FCM_ENDPOINT = "https://fcm.googleapis.com/v1"`.
 - Test: verify the JWT is well-formed and the send URL/body are correct by monkeypatching `urllib`; no network in tests.
 
-- [ ] **Step 1: Write the failing FCM test** `server/tests/test_fcm.py`
+- [x] **Step 1: Write the failing FCM test** `server/tests/test_fcm.py`
 
 ```python
 import json
@@ -1532,12 +1540,12 @@ def test_mint_token_well_formed():
 
 *(The `private_key` above is a stub; use a real generated test key in Step 3 — generate via `crypto.generate_rsa_keypair` and PEM-encode, so the token can actually be signed.)*
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_fcm.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/fcm.py`**
+- [x] **Step 3: Write `server/app/fcm.py`**
 
 ```python
 # server/app/fcm.py
@@ -1634,7 +1642,7 @@ class FcmClient:
         return data["access_token"]
 ```
 
-- [ ] **Step 4: Fix the test to use a real key and run**
+- [x] **Step 4: Fix the test to use a real key and run**
 
 Replace the stub private key in `test_fcm.py`:
 
@@ -1657,7 +1665,7 @@ and update the test to use `SA` and assert the signature verifies against `_priv
 Run: `cd server && python3 -m pytest tests/test_fcm.py -v`
 Expected: PASS (1 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/fcm.py server/tests/test_fcm.py
@@ -1691,7 +1699,7 @@ git commit -m "feat(server): FCM HTTP v1 client with service-account token mint"
   - `POST /api/push/<push_id>/retry` (session cookie) → reset retries + re-send FCM for pending files
 - Enrolment state (one-time keys) lives in an in-memory dict (a browser-flow artefact); enrolment keys expire after `ENROL_TOKEN_TTL_HOURS`.
 
-- [ ] **Step 1: Write the failing integration test** `server/tests/test_api.py`
+- [x] **Step 1: Write the failing integration test** `server/tests/test_api.py`
 
 ```python
 import base64, io, json, os
@@ -1809,12 +1817,12 @@ sig)` — the server signs exactly the bytes it transmits, so the phone can veri
 the QR-pinned public key. This is the property that a rogue TLS certificate cannot
 manufacture, so it is not optional.)*
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_api.py -v`
 Expected: FAIL (endpoints 404).
 
-- [ ] **Step 3: Write `server/app/app.py`** — the app factory + routes
+- [x] **Step 3: Write `server/app/app.py`** — the app factory + routes
 
 Key structure (complete implementation is the bulk of this task):
 
@@ -1884,17 +1892,17 @@ def create_app(config):
 
 Provide a module-level `make_fcm_client(config) -> FcmClient` (loads `config.FCM_SERVER_KEY`), monkeypatched by tests.
 
-- [ ] **Step 4: Run the integration test and iterate**
+- [x] **Step 4: Run the integration test and iterate**
 
 Run: `cd server && python3 -m pytest tests/test_api.py -v`
 Expected: PASS once the flow works end-to-end.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `cd server && python3 -m pytest`
 Expected: PASS (all tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add server/app/app.py server/tests/test_api.py
@@ -1914,7 +1922,7 @@ git commit -m "feat(server): full Flask endpoint surface with auth + FCM deliver
   - `class SweepWorker`: `tick()` → `sweep_stale_devices(conn, ttl_days)` + `purge_expired_bytes(conn, ttl_hours, now)`.
   - `run_forever(config, db, fcm_client)` — loops every 60 s, calls both ticks; handles `KeyboardInterrupt`/`SystemExit` cleanly.
 
-- [ ] **Step 1: Write the failing retry test** `server/tests/test_retry.py`
+- [x] **Step 1: Write the failing retry test** `server/tests/test_retry.py`
 
 ```python
 import base64, hashlib, time
@@ -1943,12 +1951,12 @@ def test_retry_exhausts_after_count(config, db_path):
 via `push_files.push_id → pushes.target_device → devices.device_name`; a missing device
 short-circuits to `mark_exhausted`, so no device row is needed for this test.)*
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd server && python3 -m pytest tests/test_retry.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/retry.py`**
+- [x] **Step 3: Write `server/app/retry.py`**
 
 ```python
 # server/app/retry.py
@@ -2037,12 +2045,12 @@ class SweepWorker:
 *(Add `import base64` at the top of the real file — shown inline above only for plan
 brevity.)*
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && python3 -m pytest tests/test_retry.py -v`
 Expected: PASS (1 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/retry.py server/tests/test_retry.py
@@ -2065,17 +2073,17 @@ git commit -m "feat(server): retry worker, orphan sweep, byte purge"
 - Consumes: the session-gated GET routes from Task A9.
 - Produces: minimal server-rendered pages (no JS framework). The QR in `pair.html` is rendered as an inline `<svg>` via `qrcode` lib (add `qrcode==7.4.2` to `requirements.txt`) or an `<img>` from a `/pair/qr.svg` route that `qrcode.make(...)` returns.
 
-- [ ] **Step 1: Add `qrcode` to `server/requirements.txt`**
+- [x] **Step 1: Add `qrcode` to `server/requirements.txt`**
 
 ```
 qrcode==7.4.2
 ```
 
-- [ ] **Step 2: Write the templates**
+- [x] **Step 2: Write the templates**
 
 `login.html` — a password form POSTing to `/login`. `pair.html` — shows the server URL + the QR SVG + expiry. `enrol.html` — shows the one-time key for `enrolment_id`. `devices.html` — table of `list_devices` rows with a "Remove" form POSTing to `/devices/<secret>/delete`. `pushes.html` — table of `list_pushes` with per-push "Re-push pending" form POSTing to `/api/push/<push_id>/retry`. `pending.html` — table of `list_pending` (file name, path, size, date, status, retries). All extend `base.html` (a small header linking to the sections, gated by session).
 
-- [ ] **Step 3: Wire the HTML routes in `server/app/app.py`**
+- [x] **Step 3: Wire the HTML routes in `server/app/app.py`**
 
 ```python
 @app.route("/pair")
@@ -2098,11 +2106,11 @@ def pair_page():
 
 and analogous handlers for `/login` (GET form + POST), `/enrol/<id>`, `/devices`, `/pushes`, `/pending`, plus POST handlers for `DELETE /devices/<secret>` and `/api/push/<push_id>/retry`.
 
-- [ ] **Step 4: Manual verification**
+- [x] **Step 4: Manual verification**
 
 Run: `cd server && python3 -m server.app.app` (add a `__main__` block that calls `create_app(load_config()).run(host, port)`), then open `http://localhost:8080/login` in a browser, log in with `SERVER_PASSWORD`, and confirm: pairing page renders a scannable QR; devices/pushes/pending pages render with the empty state.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/app/templates server/app/app.py server/requirements.txt
@@ -2120,7 +2128,7 @@ git commit -m "feat(server): password login + QR pairing + admin pages"
 **Interfaces:**
 - Produces: `run.py` that wires `create_app(load_config())` to the WSGI server (Flask dev server is fine for single-user; production note to use `waitress` — add `waitress==3.0.0` to requirements) and starts `RetryWorker.run_forever` + `SweepWorker` threads; the Docker image that runs it.
 
-- [ ] **Step 1: Write `server/run.py`**
+- [x] **Step 1: Write `server/run.py`**
 
 ```python
 # server/run.py
@@ -2149,7 +2157,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Write `server/Dockerfile`**
+- [x] **Step 2: Write `server/Dockerfile`**
 
 ```dockerfile
 FROM python:3.11-slim
@@ -2164,7 +2172,7 @@ EXPOSE 8080
 CMD ["python", "run.py"]
 ```
 
-- [ ] **Step 3: Write `server/docker-compose.example.yml`**
+- [x] **Step 3: Write `server/docker-compose.example.yml`**
 
 ```yaml
 services:
@@ -2181,12 +2189,12 @@ services:
       - ./fcm-service-account.json:/srv/fcm-service-account.json:ro
 ```
 
-- [ ] **Step 4: Add `waitress` to requirements and verify the image builds**
+- [x] **Step 4: Add `waitress` to requirements and verify the image builds**
 
 Run: `cd server && docker build -t mdrender-push .`
 Expected: image builds. (If Docker is unavailable on the machine, verify `python3 run.py` starts and `/api/health` returns ok.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server/Dockerfile server/docker-compose.example.yml server/run.py server/.dockerignore server/requirements.txt
@@ -2200,11 +2208,11 @@ git commit -m "feat(server): Docker image + compose + startup entry"
 
 **Interfaces:** documentation only.
 
-- [ ] **Step 1: Write `server/README.md`**
+- [x] **Step 1: Write `server/README.md`**
 
 Cover: quick start (`docker compose up`), all env vars with the spec defaults, the pairing flow (open `/pair`, scan QR), tool enrolment (`localsend-send.py --enrol --server …`), backup (mount `/data/push` and copy `server.db`), and the reset behavior (device re-registration via `/api/device/status`). Reference `docs/superpowers/specs/2026-07-25-cloud-push-design.md`.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add server/README.md
@@ -3210,7 +3218,7 @@ git add -A && git commit -m "fix(android): end-to-end Cloud Push verification fi
 **Interfaces:**
 - Produces: a script the agent calls to push files to a named device. Reuses the shared OAuth2 credential file at `~/.config/mdrender/push-credentials.json`.
 
-- [ ] **Step 1: Write the script** (from the spec's `push-to-phone` section)
+- [x] **Step 1: Write the script** (from the spec's `push-to-phone` section)
 
 ```bash
 #!/bin/bash
@@ -3241,7 +3249,7 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "${FLAGS[@]}" "$PUSH_URL/api/push"
 echo "pushed $# file(s) to $TARGET"
 ```
 
-- [ ] **Step 2: Smoke test against the running server**
+- [x] **Step 2: Smoke test against the running server**
 
 With a registered device named "Sunny Falcon", run:
 ```bash
@@ -3249,7 +3257,7 @@ With a registered device named "Sunny Falcon", run:
 ```
 Expected: a new push appears in the server's `/pushes` page and **exactly one** FCM data message is produced, carrying `p` and `i` (the test fake shows it). The manifest is not in FCM. Missing `--target` exits 2.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tools/push-to-phone.sh && git commit -m "feat(tools): push-to-phone curl wrapper"
@@ -3263,18 +3271,18 @@ git add tools/push-to-phone.sh && git commit -m "feat(tools): push-to-phone curl
 **Interfaces:**
 - Produces: `--enrol --server <URL>` mode implementing the spec §Tool enrolment: `POST /api/enrol/start` → print link (`xdg-open` when a display is present) → prompt "Enter enrolment key:" → `POST /api/enrol` → write `~/.config/mdrender/push-credentials.json` (perms 0600) with `{server_url, client_id, client_secret}`. Also add a `--creds <path>` option and a helper `get_access_token(creds_path, server_url)` used by the push path (Task C3).
 
-- [ ] **Step 1: Write the failing unit test** `tools/localsend-send/test_localsend_send.py`
+- [x] **Step 1: Write the failing unit test** `tools/localsend-send/test_localsend_send.py`
 
 Test the new pure functions with a local `http.server`:
 - `_enrol_flow(server_url, key_input)` → asserts the credentials file is written with 0600 perms and correct contents.
 - `_get_token(creds, server_url)` → asserts it POSTs `/oauth/token` and returns the token.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `python3 -m pytest tools/localsend-send/`
 Expected: FAIL — module has no enrol path yet.
 
-- [ ] **Step 3: Implement the enrol path in `localsend-send.py`**
+- [x] **Step 3: Implement the enrol path in `localsend-send.py`**
 
 ```python
 def cmd_enrol(args):
@@ -3300,12 +3308,12 @@ def cmd_enrol(args):
 
 Add `--enrol`, `--server`, `--creds` to the argparse and route to `cmd_enrol` when `--enrol`.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `python3 -m pytest tools/localsend-send/`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/localsend-send/
@@ -3324,14 +3332,14 @@ git commit -m "feat(tools): localsend-send --enrol browser-key enrolment"
   - `push_to_server(creds_path, target_device, paths) -> int` — reads/creates the OAuth2 token, POSTs `/api/push` with multipart `target_device` + files, prints per-file results.
   - `--name <alias>` routing: resolve `alias` → IP on the LAN; if found, send via the existing LocalSend path; if not found, cloud fallback if creds exist (else exit "device not found"). `--host` stays direct with no fallback.
 
-- [ ] **Step 1: Write the failing test** — add `test_discover_lan_parses_response` and `test_push_to_server_multipart` (local `http.server` asserting `target_device` in the multipart body and a Bearer header).
+- [x] **Step 1: Write the failing test** — add `test_discover_lan_parses_response` and `test_push_to_server_multipart` (local `http.server` asserting `target_device` in the multipart body and a Bearer header).
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `python3 -m pytest tools/localsend-send/`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement `discover_lan` + `push_to_server` + `--name` routing**
+- [x] **Step 3: Implement `discover_lan` + `push_to_server` + `--name` routing**
 
 ```python
 def discover_lan(names, timeout=3.0):
@@ -3366,7 +3374,7 @@ def discover_lan(names, timeout=3.0):
 
 *(The exact discovery wire format must match the app's `LocalSendDiscovery`; the implementer reads `LocalSendDiscovery.kt` and mirrors it. `push_to_server` reuses `_upload_stream` with the OAuth2 Bearer header added to the prepare-upload + upload requests.)*
 
-- [ ] **Step 4: Wire `--name` routing in `main()`**
+- [x] **Step 4: Wire `--name` routing in `main()`**
 
 ```python
 if args.name:
@@ -3381,12 +3389,12 @@ if args.name:
         return push_to_server(creds, args.name, paths)
 ```
 
-- [ ] **Step 5: Run the tests and a live smoke test**
+- [x] **Step 5: Run the tests and a live smoke test**
 
 Run: `python3 -m pytest tools/localsend-send/`, then `./tools/localsend-send/localsend-send.py --name "Sunny Falcon" server/README.md`.
 Expected: tests pass; the live push falls back to the server when the phone is off-LAN and lands in the app.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tools/localsend-send/
@@ -3402,7 +3410,7 @@ git commit -m "feat(tools): localsend-send --name with LAN discovery + cloud fal
 **Interfaces:**
 - Produces: the idempotent script from the spec §Setup automation. Outputs `app/google-services.json` (committed) and `server/fcm-service-account.json` (mounted into the server image as `FCM_SERVER_KEY`).
 
-- [ ] **Step 1: Write the script** (verbatim from the spec §Setup automation, plus a `--json-only` note and prereq check that `firebase`/`gcloud`/`jq` are installed)
+- [x] **Step 1: Write the script** (verbatim from the spec §Setup automation, plus a `--json-only` note and prereq check that `firebase`/`gcloud`/`jq` are installed)
 
 ```bash
 #!/usr/bin/env bash
@@ -3433,16 +3441,16 @@ echo "DONE. Commit app/google-services.json; mount server/fcm-service-account.js
 echo "into the server image as FCM_SERVER_KEY."
 ```
 
-- [ ] **Step 2: Write `tools/fcm/README.md`** — the detailed walkthrough behind the script: prereqs (Firebase CLI, gcloud, jq), the one browser step, what each artifact is, key rotation, re-run safety.
+- [x] **Step 2: Write `tools/fcm/README.md`** — the detailed walkthrough behind the script: prereqs (Firebase CLI, gcloud, jq), the one browser step, what each artifact is, key rotation, re-run safety.
 
-- [ ] **Step 3: Verify it is executable and syntactically valid**
+- [x] **Step 3: Verify it is executable and syntactically valid**
 
 ```bash
 chmod +x tools/fcm/setup-fcm.sh
 bash -n tools/fcm/setup-fcm.sh
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tools/fcm/
