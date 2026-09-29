@@ -1,6 +1,12 @@
 # Push Federation Implementation Plan (planning guide)
 
-> **Status: PLANNING ONLY — not started.** This is a guide for a future
+> **⚠️ SUPERSEDED (2026-09-29).** This relay-only guide has been superseded by
+> [`docs/superpowers/specs/2026-09-29-federated-push-server-design.md`](../specs/2026-09-29-federated-push-server-design.md),
+> which widens the scope into a multi-tenant, billable federated service
+> (master/slave modes, accounts, billing, encryption). Keep this only for its
+> original relay rationale; **the spec wins** where they differ.
+
+> **Status: SUPERSEDED / historical.** This is a guide for a future
 > implementation effort, not a binding spec. Before coding, promote the
 > decisions in [Open decisions](#open-decisions-ratify-before-coding) into a
 > spec under `docs/superpowers/specs/` and then a task-by-task plan.

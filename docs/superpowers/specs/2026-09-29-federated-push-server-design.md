@@ -2,10 +2,14 @@
 
 **Status:** Draft (branch `feature/federated-push`). Supersedes the relay-only
 plan in [`docs/superpowers/plans/2026-09-29-push-federation.md`](../plans/2026-09-29-push-federation.md)
-by widening it from a dumb relay into a multi-tenant, billable service with
-master/slave deployment modes and email client accounts.
+(now marked superseded) by widening it from a dumb relay into a multi-tenant,
+billable service with master/slave deployment modes and email accounts.
 
 **Branch:** `feature/federated-push`.
+
+**Terminology note.** A **Client** was renamed to an **Account** (the billable
+customer / tenant) to avoid colliding with the existing OAuth **`clients`**
+table, which is renamed **`oauth_clients`** (the enrolled CLI credentials).
 
 ---
 
@@ -16,40 +20,40 @@ Turn the single self-hosted push server into a **federated service**:
 - A **master** owns the app's Firebase project and the public service surface.
 - **Slave** push servers (self-hosted or managed) register with the master and
   relay doorbells through it.
-- **Clients** (people/businesses) sign up with an email account, upload files
-  into per-client storage, and have them delivered to their registered devices.
-- The **master is also a direct client push server**: clients can register
+- **Accounts** (people/businesses) sign up with an email, upload files into
+  per-account storage, and have them delivered to their registered devices.
+- The **master is also a direct account push server**: accounts can register
   against the master itself and push files through it, with no slave involved.
-- Access is **prepaid**: slave servers pay a flat fee; clients pay for storage
-  and messages.
+- Access is **prepaid**: slave servers pay the master a **flat monthly fee**;
+  accounts hosted directly on a server are metered for storage and messages.
 
-The end-user app is unchanged: it still receives an E2E doorbell and pulls from
-its paired server.
+The end-user app is unchanged for the core push path; the file-encryption
+feature (§7a) requires an **app change, built after the server infrastructure**.
 
 ## 2. Roles and terminology
 
 | Term | Meaning |
 |------|---------|
-| **Master** | The operator-run server that owns the FCM project and the account/billing/admin surface. It **also hosts clients directly** and doorbells their devices itself, in addition to relaying for slaves. |
+| **Master** | The operator-run server that owns the FCM project and the account/billing/admin surface. It **also hosts accounts directly** and doorbells their devices itself, in addition to relaying for slaves. |
 | **Slave** | A push server that has no FCM credentials of its own and relays through a master. |
 | **Standalone** | A push server with its own FCM project (today's mode) — not federated. |
-| **Host** | The server a client is registered on: the **master** (direct) or a **slave**. |
-| **Client** | A billable tenant hosted on the master or a slave, identified by an email account, that uploads files and owns devices. |
+| **Host** | The server an account is registered on: the **master** (direct) or a **slave**. |
+| **Account** | A billable customer (tenant) hosted on the master or a slave, identified by an email, that uploads files and owns devices. |
 | **Device** | A paired MDRender app instance (FCM token + `push_key`). |
-| **Admin** | A signed-in operator account. First admin is created at first run; the master supports multiple admins. |
+| **Admin** | A signed-in operator login (username/password or SSO). Not a billing account. |
+| **OAuth client** | An enrolled CLI credential (`oauth_clients`), used by `mdrender-send` and associated with an Account. |
 | **Server ID** | A unique UUID minted at first run that identifies this server to a master. |
 
 ## 3. Deployment modes
 
 Determined at run time, overridable by config:
 
-1. **If Google/FCM service registration is available** on this deployment
-   (a service-account file is present/valid), the server can act as a **master**
-   (or a standalone server).
+1. **If Google/FCM service registration is available** (a service-account file
+   is present/valid), the server can act as a **master** (or standalone).
 2. **If Google services are not available**, the server runs as a **slave**:
-   it has no FCM credentials and must relay through a master.
+   no FCM credentials, must relay through a master.
 3. A **default master URL is baked into the image**; the operator can override
-   it (env/config, and via the admin UI).
+   it (env/config and the admin UI).
 4. A slave must, on first run, **complete local admin setup** and then
    **register with the master** before it can deliver pushes.
 
@@ -57,75 +61,70 @@ Config: `FCM_SERVER_KEY` present ⇒ master-capable; `FEDERATION_URL` set ⇒ sl
 (default baked in, overridable). `ROLE=master|slave|standalone` forces a mode.
 Detection is advisory: an explicit `ROLE` always wins.
 
-**Startup detection (D1, resolved).** On startup the server first checks the
-FCM service-account **file is present**, then runs a **live probe** (mints an
-OAuth token from the service account and authenticates against Google). If the
-file is absent, or the probe fails, the server still starts but marks FCM
-**unavailable**: it does not act as a master-capable sender, logs the failure,
-surfaces it in the admin UI, and **re-probes periodically** so a later-valid
-credential recovers without a restart.
+**Startup detection (D1, resolved).** On startup the server checks the FCM
+service-account **file is present**, then runs a **live probe** (mints an OAuth
+token). If absent or the probe fails, the server still starts but marks FCM
+**unavailable** — it does not send as a master, logs the failure, warns in the
+admin UI, and **re-probes periodically** so a later-valid credential recovers
+without a restart.
 
-A master-capable server plays **both roles at once**: it hosts clients directly
-(registration, uploads, devices, own FCM doorbells) **and** relays doorbells for
-enrolled slaves.
+A master-capable server plays **both roles at once**: it hosts accounts directly
+and relays doorbells for enrolled slaves.
 
-## 4. Accounts and authentication
+## 4. Accounts, logins, and authentication
 
 - **Replace the single `SERVER_PASSWORD` login with username + password.**
-- **First run with no admin account**: the login page offers a *set up admin
-  account* form (choose username + password). This is the only unauthenticated
-  write path, and only while zero admins exist; once an admin exists, it is
-  closed (a second admin can only be invited/created from the admin UI).
-- Passwords hashed with the existing PBKDF2 helper (`hash_secret`/`verify_secret`);
-  sessions use the existing signed server-side session store.
-- **The master supports multiple accounts** (multiple people registering
-  devices/clients), with roles (`admin`, `operator`).
-- Login rate-limiting stays (reuse `LoginGate`), keyed per user+IP.
+  There are no existing installs to migrate.
+- **First run with no admin**: the login page offers a *set up admin* form
+  (username + password). This is the only unauthenticated write path and only
+  while zero admins exist; once an admin exists it is closed (further admins are
+  created from the admin UI).
+- Passwords hashed with the existing PBKDF2 helper; sessions use the existing
+  signed server-side session store.
+- The master supports **multiple admins** (multiple operators), with roles.
+- Login rate-limiting stays (reuse `LoginGate`), per user+IP.
 
-### 4a. Identity provider (Auth0 / AWS Cognito / Firebase / local)
+### 4a. Identity: local user DB and optional hosted IdP
 
-Social login and passwordless should come from a managed identity provider, not
-hand-rolled. Put every provider behind one **`IdentityProvider` interface**
-(OIDC/JWT: verify the ID/access token, map to a local `user`, then mint our own
-session) so the concrete choice is swappable and a local fallback always works.
+Two supported modes per host, behind one **`IdentityProvider` interface**
+(verify a token/credentials, map to a local user, mint an MDRender session):
 
-| Option | Social | Passwordless | Trade-offs |
-|--------|--------|--------------|-----------|
-| **Firebase Authentication** (recommended default) | Google, Apple, GitHub, etc. | **Email link** (magic link), phone OTP, passkeys | Reuses the **existing Firebase project** (already used for FCM) — no new vendor. Web SDK on the frontend + Admin SDK on Flask to verify tokens. Email sending is handled by Firebase. |
-| **Auth0** | Broad social set | Email magic link, SMS OTP, passkeys/WebAuthn | Best passwordless/MFA DX and rules/actions; MAU-based pricing; another vendor + lock-in. |
-| **AWS Cognito** | Google/Facebook/Apple/SAML/OIDC | **No built-in email magic link** — needs `CUSTOM_AUTH` Lambda + SES (or phone OTP) | AWS-native and cheap at scale; passwordless is DIY and the hosted UI is less polished. |
-| **Self-hosted local** | — | magic link (own SMTP) | No per-MAU cost, full control; must own email deliverability, MFA, passkey/WebAuthn, and account security. |
+1. **Local user DB (default, always available).** A local `users` table with
+   username/email + password (PBKDF2), optional email verification. No external
+   dependency — works fully offline.
+2. **Hosted identity provider (optional).** Social login + passwordless
+   (magic-link) via a low-cost provider. Because the project already uses
+   Firebase, the operator can **bring their own Firebase account/project** and
+   the server documents the setup; Auth0 / AWS Cognito are alternatives.
 
-**Decision (D3):** use a **low-cost hosted provider** that supports **social
-login and magic-link** email. Run a short spike comparing **Auth0**, **AWS
-Cognito**, and **Firebase Auth** (which reuses the FCM project) on price,
-passwordless fit, and email deliverability, behind the `IdentityProvider`
-interface. **Local username/password** stays as the break-glass admin path and
-for deployments with no external IdP. (Supersedes the earlier
-Firebase-as-default recommendation.)
+**Decision (D3):** support both — local user DB by default, plus a hosted IdP
+(social + magic-link) behind the interface. Run a short spike comparing
+**Auth0**, **AWS Cognito**, and **Firebase Auth** (reuses the FCM project) on
+price, passwordless fit, and email deliverability. **Deliverable:** an
+**IdP setup guide** covering the operator's own Firebase account (project,
+providers, API keys, token verification).
 
-- **Clients** (tenants) get social + passwordless (lower friction, self-serve).
+- **Accounts** get social + passwordless when an IdP is configured, else local.
 - **Admins/operators** stay on **local accounts or enterprise SSO with MFA** —
-  do not expose privileged accounts to consumer social login.
-- Account linking is by **verified email**; strict email verification is
-  required so an IdP email cannot impersonate an existing account.
-- Email-domain bans (§9) and IP/CIDR/ASN bans (§14) are applied after token
-  verification, before a session is issued.
-- The Android app may adopt the same IdP later (e.g. Firebase Auth), but the
-  app is out of scope for this effort.
+  no consumer social on privileged accounts.
+- Account linking is by **verified email**; email verification is required.
+- Email-domain bans (§9) and IP/CIDR/ASN bans (§14) apply after verification,
+  before a session is issued.
+- The Android app may adopt the same IdP later; that is out of scope here.
 
 ## 5. Server identity and federation registration
 
 - On first run the server mints a **UUID `server_id`** and an **RSA keypair**
   (a federation keypair, distinct from the manifest-signing key), stored in the
   DB.
-- A slave registers with the master via a **server-enrolment handshake**
-  (short-code/browser approve, mirroring the CLI-enrolment pattern):
+- A slave registers with the master via a **server-enrolment handshake**:
   - slave `POST /api/federation/enrol/start` → master returns an enrolment;
-  - operator approves on the master (or types the code);
-  -   credentials exchanged; the slave submits its **hostname**, **server_id**,
-    and **public key**, and the master records them. **Enrolment is automatic
-    (D2)** — no per-slave operator approval; bans/revocation still apply.
+  - the slave submits its **hostname**, **server_id**, **public key**, and the
+    **base URL** the master should call. **Enrolment is automatic (D2)** — no
+    per-slave operator approval; bans/revocation still apply.
+- **Mutual authentication:** the slave's admin configures the **expected master
+  hostname**, and the slave verifies the master's hostname before enrolling
+  (D5-review). The master verifies the slave by the signed callback (§5a).
 - Thereafter, slave↔master API calls are **Bearer-authenticated *and signed***
   with the slave keypair (§5a); the master verifies the signature against the
   registered public key, so an intercepted token alone is not enough.
@@ -144,9 +143,8 @@ Firebase-as-default recommendation.)
    **pending**, not active.
 
 ### Signed messages (slave → master)
-Every slave→master request carries:
-`X-Federation-Server` (server_id), `X-Federation-Timestamp`,
-`X-Federation-Nonce`, and `X-Federation-Signature` =
+Every slave→master request carries `X-Federation-Server` (server_id),
+`X-Federation-Timestamp`, `X-Federation-Nonce`, and `X-Federation-Signature` =
 `sign(slave_priv, canonical(method, path, timestamp, nonce, sha256(body)))`.
 The master verifies the signature against the registered public key and rejects
 **stale timestamps** (outside a small window) and **replayed nonces**.
@@ -155,9 +153,8 @@ The master verifies the signature against the registered public key and rejects
 - **Master → slave probe:** the master periodically calls the slave's
   `/api/federation/probe` with a challenge; the slave returns a **signed**
   challenge plus status. After N consecutive failures/timeouts the master marks
-  the slave **down** (`status=down`, records `down_since`); the master is
-  authoritative for registry status.
-- **Slave → master heartbeat:** the slave sends a signed periodic heartbeat, and
+  the slave **down** (records `down_since`); the master is authoritative.
+- **Slave → master heartbeat:** the slave sends a signed periodic heartbeat and
   may **ping "back online"** at any time. On **restart**, a registered slave
   **pings the master** so it is immediately re-marked up.
 - **Return to online:** on a successful heartbeat/ping/probe the master clears
@@ -166,371 +163,344 @@ The master verifies the signature against the registered public key and rejects
 ### Delivery queue (master → slave)
 Messages the master must deliver to a slave (config/plan changes, suspension or
 admin notices, revocations) go to a per-slave **outbox** while the slave is
-**down**, and are delivered (with retry/backoff, signed) when it returns. The
-queue has a retention/TTL. In the other direction, slave→master sends
-(doorbells, device updates) are retried by the slave's existing retry worker if
-the master is briefly unavailable.
-- Server-to-server pub/priv keys allow the master to verify that a registration
-  or a client/device update genuinely came from that slave.
+**down**, delivered (signed, retry/backoff) when it returns, with a retention
+TTL. Slave→master sends (doorbells, device sync) are retried by the slave's
+existing retry worker if the master is briefly unavailable.
 
-## 6. Devices and clients
+## 6. Devices and accounts
 
-- A client is **hosted on exactly one server** — the master directly, or a
+- An account is **hosted on exactly one server** — the master directly, or a
   slave — and its devices, files, quotas, and plan belong to that host.
-- Devices are paired to their host exactly as today (`push_key`, FCM token,
-  manifest signing key per server). Master-hosted clients are served by the
-  master's own push stack; nothing is relayed.
-- **Adding/registering a client or device on a slave pushes an update to the
-  master** for each device's FCM registration (token, device id, owning client
-  account), so the master can route/authorize doorbells without trusting a raw
-  token supplied per request.
-- The master stores `(server_id, client_id, device_id) → fcm_token` with
-  lifecycle (upsert on register/rotate, delete on removal).
+- Devices are paired to their host as today (`push_key`, FCM token, manifest
+  signing key per server).
+- **Device → account binding requires approval.** Pairing is initiated for a
+  specific account (the account or an admin generates the pairing token/QR) and
+  the **binding is approved** before the device is attached to the account. A
+  device belongs to exactly one account.
+- **Slave → master sync carries no PII (D-review #7).** On registering a device
+  the slave pushes only the minimum needed to route a doorbell — opaque
+  `account_id`, `device_id`, the FCM token, and the slave's `server_id`. **No
+  email, name, or other PII reaches the master**; the master stores only the
+  routing tuple `(server_id, account_id, device_id) → fcm_token` with lifecycle
+  (upsert on register/rotate, delete on removal).
+- Master-hosted accounts are served by the master's own stack; nothing is
+  relayed.
 
 ## 7. Push flow
 
-Two paths, depending on where the client is hosted.
+Two paths, depending on where the account is hosted.
 
-**A. Client hosted on the master (direct, no relay)**
-1. The client uploads files to the master (per-client pending storage, §10).
+**A. Account hosted on the master (direct, no relay)**
+1. The account uploads files to the master (per-account pending storage, §10).
 2. The master seals the trigger with the device's `push_key` and sends the FCM
    doorbell with its own project.
 3. The app decrypts, fetches the signed manifest from the master, verifies, and
    downloads.
 
-**B. Client hosted on a slave (relay)**
-1. The client uploads files to the slave (per-client pending storage, §10).
+**B. Account hosted on a slave (relay)**
+1. The account uploads files to the slave (per-account pending storage, §10).
 2. The slave seals the trigger with the device's `push_key`.
 3. The slave sends the sealed trigger to the master
-   (`POST /api/federation/doorbell`), naming the device.
+   (`POST /api/federation/doorbell`), naming the device (opaque ids only).
 4. The master resolves the device's FCM token, enforces that the requesting
-   slave owns it (and that the slave/client is entitled and not banned), and
-   sends the FCM doorbell via its project.
+   slave owns it (and that the slave is entitled and not banned), and sends the
+   FCM doorbell via its project.
 5. The app decrypts, fetches the signed manifest from the **slave**, verifies,
    and downloads.
 
-Security invariants (carried over): for relayed pushes the master cannot read
-the doorbell (no `push_key`) or forge a manifest (no server signing key); only
-the holder of a device's `push_key` can produce an effective doorbell.
+Security invariants: for relayed pushes the master cannot read the doorbell (no
+`push_key`) or forge a manifest (no server signing key); only the holder of a
+device's `push_key` can produce an effective doorbell.
 
-## 7a. File content encryption (server-blind)
+## 7a. File content encryption (server-blind) — requires an app change
 
-**Goal:** a client's files are encrypted **before upload**, so no server — slave
-or master — can read them, and the operator is not responsible for the content.
+**Goal:** an account's files are encrypted **before upload**, so no server —
+slave or master — can read them, and the operator is not responsible for the
+content. **The server infrastructure is built first; the Android app change
+(the decryption key) follows.**
 
 The key is shared **only** between the push client and the app. The server
 relays **public keys and an opaque sealed blob** — it never sees the private
 key or the content key.
 
 ### Key material
-- The **push client originates the key**. It creates a **content keypair**
-  (`Cpriv`/`Cpub`); `Cpriv` is stored on the client (0600) and is **never
-  uploaded**.
+- The **push client originates the key**: a **content keypair** (`Cpriv`/`Cpub`);
+  `Cpriv` is stored on the client (0600) and **never uploaded**.
 - A random symmetric **Content Encryption Key (CEK)** encrypts files
   (AES-256-GCM per file, random nonce). The CEK is what client and app share.
 - The **app** holds a **content decryption keypair** in its Keystore and
-  registers its **content public key** with the server. This is a *new* key:
-  the app's existing pairing key is **sign-only** (`2863d0d`) and cannot
-  decrypt, so the app must add a decryption-capable content key.
+  registers its **content public key** with the server. This is a **new app
+  key**: the app's existing pairing key is **sign-only** (`2863d0d`) and cannot
+  decrypt.
 
 ### Key exchange at device registration
 1. On pairing, the app generates its content decryption keypair and registers
    the **content public key** with the server.
 2. The client fetches the app's content public key and **seals the CEK to it**
    (`sealed_cek = wrap(app_content_pub, CEK)`), uploading the sealed blob.
-3. The server stores `sealed_cek` as an **opaque blob** — it cannot unwrap it,
-   having neither the app's private key nor the CEK. Only the app can open it.
+3. The server stores `sealed_cek` as an **opaque blob** — it cannot unwrap it.
+   Only the app can open it.
 
 ### Push / fetch
 1. The client encrypts each file with the CEK and uploads ciphertext + nonce
-   (optionally signing with `Cpriv` so the app can verify the client origin).
+   (optionally signing with `Cpriv` so the app can verify origin).
 2. The server stores **ciphertext only**.
 3. The app fetches `sealed_cek` once, unwraps it with its Keystore key, and
    decrypts downloads with the CEK.
 
 ### Rotation
-- **Changing the client content key** (a new CEK) requires re-sealing to every
-  app's content public key, so each app must **re-fetch** it — the
-  re-registration the requirements note.
-- The app may also rotate its content keypair at re-pairing, after which the
-  client re-seals.
+- **Changing the client content key** requires re-sealing to every app's
+  content public key, so each app must **re-fetch** it (re-registration).
+- The app may rotate its content keypair at re-pairing; the client re-seals.
 
 ### Properties and trade-offs
-- The server (master or slave) sees only ciphertext and opaque wraps, so it
-  **cannot read file content** — the "we are not responsible for the content"
-  posture.
-- Consequently the server **cannot scan, deduplicate, or moderate** content;
-  abuse handling must be policy/report-driven.
-- The doorbell `push_key` (§7) is **separate** and unchanged: it protects the
-  trigger, not file content.
-- Encryption is per client and may be opted out (plaintext); the server records
-  the mode per client/device.
-- Whether **file names/metadata** are also encrypted is open (D13).
+- Servers see only ciphertext and opaque wraps → **cannot read content**.
+- Consequently servers **cannot scan, deduplicate, or moderate** content;
+  abuse handling is policy/report-driven (§8a).
+- The doorbell `push_key` (§7) is separate and unchanged.
+- Encryption is per account and may be opted out (plaintext); the server records
+  the mode.
+- Filename/metadata encryption is open (D13).
 
 ## 8. Master administration of slave servers
 
-Admin UI + API to:
-
-- **List** slave servers (hostname, server_id, owner, status, last seen, counts).
-- **Revoke / delete / deactivate** a slave (deactivate = suspend without
+- **List** slaves (hostname, server_id, status, last seen, counts).
+- **Revoke / delete / deactivate / ban** a slave (deactivate = suspend without
   deleting; revoke = invalidate credentials; delete = remove).
-- **Ban** a slave by **IP address, IP block range (CIDR), AS number, hostname,
-  or domain name**; bans block enrolment and all federation calls from the
-  banned source. The same ban vocabulary applies globally (§14).
-- A slave's admin UI lists **its own clients and devices**.
+- **Ban** a slave by **IP, CIDR range, AS number, hostname, or domain**; bans
+  block enrolment and all federation calls from the banned source. The same
+  vocabulary applies globally (§14).
+- A slave's admin UI lists **its own accounts and devices**.
 
-## 9. Client (tenant) accounts
+## 8a. Policy and compliance
 
-- Clients register with an **email address as the login** (password or
-  email-link auth), and include their **content public key** `Cpub` (§7a) so
-  devices can wrap content keys to them.
-- Master/admin can **delete, block, or ban** an email address.
-- **Banned email domains**: a configurable blocklist of free/consumer and
-  temporary/disposable email domains is rejected at signup (operator-editable,
-  with an allowlist override for exceptions).
-- **Banned network sources**: signup is refused for source IPs matching an IP
-  ban, an IP block range (CIDR), or an AS number — enforced at signup and on
-  every subsequent request, not just registration (§14).
-- Client ↔ devices ↔ pending files are scoped per client.
+Paid multi-tenant service, so deliver **Policy and Terms & Conditions
+documents**: acceptable use, content/abuse reporting (given server-blind
+content, report-driven), privacy (data minimisation, no PII at the master),
+billing/refund terms, and IP/CIDR/ASN/email ban policy. These ship with the
+admin UI (linked) and are configurable per operator.
 
-## 10. Per-client storage and quotas
+## 9. Account (tenant) signup
 
-- Each client has a **pending collection**: their uploaded files live in
-  per-client storage on their **host** (the master or a slave) until the client
-  collects them. Tenants are isolated by **per-client directories** (D7). When
-  client-side encryption is on (§7a), the server stores **ciphertext + nonce**,
-  never plaintext; only server-hosted clients store files at all.
-- An admin configures, per client (with global defaults):
+- Accounts register with an **email as the login** (local password, or IdP
+  magic-link/social when configured), and include their **content public key**
+  `Cpub` (§7a) so devices can seal content keys to them.
+- Admin can **delete, block, or ban** an email.
+- **Banned email domains:** a configurable blocklist of free/consumer and
+  temporary/disposable domains is rejected at signup (operator-editable, with an
+  allowlist override).
+- **Banned network sources:** signup is refused for source IPs matching an IP
+  ban, a CIDR range, or an AS number — enforced at signup and every request
+  (§14).
+- Account ↔ devices ↔ pending files are scoped per account.
+
+## 10. Per-account storage and quotas
+
+- Each account has a **pending collection**: uploaded files live in per-account
+  storage on its **host** until collected. Tenants are isolated by **per-account
+  directories** (D7). With client-side encryption on (§7a), the server stores
+  **ciphertext + nonce**, never plaintext.
+- An admin configures, per account (with global defaults):
   - **max pending bytes / file count** (quota), and
   - **max age of pending files** before automatic **purge**.
-- A background sweeper enforces age and quota; the client UI shows usage.
+- A background sweeper enforces age and quota; the account UI shows usage.
 
 ## 11. Billing foundation (prepaid)
 
 Build the foundation now; wire real providers later.
 
 - **Two billing models:**
-  - **Slave servers**: a **flat access fee** (prepaid period) for federation.
-  - **Clients**: metered on **storage** (pending usage) and **messages**
-    (doorbells/files delivered), prepaid via a balance — the same whether the
-    client is **hosted on the master directly** or on a slave. Only slaves pay
-    the flat access fee.
-- **Plans** are first-class and there can be **many**: admins create any number
-  of plans per account scope (`slave` = flat access, `client` = metered), each
-  with a price, currency, interval, included allowances, and overage rates.
-- **Groups**: an account belongs to **exactly one** group. A plan can be
-  applied to a group, and every account may also carry an individual plan.
-  **Effective plan: account plan (override) → the account's group plan.**
-- A **default group** exists for accounts with no explicit group (it cannot be
-  deleted); its plan is the baseline. Because an account is in only one group,
-  there is **no group precedence** to resolve.
+  - **Slave servers**: the master bills each slave a **flat monthly fee** for
+    federation access. The master does **not** meter accounts hosted on a slave.
+  - **Accounts hosted directly on the master**: metered on **storage** and
+    **messages**, prepaid via a balance.
+  - Accounts hosted on a slave are the slave's own billing concern (the slave
+    may run the same metering for its accounts; it is not reported to the
+    master).
+- **Metering (D5):** example rates — **$5 per MB per month** once a file is
+  **pending > 1 hour**, and **$0.50 per 1000 messages** (doorbells). Rates and
+  thresholds are per-plan configuration.
+- **Plans** are first-class and there can be **many**, one per account scope
+  (`slave` = flat, `account` = metered), each with a price, currency, interval,
+  included allowances, and overage rates.
+- **Groups**: an account belongs to **exactly one** group; a plan can be applied
+  to a group, and an account may carry its own plan. **Effective plan: account
+  plan (override) → its group's plan.**
+- A **default group** holds accounts with no explicit group (cannot be deleted);
+  its plan is the baseline. No group precedence exists.
 - **Entitlement layer**: every billable action checks an entitlement
   (`active`, `grace`, `suspended`) derived from a prepaid balance/period, so the
-  payment provider is swappable.
+  provider is swappable.
 - **Account states**: **free** (requires **admin approval**), **trial**
-  (requires a **card on file**, once a payment provider is integrated), and
-  **paid**; each plan carries a **grace period** before suspension.
+  (requires a **card on file**, once a gateway is integrated), **paid**; each
+  plan has a **grace period**.
 - **Provider abstraction**: a `PaymentProvider` interface with a **manual
-  implementation first** — admins **add credits** to an account, and that path
-  always works; **Stripe / PayPal / crypto** are added later behind the same
-  interface. No card data is stored before a real gateway exists.
-- **Metering (D5)**: clients are charged **$X per KB stored** once files are
-  retained beyond the plan's threshold **Y**, and **$Z per message**
-  (doorbell/file) sent; rates and thresholds are per-plan configuration.
-- Ledger of charges/credits; admin UI to view/adjust; client/slave self-serve
-  top-up page (stubbed initially).
-- No card data is ever stored by this codebase.
+  implementation first** — admins **add credits**, and that path always works;
+  **Stripe / PayPal / crypto** later. No card data is stored before a gateway.
+- Ledger of charges/credits; admin UI to view/adjust; self-serve top-up page
+  (stubbed). No card data is ever stored by this codebase.
 
 ## 12. Data model (new/changed)
 
 | Table | Purpose |
 |-------|---------|
 | `admins` | username, password hash (nullable when SSO), role, created, disabled/blocked/banned |
-| `identities` | provider (firebase/auth0/cognito/local), subject, email, `user_type` + `user_id`, email_verified, linked_at |
+| `users` | local user DB: email/username, password hash, verified, status (for local auth) |
+| `identities` | IdP link: provider, subject, email, `user_type` + `user_id`, email_verified, linked_at |
+| `oauth_clients` | **renamed from `clients`** — the enrolled CLI credentials, associated with an account |
 | `server_identity` | `server_id` (uuid), federation keypair, hostname, role |
-| `federated_servers` | server_id, hostname, `base_url`, pubkey, secret hash, status (pending/active/down/deactivated/banned), plan, period, last_seen, `down_since`, `last_probe` |
+| `federated_servers` | server_id, hostname, `base_url`, pubkey, secret hash, status (pending/active/down/deactivated/revoked/banned), plan, period, last_seen, `down_since`, `last_probe` |
 | `federated_nonces` | seen signed-request nonces (replay window) |
 | `federated_outbox` | queued master→slave messages: server_id, payload, created, attempts, next_retry_at, acked_at |
-| `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| client`; reason, created_by, expires |
-| `clients` | email, password hash (nullable), `host` (master \| federated server_id), status (active/blocked/banned), balance |
-| `client_devices` | device_id, client_id, server_id, fcm_token, name |
-| `client_files` | pending files: client_id, size, created, stored_path, `encryption` (alg, nonce), status |
-| `client_keys` | client content public key `Cpub`: client_id, pubkey, created, retired_at |
-| `device_content_keys` | per-device sealed CEK: device_id, `sealed_cek` (opaque, client-sealed to the app), alg, created, retired_at |
-| `devices` (existing) | gains `content_pubkey` — the app's content decryption public key |
-| `client_quotas` | per-client overrides (max bytes/count, max age) |
+| `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| account`; reason, created_by, expires |
+| `accounts` | email, password hash (nullable), `host` (master \| federated server_id), status (active/blocked/banned), balance — the tenant/customer |
+| `account_devices` | routing only, **no PII**: `account_id` (opaque), `device_id`, `server_id`, `fcm_token`, name(optional local) |
+| `account_files` | pending files: account_id, size, created, stored_path, `encryption` (alg, nonce), status |
+| `account_keys` | account content public key `Cpub`: account_id, pubkey, created, retired_at |
+| `device_content_keys` | per-device sealed CEK: device_id, `sealed_cek` (opaque), alg, created, retired_at |
+| `devices` (existing) | gains `content_pubkey`, `account_id` |
+| `account_quotas` | per-account overrides (max bytes/count, max age) |
 | `email_domain_rules` | allow/deny list for signup domains |
 | `billing_ledger` | charges/credits, reason, period, provider ref |
-| `billing_plans` | id, name, `scope` (slave\|client), price, currency, interval, included storage/messages, overage rates, active |
+| `billing_plans` | id, name, `scope` (slave\|account), price, currency, interval, included storage/messages, overage rates, active |
 | `billing_groups` | id, name, `plan_id` (nullable), `is_default` |
-| `account_groups` | one row per account: `account_type` (admin/slave/client), `account_id` (unique), `group_id` (defaults to the default group) |
+| `account_groups` | one row per billable account: `account_type` (slave/account), `account_id` (unique), `group_id` |
 | `account_plans` | per-account plan override: `account_type`, `account_id`, `plan_id` |
 
-Existing `devices`, `pushes`, `push_files`, `sessions`, `oauth clients`
-remain; the client/tenant layer wraps them.
+Existing `devices`, `pushes`, `push_files`, `sessions`, `server_keys` remain;
+`clients` is renamed `oauth_clients`.
 
 ## 13. API surface (proposed)
 
-**Auth (all deployments):** `GET/POST /setup` (first-run admin), `POST /login`
-(username+password), `POST /logout`, admin user CRUD. External IdP:
-`GET /auth/providers` (enabled social/passwordless options) and
-`POST /auth/oidc` (verify the provider token via the `IdentityProvider`, then
-mint an MDRender session); local login always remains available.
+**Auth (all deployments):** `GET/POST /setup` (first-run admin), `POST /login`,
+`POST /logout`, admin user CRUD. Local user DB plus optional IdP:
+`GET /auth/providers` and `POST /auth/oidc` (verify via `IdentityProvider`, mint
+a session); local login always available.
 
-**Master ↔ slave (Bearer + optional signature):**
+**Master ↔ slave (Bearer + signature):**
 `POST /api/federation/enrol/start`, `POST /api/federation/enrol`,
-`GET/POST /api/federation/verify` (slave signs the master's callback challenge),
-`POST /api/federation/probe` (slave answers a signed liveness challenge),
-`POST /api/federation/ping` (slave declares "back online", incl. on restart),
-`POST /api/federation/heartbeat` (periodic, also flushes the master's outbox),
+`GET/POST /api/federation/verify`, `POST /api/federation/probe`,
+`POST /api/federation/ping`, `POST /api/federation/heartbeat`,
 `GET /api/federation/whoami`,
-`PUT/DELETE /api/federation/clients/{client_id}`,
-`PUT/DELETE /api/federation/clients/{client_id}/devices/{device_id}`,
+`PUT/DELETE /api/federation/accounts/{account_id}`,
+`PUT/DELETE /api/federation/accounts/{account_id}/devices/{device_id}`,
 `POST /api/federation/doorbell`.
 
-**Client (tenant) API** (exposed by **both** the master directly and each
-slave): signup by email, device pairing, upload to pending
-(`POST /api/client/upload`), list/quota, collect/ack.
+**Account (tenant) API** (master and each slave): signup by email, device
+pairing (with approval), upload to pending (`POST /api/account/upload`),
+list/quota, collect/ack.
 
 **Content key exchange (§7a):** device registration publishes the app's
-**content public key**; `GET /api/client/devices/{id}/content-pubkey` returns it
-to the client, which `PUT`s the **sealed CEK**; the app fetches
-`GET /api/device/{id}/sealed-cek`; uploads carry the `nonce` alongside
-ciphertext. `Cpriv` and the CEK never reach the server.
+**content public key**; `GET /api/account/devices/{id}/content-pubkey`; the
+client `PUT`s the **sealed CEK**; the app fetches
+`GET /api/device/{id}/sealed-cek`; uploads carry the `nonce`. `Cpriv` and the
+CEK never reach the server.
 
-**Master admin:** list/revoke/deactivate/delete/ban slaves;
-list/block/ban clients and email domains; **network bans (ip, cidr, asn,
-hostname, domain)**; quotas; billing/ledger; **plan CRUD (many plans);
-group CRUD; assign an account to exactly one group (default group when unset);
-assign a plan to an account or a group.**
+**Master admin:** list/revoke/deactivate/delete/ban slaves; list/block/ban
+accounts and email domains; network bans (ip, cidr, asn, hostname, domain);
+quotas; billing/ledger; plan CRUD; group CRUD; assign an account to one group;
+assign a plan to an account or group.
 
-**Ban management (shared vocabulary):** `GET/POST/DELETE /api/admin/bans` with a
-`kind` of `ip | cidr | asn | hostname | domain`, a `scope`
-(`global | server | client`), and optional expiry.
+**Ban management:** `GET/POST/DELETE /api/admin/bans` with `kind`
+(`ip | cidr | asn | hostname | domain`), `scope` (`global | server | account`),
+optional expiry.
 
 ## 14. Security and trust model
 
-- Reuse the E2E doorbell + signed-manifest invariants (§7); the master stays
+- E2E doorbell + signed-manifest invariants (§7); the master stays
   content-blind.
 - Server-to-server: Bearer + **per-slave keypair signature** on every
-  slave→master message (§5a), verified against the registered public key;
-  stale timestamps and replayed nonces rejected. Slaves are activated only after
-  the master's callback challenge is signed back correctly.
-- Bans enforced at the edge of **every** endpoint — signup, federation, client,
-  and admin — not just registration. Matching is by exact IP, **CIDR block
-  range**, **AS number**, hostname, or domain.
-- The client's source IP is read from the proxy-aware forwarded header (the
-  master sits behind Cloudflare); **country** comes from the `CF-IPCountry`
-  header (or the local DB for direct calls) and the **AS number** from a bundled
-  local IP→ASN database (DB-IP Lite) — no external lookup (D9).
-- First-run admin setup closes permanently after the first admin exists.
+  slave→master message (§5a); stale timestamps and replayed nonces rejected.
+  Slaves are activated only after the signing callback; the slave verifies the
+  expected **master hostname** before enrolling (mutual auth).
+- **No PII at the master:** slave→master sync carries opaque ids + FCM token
+  only (§6).
+- Bans enforced at the edge of **every** endpoint — signup, federation, account,
+  admin — by exact IP, **CIDR**, **AS number**, hostname, or domain.
+- Source IP from the proxy-aware forwarded header; **country** from
+  `CF-IPCountry` (or the local DB for direct calls) and **ASN** from a bundled
+  local **DB-IP Lite** IP→ASN DB — no external lookup (D9).
+- First-run admin setup closes permanently after the first admin.
 - Rate-limit login, signup, upload, and doorbell endpoints per identity/IP.
 - No secrets in URLs; no card data stored.
-- **Server-blind content (§7a):** file bytes are encrypted on the client and
-  only ciphertext + opaque key wraps reach a server; the operator holds no
-  decryption key. This also means servers cannot scan or moderate content.
+- **Server-blind content (§7a):** only ciphertext + opaque key wraps reach a
+  server; the operator holds no decryption key, so servers cannot scan or
+  moderate content (hence §8a).
 
 ## 15. Phases (tracer bullets)
 
 - **A — Auth foundation.** username/password admins, first-run `/setup`,
-  multiple admins, roles, rate limits (migrate existing `SERVER_PASSWORD`), the
-  `IdentityProvider` abstraction, and Firebase Auth for clients (email-link
-  passwordless + social) with local accounts for admins.
-- **B — Deployment modes.** Google/FCM detection, `ROLE` override, baked
-  default master URL, server identity (uuid + keypair), config + UI surfacing.
-- **C — Federation enrolment + liveness.** slave enrol handshake with the
-  master's **signed callback verification**; signed slave→master requests
-  (nonce/timestamp replay guard); master **probe** loop with down detection;
-  slave heartbeat + restart **ping**; master→slave **outbox** queueing and
-  flush-on-return; `whoami`.
-- **D — Client + device sync.** client accounts (email) **hosted on the master
-  directly or on a slave**; device update push to master for slave-hosted
-  clients; `(host, client_id, device_id) → token` registry.
-- **E — Push delivery.** master **direct** path (seal + own FCM + local
-  storage) and relay path (`POST /api/federation/doorbell`, entitlement + ban
-  checks, master FCM); slave `_ring_doorbell` federation branch.
-- **F — Client storage + quotas.** per-client pending storage, upload API,
+  multiple admins, `IdentityProvider` interface + local user DB, documented IdP
+  setup (bring-your-own Firebase), rate limits.
+- **B — Deployment modes.** FCM detection + probe, `ROLE` override, baked
+  default master URL, server identity (uuid + keypair), config/UI surfacing.
+- **C — Federation enrolment + liveness.** enrol handshake with signed callback;
+  slave verifies master hostname; signed slave→master requests; master probe +
+  down detection; slave heartbeat/restart ping; master→slave outbox; `whoami`.
+- **D — Accounts + device sync.** account signup (email), device binding with
+  approval, no-PII slave→master device sync, `(host, account_id, device_id) →
+  token` registry.
+- **E — Push delivery.** master direct path (seal + own FCM + local storage) and
+  relay path (`/api/federation/doorbell`, entitlement + ban checks, master FCM);
+  slave `_ring_doorbell` federation branch.
+- **F — Account storage + quotas.** per-account pending storage, upload API,
   quota/age config, sweeper, usage UI.
-- **F2 — Client-side content encryption.** client content keypair, device CEK
-  wrap at registration, server-blind ciphertext upload/fetch, key change ⇒
-  device re-registration, per-client encryption toggle.
-- **G — Master admin.** slave list/revoke/deactivate/delete/ban (ip/host/domain);
-  client list/block/ban; email-domain rules.
-- **H — Billing foundation.** multiple plans, groups (one per account, default
-  group fallback, account plan override), entitlements, ledger, provider
-  interface (manual first), top-up page stub.
+- **G — Master admin.** slave list/revoke/deactivate/delete/ban (ip/cidr/asn/
+  host/domain); account list/block/ban; email-domain rules; **DB-IP Lite**
+  lookup integration.
+- **H — Billing foundation.** plans, groups (one per account, default fallback,
+  account override), metering ($5/MB/month pending >1h, $0.50/1000 messages),
+  entitlements, ledger, manual provider, top-up stub.
+- **I — Policy & T&C documents (§8a).**
+- **J — Content encryption (server infra first; app change follows).** account
+  content keypair, device content public key + sealed CEK exchange, ciphertext
+  upload/fetch, key change ⇒ device re-registration, per-account toggle; then
+  the Android app adds the decryption keypair.
 
-Each phase lands independently with tests; the app is untouched.
+Each phase lands independently with tests.
 
-## 16. Open decisions
+## 16. Decisions
 
-- **D1 (resolved)** FCM availability: require the service-account file's
-  **presence**, then run a **live probe** at startup; a failed/absent probe
-  disables FCM (no master sending), warns in the admin UI, and re-probes
-  periodically rather than blocking startup.
-- **D2 (resolved)** Slave registration is **automatic**: a slave that completes
-  the enrolment handshake is accepted without per-slave operator approval.
-  Bans/revocation (§8) still apply, and the master may require a signed request.
-- **D3 (resolved direction)** Use a **low-cost hosted identity provider** for
-  clients supporting **social login and magic-link** email. Evaluate **Auth0**,
-  **AWS Cognito**, and other low-cost options (e.g. Firebase Auth) on price,
-  passwordless fit, and email deliverability; the concrete choice is a short
-  spike, behind the `IdentityProvider` interface. Admins stay on local/SSO.
-- **D4 (resolved)** Account types: **free** (requires **admin approval**),
-  **trial** (requires a **card on file** — available once a payment provider is
-  integrated), and **paid**; each plan carries a **grace period**. **No payment
-  gateway initially**: a **manual billing provider** where admins **add credits**
-  to an account. The provider interface allows Stripe/PayPal/crypto later.
-- **D5 (resolved)** Client pricing is metered: **$X per KB stored** once files
-  are retained beyond **Y** (per-plan threshold), and **$Z per message**
-  (doorbell/file) sent. Exact values are per-plan configuration.
-- **D6 (resolved — suggestion)** Source the free/temporary-domain list from
-  open, regularly-updated community lists (e.g. the `disposable-email-domains`
-  project and free-provider lists), **vendored and refreshed on a schedule**,
-  with an admin allow/deny override.
-- **D7 (resolved)** Tenant isolation is by **directory scoping** (per-client
-  directories). Only server-hosted ("local") clients store files on the server;
-  if a client opts into content encryption, those files are stored **encrypted**
-  and decrypted on the device (§7a).
-- **D8 (resolved — no)** A slave will **not** also run its own FCM: it would
-  require a custom APK and the Android namespace would collide with the Play
-  Store app. A slave is always relay-only.
-- **D12 (open)** Plan resolution details: proration/effective-date on plan
-  changes, whether the default group's plan is free, and whether clients and
-  slaves share one plan space or separate ones. (Group precedence is moot — an
-  account is in exactly one group.)
-- **D10 (folded into D3)** Provider selection is a short spike across Auth0 /
-  Cognito / Firebase Auth (and other low-cost options) covering social set,
-  magic-link/passkey support, and price.
-- **D11 (open)** Email deliverability for magic-link/verification follows the
-  chosen provider (D3); decide the fallback SMTP/SES path and signup abuse
-  controls (rate limits, CAPTCHA, verified-email requirement).
-- **D13 (open)** Content-encryption details (§7a): the client-originated CEK is
-  **sealed to the app's content public key** (algorithm: RSA-OAEP vs X25519 +
-  HKDF / ECIES); the app needs a **new decryption-capable Keystore key** (its
-  pairing key is sign-only); decide whether file names/metadata are also
-  encrypted, CEK scope (per-device vs per-client), and streaming AEAD for large
-  files.
-- **D14 (open)** Liveness/queue tuning (§5a): probe interval and timeout, number
-  of failures before a slave is marked down, heartbeat cadence, signed-request
-  time window and nonce retention, and the outbox retention/backoff policy.
-- **D9 (decided)** Use **DB-IP Lite** (`IP to Country` + `IP to ASN`), read
-  locally with the pure-Python `maxminddb` library — free, **no account**,
-  monthly refresh, **CC BY 4.0 (attribution only)**.
-  - **Country:** prefer Cloudflare's **`CF-IPCountry`** header when the request
-    is proxied (free, zero lookup); fall back to the DB-IP Lite country DB for
-    direct/internal calls.
-  - **ASN:** resolve from the DB-IP Lite ASN DB. (IPinfo Lite / MaxMind
-    GeoLite2 are alternatives if daily updates are wanted, but are CC BY-SA.)
-  - **Matching:** IP and **CIDR** bans need no lookup (parse + match); **ASN**
-    and **country** bans use the DB/header. Handle **IPv4 and IPv6** CIDRs.
-  - Bundle the DB and include the **DB-IP attribution**; refresh monthly.
+- **D1 (resolved)** FCM availability: file presence + a **live probe** at
+  startup; failure disables FCM (no master sending), warns in the UI, and
+  re-probes periodically.
+- **D2 (resolved)** Slave registration is **automatic** after the signing
+  callback; no per-slave operator approval.
+- **D3 (resolved direction)** Support **local user DB + optional hosted IdP**
+  (social + magic-link); spike Auth0 / Cognito / Firebase; document
+  bring-your-own-Firebase setup.
+- **D4 (resolved)** Account states **free** (admin-approved), **trial** (card on
+  file, once a gateway exists), **paid**; per-plan **grace period**; **manual
+  billing** (admins add credits) first.
+- **D5 (resolved)** Metering: e.g. **$5 per MB per month** once pending **> 1
+  hour**, and **$0.50 per 1000 messages**; per-plan config.
+- **D6 (resolved)** Vendor open, regularly-updated free/temporary-domain lists;
+  refresh on a schedule; admin allow/deny override.
+- **D7 (resolved)** Tenant isolation by **per-account directory scoping**;
+  encryption optional (§7a).
+- **D8 (resolved — no)** A slave never runs its own FCM (custom APK + namespace
+  collision); always relay-only.
+- **D9 (decided)** **DB-IP Lite** (`IP to Country` + `IP to ASN`), read locally
+  via `maxminddb` (free, no account, monthly, CC BY 4.0); `CF-IPCountry` when
+  proxied; IPv4+IPv6; attribution + monthly refresh.
+- **D10 (resolved)** The Android app change for content encryption is
+  **required** but **built after** the server infrastructure (Phase J).
+- **D11 (open)** Email deliverability for magic-link/verification (follows D3);
+  fallback SMTP/SES; signup abuse controls (rate limits, CAPTCHA, verification).
+- **D12 (open)** Plan resolution: proration/effective-date on changes, whether
+  the default group's plan is free, shared vs separate plan spaces.
+- **D13 (open)** Content-encryption details: sealing algorithm (RSA-OAEP vs
+  X25519+HKDF/ECIES), whether filenames/metadata are encrypted, CEK scope, and
+  streaming AEAD for large files.
+- **D14 (open)** Liveness/queue tuning: probe interval/timeout, down threshold,
+  heartbeat cadence, nonce window, outbox TTL/backoff.
 
 ## 17. Non-goals (this effort)
 
 - Moving file bytes through the master **on behalf of slaves** (a slave-hosted
-  client's files stay on that slave). A **master-hosted** client's files do
-  live on the master, because the master is that client's host.
-- Rewriting the Android app.
+  account's files stay on that slave; a master-hosted account's files live on
+  the master as its host).
+- Rewriting the Android app **now** — the content-encryption app change is
+  required but sequenced after the server infrastructure (D10 / Phase J).
 - Real payment-provider integration (foundation only).
 - Cross-master federation.
