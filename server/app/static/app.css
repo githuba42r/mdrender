@@ -407,9 +407,16 @@ dialog.confirm {
   color: var(--text);
   border-radius: var(--radius);
   padding: 1.4rem 1.5rem;
-  max-width: min(430px, 90vw);
+  width: min(560px, 92vw);
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow-x: hidden;
+  overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
+dialog.confirm form { display: flex; flex-direction: column; }
+dialog.confirm label { margin-top: 0.5rem; }
+dialog.confirm .field + label { margin-top: 0.7rem; }
 dialog.confirm::backdrop { background: rgba(4, 7, 12, 0.62); }
 dialog.confirm h2 { margin: 0 0 0.5rem; font-size: 1.15rem; }
 dialog.confirm p { margin: 0 0 1.2rem; color: var(--muted); }
