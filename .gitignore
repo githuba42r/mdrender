@@ -27,3 +27,7 @@ __pycache__/
 server/.pytest_cache/
 server/.venv/
 *.db
+
+# Local push-server instance: contains SERVER_PASSWORD and generated state
+server/docker-compose.yml
+server/data/
