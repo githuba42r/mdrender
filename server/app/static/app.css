@@ -368,6 +368,7 @@ input[type="password"] { padding-right: 2.75rem; }
 }
 .auth-block { margin-top: 0.4rem; }
 .auth-block > div { display: flex; flex-direction: column; gap: 0.7rem; }
+.auth-block > div[hidden] { display: none; }
 .login-alt { margin: 0; text-align: center; }
 .login-alt a { color: var(--muted); font-size: 0.88rem; }
 .login-alt a:hover { color: var(--accent); }
