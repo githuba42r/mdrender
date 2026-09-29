@@ -126,9 +126,50 @@ Firebase-as-default recommendation.)
   -   credentials exchanged; the slave submits its **hostname**, **server_id**,
     and **public key**, and the master records them. **Enrolment is automatic
     (D2)** — no per-slave operator approval; bans/revocation still apply.
-- Thereafter, slave↔master API calls are **Bearer-authenticated** with the
-  issued secret; the master may additionally verify a **signed request**
-  (RSA) so an intercepted token alone is not enough.
+- Thereafter, slave↔master API calls are **Bearer-authenticated *and signed***
+  with the slave keypair (§5a); the master verifies the signature against the
+  registered public key, so an intercepted token alone is not enough.
+
+## 5a. Registration callback, signed messages, and liveness
+
+### Registration callback (prove it exists, is alive and functional)
+1. The slave submits its **hostname**, **server_id**, **public key**, and the
+   **base URL** the master should call.
+2. The master performs a **callback** to the slave's verify endpoint
+   (`POST <slave_url>/api/federation/verify`) with a random challenge.
+3. The slave **signs the challenge** with its private key and returns it; the
+   master checks the signature against the submitted public key. This proves the
+   slave controls the key, is reachable, and is functional — only then is it
+   activated. A callback that cannot be reached or verified leaves the slave
+   **pending**, not active.
+
+### Signed messages (slave → master)
+Every slave→master request carries:
+`X-Federation-Server` (server_id), `X-Federation-Timestamp`,
+`X-Federation-Nonce`, and `X-Federation-Signature` =
+`sign(slave_priv, canonical(method, path, timestamp, nonce, sha256(body)))`.
+The master verifies the signature against the registered public key and rejects
+**stale timestamps** (outside a small window) and **replayed nonces**.
+
+### Liveness (bidirectional)
+- **Master → slave probe:** the master periodically calls the slave's
+  `/api/federation/probe` with a challenge; the slave returns a **signed**
+  challenge plus status. After N consecutive failures/timeouts the master marks
+  the slave **down** (`status=down`, records `down_since`); the master is
+  authoritative for registry status.
+- **Slave → master heartbeat:** the slave sends a signed periodic heartbeat, and
+  may **ping "back online"** at any time. On **restart**, a registered slave
+  **pings the master** so it is immediately re-marked up.
+- **Return to online:** on a successful heartbeat/ping/probe the master clears
+  `down`, refreshes `last_seen`, and flushes any queued messages.
+
+### Delivery queue (master → slave)
+Messages the master must deliver to a slave (config/plan changes, suspension or
+admin notices, revocations) go to a per-slave **outbox** while the slave is
+**down**, and are delivered (with retry/backoff, signed) when it returns. The
+queue has a retention/TTL. In the other direction, slave→master sends
+(doorbells, device updates) are retried by the slave's existing retry worker if
+the master is briefly unavailable.
 - Server-to-server pub/priv keys allow the master to verify that a registration
   or a client/device update genuinely came from that slave.
 
@@ -302,7 +343,9 @@ Build the foundation now; wire real providers later.
 | `admins` | username, password hash (nullable when SSO), role, created, disabled/blocked/banned |
 | `identities` | provider (firebase/auth0/cognito/local), subject, email, `user_type` + `user_id`, email_verified, linked_at |
 | `server_identity` | `server_id` (uuid), federation keypair, hostname, role |
-| `federated_servers` | master's record of slaves: server_id, hostname, pubkey, secret hash, status, plan, period, last_seen |
+| `federated_servers` | server_id, hostname, `base_url`, pubkey, secret hash, status (pending/active/down/deactivated/banned), plan, period, last_seen, `down_since`, `last_probe` |
+| `federated_nonces` | seen signed-request nonces (replay window) |
+| `federated_outbox` | queued master→slave messages: server_id, payload, created, attempts, next_retry_at, acked_at |
 | `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| client`; reason, created_by, expires |
 | `clients` | email, password hash (nullable), `host` (master \| federated server_id), status (active/blocked/banned), balance |
 | `client_devices` | device_id, client_id, server_id, fcm_token, name |
@@ -330,7 +373,11 @@ mint an MDRender session); local login always remains available.
 
 **Master ↔ slave (Bearer + optional signature):**
 `POST /api/federation/enrol/start`, `POST /api/federation/enrol`,
-`POST /api/federation/heartbeat`, `GET /api/federation/whoami`,
+`GET/POST /api/federation/verify` (slave signs the master's callback challenge),
+`POST /api/federation/probe` (slave answers a signed liveness challenge),
+`POST /api/federation/ping` (slave declares "back online", incl. on restart),
+`POST /api/federation/heartbeat` (periodic, also flushes the master's outbox),
+`GET /api/federation/whoami`,
 `PUT/DELETE /api/federation/clients/{client_id}`,
 `PUT/DELETE /api/federation/clients/{client_id}/devices/{device_id}`,
 `POST /api/federation/doorbell`.
@@ -358,7 +405,10 @@ group auto-includes every account).
 
 - Reuse the E2E doorbell + signed-manifest invariants (§7); the master stays
   content-blind.
-- Server-to-server: Bearer + request signature; per-slave keypair.
+- Server-to-server: Bearer + **per-slave keypair signature** on every
+  slave→master message (§5a), verified against the registered public key;
+  stale timestamps and replayed nonces rejected. Slaves are activated only after
+  the master's callback challenge is signed back correctly.
 - Bans enforced at the edge of **every** endpoint — signup, federation, client,
   and admin — not just registration. Matching is by exact IP, **CIDR block
   range**, **AS number**, hostname, or domain.
@@ -380,8 +430,11 @@ group auto-includes every account).
   passwordless + social) with local accounts for admins.
 - **B — Deployment modes.** Google/FCM detection, `ROLE` override, baked
   default master URL, server identity (uuid + keypair), config + UI surfacing.
-- **C — Federation enrolment.** slave enrol handshake, master registry,
-  heartbeat, `whoami`, signed requests.
+- **C — Federation enrolment + liveness.** slave enrol handshake with the
+  master's **signed callback verification**; signed slave→master requests
+  (nonce/timestamp replay guard); master **probe** loop with down detection;
+  slave heartbeat + restart **ping**; master→slave **outbox** queueing and
+  flush-on-return; `whoami`.
 - **D — Client + device sync.** client accounts (email) **hosted on the master
   directly or on a slave**; device update push to master for slave-hosted
   clients; `(host, client_id, device_id) → token` registry.
@@ -447,6 +500,9 @@ Each phase lands independently with tests; the app is untouched.
 - **D13 (open)** Content-encryption details (§7a): algorithm (RSA-OAEP vs
   X25519+HKDF), whether file names/metadata are also encrypted, CEK scope
   (per-device vs per-client vs per-push), and streaming AEAD for large files.
+- **D14 (open)** Liveness/queue tuning (§5a): probe interval and timeout, number
+  of failures before a slave is marked down, heartbeat cadence, signed-request
+  time window and nonce retention, and the outbox retention/backoff policy.
 - **D9** ASN/CIDR source and matching: a bundled IP→ASN database
   (e.g. MaxMind GeoLite2 ASN, self-updated) vs an external lookup; how to trust
   the forwarded client IP through Cloudflare; IPv4 vs IPv6 CIDR handling; and
