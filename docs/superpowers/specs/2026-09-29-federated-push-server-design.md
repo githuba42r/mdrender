@@ -514,21 +514,17 @@ Each phase lands independently with tests; the app is untouched.
 - **D14 (open)** Liveness/queue tuning (§5a): probe interval and timeout, number
   of failures before a slave is marked down, heartbeat cadence, signed-request
   time window and nonce retention, and the outbox retention/backoff policy.
-- **D9 (resolved — recommendation)** Use **local lookups**, no per-request
-  external call:
-  - **Country:** prefer Cloudflare's **`CF-IPCountry`** header (the master sits
-    behind Cloudflare — free, zero lookup); fall back to a local IP→Country DB
-    for direct/non-proxied and internal calls.
-  - **ASN:** bundle a local **IP→ASN MMDB** and read it with the pure-Python
-    `maxminddb` library. Recommended source: **DB-IP Lite (IP to ASN / IP to
-    Country)** — free, **no account**, monthly updates, **CC BY 4.0
-    (attribution only)**. Alternatives: **IPinfo Lite** (daily updates, country
-    + ASN, CC BY-SA 4.0) and **MaxMind GeoLite2** (free account, CC BY-SA 4.0).
-    Avoid per-lookup APIs (rate limits, latency, privacy).
+- **D9 (decided)** Use **DB-IP Lite** (`IP to Country` + `IP to ASN`), read
+  locally with the pure-Python `maxminddb` library — free, **no account**,
+  monthly refresh, **CC BY 4.0 (attribution only)**.
+  - **Country:** prefer Cloudflare's **`CF-IPCountry`** header when the request
+    is proxied (free, zero lookup); fall back to the DB-IP Lite country DB for
+    direct/internal calls.
+  - **ASN:** resolve from the DB-IP Lite ASN DB. (IPinfo Lite / MaxMind
+    GeoLite2 are alternatives if daily updates are wanted, but are CC BY-SA.)
   - **Matching:** IP and **CIDR** bans need no lookup (parse + match); **ASN**
     and **country** bans use the DB/header. Handle **IPv4 and IPv6** CIDRs.
-  - Honour attribution and each DB's license; refresh on a schedule
-    (`geoipupdate` for GeoLite2, monthly download for DB-IP).
+  - Bundle the DB and include the **DB-IP attribution**; refresh monthly.
 
 ## 17. Non-goals (this effort)
 
