@@ -34,6 +34,9 @@ DEFAULTS = {
     "ACCOUNT_MAX_FILES": 1000,
     "ACCOUNT_MAX_AGE_HOURS": 168,     # 7 days
     "BAN_ENFORCEMENT": True,
+    # Identity provider for account logins: "local" (default) or a hosted IdP
+    # such as "firebase". Admins always use local username/password.
+    "IDENTITY_PROVIDER": "local",
 }
 
 

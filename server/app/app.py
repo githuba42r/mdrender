@@ -783,6 +783,23 @@ def create_app(config):
     def health():
         return jsonify({"ok": True})
 
+    @app.route("/auth/providers", methods=["GET"])
+    def auth_providers():
+        """Enabled login providers for the account portal (design §4a)."""
+        providers = ["local"]
+        if (getattr(config, "IDENTITY_PROVIDER", "local") or "local").lower() == "firebase":
+            providers.append("firebase")
+        return jsonify({"providers": providers})
+
+    @app.route("/auth/oidc", methods=["POST"])
+    def auth_oidc():
+        """Exchange a hosted-IdP token (Firebase/Auth0/Cognito) for a session.
+
+        Wired when the chosen provider is configured; local accounts work now
+        (D3/D11).
+        """
+        return jsonify({"error": "hosted identity provider not configured"}), 501
+
     # ---- Federation API (design §5/§5a) ----
 
     def _federation_token():

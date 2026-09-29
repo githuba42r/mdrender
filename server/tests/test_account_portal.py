@@ -53,6 +53,14 @@ def test_account_session_cannot_reach_admin_pages(config, db_path):
     assert admin.get("/account").headers["Location"] == "/account/login"
 
 
+def test_auth_providers_and_oidc_stub(config, db_path):
+    config.IDENTITY_PROVIDER = "firebase"
+    app = _app(config)
+    c = app.test_client()
+    assert c.get("/auth/providers").get_json() == {"providers": ["local", "firebase"]}
+    assert c.post("/auth/oidc", json={}).status_code == 501
+
+
 def test_account_portal_is_gated(config, db_path):
     app = _app(config)
     resp = app.test_client().get("/account")
