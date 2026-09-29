@@ -30,8 +30,12 @@ from server.app.auth import (LoginGate, create_session, delete_session,
 from server.app.db import Database
 from server.app.deployment import (detect_role, get_or_create_identity,
                                    probe_fcm)
-from server.app.identity import (count_admins, create_admin,
-                                 get_identity_provider, list_admins,
+from server.app.identity import (count_admins, create_admin, get_admin,
+                                 get_admin_by_email,
+                                 get_admin_by_firebase_email,
+                                 get_admin_by_firebase_phone,
+                                 get_admin_by_firebase_uid, get_identity_provider,
+                                 link_firebase, list_admins, unlink_firebase,
                                  update_admin)
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
@@ -414,11 +418,77 @@ def create_app(config):
                         secure=config.PUSH_PUBLIC_URL.startswith("https"))
         return resp
 
+    def _check_local_credentials(username, password):
+        """Shared local username/password check with lockout. -> (ok, retry)."""
+        gate = app.config["_login_gate"]
+        key = f"{username}@{request.remote_addr}"
+        retry = gate.is_locked(key)
+        if retry:
+            return False, retry
+        if app.config["_identity"].authenticate(g.db, username, password) is None:
+            return False, gate.record_failure(key)
+        gate.record_success(key)
+        return True, 0
+
+    def _local_login_cookie(resp):
+        token = create_session(g.db, config.session_secret, config)
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
+        return resp
+
+    def _identity_owned_by_admin(email=None, phone=None):
+        """A verified email/phone that belongs to an admin's login identity."""
+        if email:
+            if get_admin_by_email(g.db, email) is not None:
+                return True
+            if get_admin_by_firebase_email(g.db, email) is not None:
+                return True
+        if phone and get_admin_by_firebase_phone(g.db, phone) is not None:
+            return True
+        return False
+
+    def _firebase_link_conflict(uid, email, phone, *, admin_id):
+        """Reject a link that would make an identity resolve to two principals."""
+        existing = get_admin_by_firebase_uid(g.db, uid)
+        if existing is not None and existing["admin_id"] != admin_id:
+            return "this Firebase account is already linked to another admin"
+        if email:
+            other = get_admin_by_firebase_email(g.db, email)
+            if other is not None and other["admin_id"] != admin_id:
+                return "this email is already linked to another admin"
+            if accounts.get_account_by_email(g.db, email) is not None:
+                return "this email belongs to a user account"
+        if phone:
+            other = get_admin_by_firebase_phone(g.db, phone)
+            if other is not None and other["admin_id"] != admin_id:
+                return "this phone number is already linked to another admin"
+        return None
+
     @app.route("/login", methods=["GET"])
     def login_page():
         if count_admins(g.db) == 0:
             return redirect("/setup")
         return render_template("login.html", next=request.args.get("next", ""))
+
+    @app.route("/admin-login", methods=["GET"])
+    def admin_login_page():
+        """Local-only admin sign-in — the break-glass fallback (design §4a)."""
+        if count_admins(g.db) == 0:
+            return redirect("/setup")
+        return render_template("admin_login.html", next=request.args.get("next", ""))
+
+    @app.route("/admin-login", methods=["POST"])
+    def admin_login():
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password", "")
+        ok, retry = _check_local_credentials(username, password)
+        if not ok:
+            error = ("Too many attempts. Try again shortly." if retry
+                     else "Invalid username or password.")
+            return render_template("admin_login.html", error=error,
+                                   next=request.form.get("next", "")), 401
+        purge_expired_sessions(g.db)
+        return _local_login_cookie(make_response(redirect(_return_to("/pushes"))))
 
     @app.route("/signup", methods=["GET", "POST"])
     def signup():
@@ -602,25 +672,16 @@ def create_app(config):
     def login():
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password", "")
-        gate = app.config["_login_gate"]
-        key = f"{username}@{request.remote_addr}"
-        retry = gate.is_locked(key)
-        if retry:
-            return jsonify({"error": "locked", "retry_after": retry}), 401
-        if app.config["_identity"].authenticate(g.db, username, password) is None:
-            retry = gate.record_failure(key)
-            return jsonify({"error": "invalid_credentials", "retry_after": retry}), 401
-        gate.record_success(key)
+        ok, retry = _check_local_credentials(username, password)
+        if not ok:
+            return jsonify({"error": "locked" if retry else "invalid_credentials",
+                            "retry_after": retry}), 401
         # Opportunistic cleanup so a long-lived server does not accumulate rows
         # for sessions nobody is holding any more.
         purge_expired_sessions(g.db)
-        token = create_session(g.db, config.session_secret, config)
         # Honour the page the visitor was originally headed for (e.g. the enrol
         # URL a CLI just opened); _return_to rejects off-site targets.
-        resp = make_response(redirect(_return_to("/pushes")))
-        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
-                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
-        return resp
+        return _local_login_cookie(make_response(redirect(_return_to("/pushes"))))
 
     @app.route("/logout", methods=["POST"])
     def logout():
@@ -704,7 +765,9 @@ def create_app(config):
         auth_error = require_page_session()
         if auth_error:
             return auth_error
-        return render_template("admins.html", admins=list_admins(g.db))
+        return render_template(
+            "admins.html", admins=list_admins(g.db),
+            admin_firebase_login=bool(getattr(config, "ADMIN_FIREBASE_LOGIN", False)))
 
     @app.route("/admins", methods=["POST"])
     def admins_create():
@@ -730,6 +793,45 @@ def create_app(config):
         password = request.form.get("password", "")
         update_admin(g.db, admin_id, name=name, email=email,
                      password=password if len(password) >= 8 else None)
+        return redirect("/admins", 303)
+
+    @app.route("/admins/link", methods=["POST"])
+    def admins_link():
+        """Bind a Firebase uid (from a freshly-signed-in user) to an admin.
+
+        The browser signs in with Firebase and posts the ID token here; we bind
+        by `sub` (uid), so a later email/phone change cannot re-target the admin.
+        """
+        auth_error = require_session()
+        if auth_error:
+            return auth_error
+        data = request.get_json(silent=True) or {}
+        claims = oidc.verify_firebase_id_token(config, data.get("id_token", ""))
+        if claims is None:
+            return jsonify({"error": "invalid token"}), 401
+        uid = claims.get("sub") or claims.get("user_id")
+        if not uid:
+            return jsonify({"error": "token has no subject"}), 400
+        email = (claims.get("email") or "").strip().lower() or None
+        if email and not claims.get("email_verified", False):
+            email = None
+        phone = (claims.get("phone_number") or "").strip() or None
+        principal = _principal()
+        admin_id = data.get("admin_id") or (principal["id"] if principal else None)
+        if get_admin(g.db, admin_id) is None:
+            return jsonify({"error": "unknown admin"}), 404
+        conflict = _firebase_link_conflict(uid, email, phone, admin_id=admin_id)
+        if conflict:
+            return jsonify({"error": conflict}), 409
+        link_firebase(g.db, admin_id, uid=uid, email=email, phone=phone)
+        return jsonify({"ok": True, "uid": uid, "email": email, "phone": phone})
+
+    @app.route("/admins/<admin_id>/unlink", methods=["POST"])
+    def admins_unlink(admin_id):
+        auth_error = require_form_session("/admins")
+        if auth_error:
+            return auth_error
+        unlink_firebase(g.db, admin_id)
         return redirect("/admins", 303)
 
     @app.route("/accounts", methods=["GET"])
@@ -1026,11 +1128,28 @@ def create_app(config):
         claims = oidc.verify_firebase_id_token(config, data.get("id_token", ""))
         if claims is None:
             return jsonify({"error": "invalid token"}), 401
+        uid = claims.get("sub") or claims.get("user_id")
+        phone = (claims.get("phone_number") or "").strip() or None
+        # Seamless admin sign-in: a Firebase uid bound to an admin (via the
+        # Admins page) elevates straight to an admin session — provided the
+        # operator has enabled it. Local /admin-login always remains.
+        if bool(getattr(config, "ADMIN_FIREBASE_LOGIN", False)) and uid:
+            admin = get_admin_by_firebase_uid(g.db, uid)
+            if admin is not None and admin["disabled_at"] is None:
+                token = create_session(g.db, config.session_secret, config)
+                resp = jsonify({"ok": True, "redirect": "/pushes"})
+                resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                                secure=config.PUSH_PUBLIC_URL.startswith("https"))
+                return resp
         email = (claims.get("email") or "").strip().lower()
         if not email or not claims.get("email_verified", False):
             return jsonify({"error": "verified email required"}), 403
         account = accounts.get_account_by_email(g.db, email)
         if account is None:
+            # An admin's login identity is never also a customer account, so a
+            # verified email/phone that belongs to an admin cannot sign up here.
+            if _identity_owned_by_admin(email, phone):
+                return jsonify({"error": "email belongs to an administrator"}), 403
             # A first verified login creates the account (signup via the same
             # flow), subject to the signup toggle and email-domain rules (§9).
             if not settings.signup_enabled(g.db):

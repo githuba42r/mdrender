@@ -46,6 +46,9 @@ DEFAULTS = {
     "FIREBASE_APP_ID": "",
     # Server-enforced content encryption: on (clients must encrypt) | off.
     "ENCRYPTION_MODE": "off",
+    # Allow a Firebase-linked admin to sign in on the generic front page by
+    # their Firebase identity (bind-by-uid). Local /admin-login always works.
+    "ADMIN_FIREBASE_LOGIN": False,
     # Whether this master exposes federation at all (env gate). The admin
     # Settings page can then toggle accepting new slaves while this is on.
     "FEDERATION_ENABLED": True,
@@ -67,7 +70,8 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS", "STORAGE_BILL_AFTER_HOURS"):
             env[k] = int(env[k])
-    for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT", "FEDERATION_ENABLED"):
+    for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT", "FEDERATION_ENABLED",
+                 "ADMIN_FIREBASE_LOGIN"):
         env[flag] = str(env.get(flag, DEFAULTS.get(flag, False))).lower() in (
             "1", "true", "yes", "on")
     if overrides:

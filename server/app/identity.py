@@ -26,8 +26,45 @@ def get_admin_by_username(conn, username):
 
 def list_admins(conn):
     return conn.execute(
-        "SELECT admin_id, name, username, email, role, created_at, disabled_at"
+        "SELECT admin_id, name, username, email, role, created_at, disabled_at,"
+        " firebase_uid, firebase_email, firebase_phone"
         " FROM admins ORDER BY created_at").fetchall()
+
+
+def get_admin_by_firebase_uid(conn, uid):
+    if not uid:
+        return None
+    return conn.execute("SELECT * FROM admins WHERE firebase_uid = ?",
+                        (uid,)).fetchone()
+
+
+def get_admin_by_firebase_email(conn, email):
+    if not email:
+        return None
+    return conn.execute("SELECT * FROM admins WHERE lower(firebase_email) = lower(?)",
+                        (email,)).fetchone()
+
+
+def get_admin_by_firebase_phone(conn, phone):
+    if not phone:
+        return None
+    return conn.execute("SELECT * FROM admins WHERE firebase_phone = ?",
+                        (phone,)).fetchone()
+
+
+def link_firebase(conn, admin_id, *, uid, email=None, phone=None) -> None:
+    """Bind an admin to a Firebase uid (and its verified identifiers)."""
+    conn.execute(
+        "UPDATE admins SET firebase_uid = ?, firebase_email = ?, firebase_phone = ?"
+        " WHERE admin_id = ?", (uid, email or None, phone or None, admin_id))
+    conn.commit()
+
+
+def unlink_firebase(conn, admin_id) -> None:
+    conn.execute(
+        "UPDATE admins SET firebase_uid = NULL, firebase_email = NULL,"
+        " firebase_phone = NULL WHERE admin_id = ?", (admin_id,))
+    conn.commit()
 
 
 def get_admin_by_email(conn, email):

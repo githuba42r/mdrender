@@ -416,6 +416,7 @@ button.social:hover { border-color: var(--accent); }
 .admin-details summary::-webkit-details-marker { display: none; }
 .admin-details summary:hover { color: var(--accent); }
 .admin-details[open] summary { margin-bottom: 0.9rem; }
+.inline-form { display: inline; }
 
 /* ---- Click to copy ---- */
 

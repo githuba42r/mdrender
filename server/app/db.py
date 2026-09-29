@@ -284,6 +284,9 @@ class Database:
             },
             "admins": {
                 "name": "TEXT",
+                "firebase_uid": "TEXT",
+                "firebase_email": "TEXT",
+                "firebase_phone": "TEXT",
             },
             "billing_plans": {
                 "storage_cents_per_mb": "INTEGER NOT NULL DEFAULT 0",
