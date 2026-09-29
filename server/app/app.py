@@ -19,8 +19,8 @@ from qrcode.image.svg import SvgPathImage
 from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, encryption,
-                        federation, federation_client, fcm as fcm_mod, pairing,
-                        push_store, storage, trigger)
+                        federation, federation_client, fcm as fcm_mod, geoip,
+                        pairing, push_store, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -120,8 +120,17 @@ def create_app(config):
         # Ban enforcement at the edge of every endpoint (design §14).
         if bool(getattr(config, "BAN_ENFORCEMENT", True)):
             try:
-                if bans.is_banned(g.db, ip=request.remote_addr):
-                    return jsonify({"error": "forbidden"}), 403
+                kinds = bans.active_kinds(g.db)
+                if kinds:
+                    asn = (geoip.asn_for_ip(config, request.remote_addr)
+                           if "asn" in kinds else None)
+                    country = None
+                    if "country" in kinds:
+                        country = (geoip.country_from_headers(request.headers)
+                                   or geoip.country_for_ip(config, request.remote_addr))
+                    if bans.is_banned(g.db, ip=request.remote_addr, asn=asn,
+                                      country=country):
+                        return jsonify({"error": "forbidden"}), 403
             except Exception:  # noqa: BLE001 - never let a ban check break requests
                 pass
 

@@ -37,6 +37,9 @@ DEFAULTS = {
     # Identity provider for account logins: "local" (default) or a hosted IdP
     # such as "firebase". Admins always use local username/password.
     "IDENTITY_PROVIDER": "local",
+    # DB-IP Lite MMDB paths for local ASN/country lookups (D9).
+    "GEOIP_ASN_DB": "",
+    "GEOIP_COUNTRY_DB": "",
 }
 
 

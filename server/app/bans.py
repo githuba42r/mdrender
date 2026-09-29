@@ -8,7 +8,7 @@ CIDR matching uses the stdlib `ipaddress`; ASN/country lookups are separate
 import ipaddress
 import time
 
-KINDS = ("ip", "cidr", "asn", "hostname", "domain")
+KINDS = ("ip", "cidr", "asn", "country", "hostname", "domain")
 
 
 def add_ban(conn, kind, value, *, scope="global", reason=None, expires_at=None) -> int:
@@ -38,7 +38,12 @@ def list_bans(conn, *, active_only=False, now=None):
     return rows
 
 
-def _matches(ban, ip, asn, hostname, domain) -> bool:
+def active_kinds(conn) -> set:
+    """The set of ban kinds that exist (to skip unnecessary lookups)."""
+    return {r["kind"] for r in conn.execute("SELECT DISTINCT kind FROM bans").fetchall()}
+
+
+def _matches(ban, ip, asn, hostname, domain, country) -> bool:
     kind, value = ban["kind"], ban["value"]
     if kind == "ip":
         return ip is not None and ip == value
@@ -51,6 +56,8 @@ def _matches(ban, ip, asn, hostname, domain) -> bool:
             return False
     if kind == "asn":
         return asn is not None and str(asn).lower().lstrip("as") == value.lower().lstrip("as")
+    if kind == "country":
+        return country is not None and country.upper() == value.upper()
     if kind == "hostname":
         return hostname is not None and hostname.lower() == value
     if kind == "domain":
@@ -60,11 +67,12 @@ def _matches(ban, ip, asn, hostname, domain) -> bool:
     return False
 
 
-def is_banned(conn, *, ip=None, asn=None, hostname=None, domain=None, now=None) -> bool:
+def is_banned(conn, *, ip=None, asn=None, hostname=None, domain=None,
+              country=None, now=None) -> bool:
     now = int(now or time.time())
     for ban in conn.execute("SELECT * FROM bans").fetchall():
         if ban["expires_at"] and ban["expires_at"] < now:
             continue
-        if _matches(ban, ip, asn, hostname, domain):
+        if _matches(ban, ip, asn, hostname, domain, country):
             return True
     return False
