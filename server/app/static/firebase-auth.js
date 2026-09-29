@@ -8,9 +8,11 @@ import {
   getAuth,
   GoogleAuthProvider,
   GithubAuthProvider,
+  RecaptchaVerifier,
   sendSignInLinkToEmail,
   isSignInWithEmailLink,
   signInWithEmailLink,
+  signInWithPhoneNumber,
   signInWithPopup,
   signInWithRedirect,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -54,6 +56,26 @@ async function popup(provider) {
 
 window.mdrenderGoogle = () => popup(new GoogleAuthProvider());
 window.mdrenderGithub = () => popup(new GithubAuthProvider());
+
+window.mdrenderPhone = async () => {
+  const phone = (document.getElementById("phone-number")?.value || "").trim();
+  if (!phone) {
+    show("auth-error", "Enter your phone number first.");
+    return;
+  }
+  try {
+    const container = document.getElementById("recaptcha-container");
+    const verifier = new RecaptchaVerifier(auth, container, { size: "invisible" });
+    const confirmation = await signInWithPhoneNumber(auth, phone, verifier);
+    const code = window.prompt("Enter the SMS code we just sent:");
+    if (code) {
+      const result = await confirmation.confirm(code);
+      await exchange(result.user);
+    }
+  } catch (e) {
+    show("auth-error", e.message || String(e));
+  }
+};
 
 window.mdrenderMagic = async () => {
   const email = (document.getElementById("magic-email")?.value || "").trim();

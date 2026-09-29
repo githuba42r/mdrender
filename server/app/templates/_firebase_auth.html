@@ -1,0 +1,15 @@
+{# Firebase Auth options (social, phone SMS, email magic link).
+   Include inside a card only when `firebase` is configured. #}
+<p id="auth-error" class="lede" style="color: var(--danger)"></p>
+<p id="auth-message" class="lede"></p>
+<button type="button" class="btn-primary" onclick="mdrenderGoogle()">Continue with Google</button>
+<button type="button" onclick="mdrenderGithub()">Continue with GitHub</button>
+<label for="phone-number">Phone number (SMS code)</label>
+<div class="field"><input type="text" id="phone-number" autocomplete="tel" placeholder="+61 400 000 000"></div>
+<button type="button" onclick="mdrenderPhone()">Send SMS code</button>
+<label for="magic-email">Email (magic link)</label>
+<div class="field"><input type="text" id="magic-email" autocomplete="email"></div>
+<button type="button" onclick="mdrenderMagic()">Send magic link</button>
+<div id="recaptcha-container"></div>
+<script>window.__FIREBASE__ = {{ firebase | tojson }};</script>
+<script type="module" src="{{ url_for('static', filename='firebase-auth.js') }}"></script>

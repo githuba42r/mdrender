@@ -9,16 +9,8 @@
   {% if done %}
   <p class="lede">Account created. You'll use this email to register devices and push files.</p>
   {% elif firebase %}
-  <p class="lede">Sign up with a social account or a magic email link.</p>
-  <p id="auth-error" class="lede" style="color: var(--danger)"></p>
-  <p id="auth-message" class="lede"></p>
-  <button type="button" class="btn-primary" onclick="mdrenderGoogle()">Continue with Google</button>
-  <button type="button" onclick="mdrenderGithub()">Continue with GitHub</button>
-  <label for="magic-email">Email (magic link)</label>
-  <div class="field"><input type="text" id="magic-email" name="email" autocomplete="email"></div>
-  <button type="button" class="btn-primary" onclick="mdrenderMagic()">Send magic link</button>
-  <script>window.__FIREBASE__ = {{ firebase | tojson }};</script>
-  <script type="module" src="{{ url_for('static', filename='firebase-auth.js') }}"></script>
+  <p class="lede">Sign up with a social account, phone code, or magic email link.</p>
+  {% include "_firebase_auth.html" %}
   <p class="lede">Already registered? <a href="/account/login">Sign in</a>.</p>
   {% else %}
   <p class="lede">Sign up with your email to send files to your devices.</p>
