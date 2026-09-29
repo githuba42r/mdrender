@@ -230,23 +230,27 @@ The key is shared **only** between the push client and the app. The server
 relays **public keys and an opaque sealed blob** — it never sees the private
 key or the content key.
 
-### Key material
-- The **push client originates the key**: a **content keypair** (`Cpriv`/`Cpub`);
-  `Cpriv` is stored on the client (0600) and **never uploaded**.
-- A random symmetric **Content Encryption Key (CEK)** encrypts files
-  (AES-256-GCM per file, random nonce). The CEK is what client and app share.
-- The **app** holds a **content decryption keypair** in its Keystore and
+### Key material (one key per **account**, not per device/client)
+- Each account has one **account master secret (AMS)** — 32 random bytes. It is
+  the account's content-key root, shared by **all of the account's push
+  clients**, stored on each client (0600) and **never uploaded**.
+- The **content encryption key** is derived: `CEK = HKDF(AMS,
+  "mdrender-content")` (AES-256-GCM per file, random nonce). Any client can
+  derive the same CEK; files are encrypted with it.
+- The **app/device** holds a **content decryption keypair** in its Keystore and
   registers its **content public key** with the server. This is a **new app
   key**: the app's existing pairing key is **sign-only** (`2863d0d`) and cannot
-  decrypt.
+  decrypt. A device never holds AMS — only its own sealed copy of the CEK.
 
 ### Key exchange at device registration
 1. On pairing, the app generates its content decryption keypair and registers
-   the **content public key** with the server.
-2. The client fetches the app's content public key and **seals the CEK to it**
-   (`sealed_cek = wrap(app_content_pub, CEK)`), uploading the sealed blob.
+   the **content public key** (with the §7c proof) with the server.
+2. **Any client** fetches the device's content public key and **seals the CEK to
+   it** (`sealed_cek = wrap(device_content_pub, CEK)`), uploading the sealed
+   blob. No particular client is required, so devices added later are covered by
+   whichever client runs next.
 3. The server stores `sealed_cek` as an **opaque blob** — it cannot unwrap it.
-   Only the app can open it.
+   Only that device can open it.
 
 ### Push / fetch
 1. The client encrypts each file with the CEK — **including a mangled/encrypted
@@ -259,9 +263,9 @@ key or the content key.
    CEK.
 
 ### Rotation
-- **Changing the client content key** requires re-sealing to every app's
-  content public key, so each app must **re-fetch** it (re-registration).
-- The app may rotate its content keypair at re-pairing; the client re-seals.
+- **Rotating AMS** yields a new CEK, re-sealed to every device and
+  re-provisioned to every client (account-level rotation, §7d).
+- A device may rotate its content keypair at re-pairing; a client then re-seals.
 
 ### Properties and trade-offs
 - Servers see only ciphertext and opaque wraps → **cannot read content**.
@@ -317,6 +321,32 @@ must **never** be able to substitute one during negotiation:
 - The **device secret**/`device_auth` is a *credential*, not a content key: it is
   transmitted only over TLS, compared with a constant-time check, and never used
   to derive content keys. Hashing it at rest is preferred.
+
+### 7d. Account key distribution and late joiners
+
+An account may have **multiple clients** and **multiple devices**, and clients
+may be **registered later**. The account key is distributed so the server never
+learns it:
+
+- **Clients share AMS.** A client obtains AMS by one of:
+  1. **Recovery passphrase (recommended):** `AMS = KDF(high-entropy account
+     passphrase)` (Argon2/PBKDF2). A client registered later simply enters the
+     passphrase; nothing to synchronise and the server never sees it. A strong
+     **account recovery key** (exportable key file) is the break-glass if the
+     passphrase is lost.
+  2. **Client-to-client wrap:** an existing client, on approval, wraps AMS to the
+     new client's public key; the server relays the sealed blob.
+- **Devices never hold AMS.** Each device receives the **CEK sealed to its own
+  content public key**. Adding a device requires no knowledge of which client
+  created the account: the next client run (or an approval prompt) seals the CEK
+  to any device that lacks one. The server only relays sealed blobs.
+- **Rotation** rotates AMS → recomputes the CEK → re-seals to every device and
+  re-provisions clients. A device can also rotate its content keypair at
+  re-pairing, after which a client re-seals.
+
+Because every client can seal for every device, key management scales with the
+account, not with which client happened to register first — and a late-joining
+client needs only AMS, never the server's cooperation to read content.
 
 ## 8. Master administration of slave servers
 
