@@ -1790,15 +1790,19 @@ def test_full_push_flow(config, db_path, monkeypatch):
                          "some-other-push", "ck")
     assert open_trigger(os.urandom(32), {"i": other["i"], "c": other["c"]}) is None
 
-    # Exchange the doorbell for a signed manifest
+    # Exchange the doorbell for a signed manifest. The body IS the signed bytes
+    # and the signature rides in a header.
     r = client.post(f"/api/push/{push_id}/manifest", json={"challenge_key": challenge_key})
     assert r.status_code == 200
-    body = r.json
+    signed_bytes = r.data
+    sig_b64 = r.headers["X-Push-Manifest-Signature"]
+    body = json.loads(signed_bytes)
+    assert signed_bytes == manifest_bytes(body)
     # Signature is checked against the server public key the QR pinned
     from server.app.crypto import verify
-    assert verify(app.config["_server_pub"], manifest_bytes(body["manifest"]),
-                  base64.b64decode(body["sig"]))
-    file_entry = body["manifest"]["files"][0]
+    assert verify(app.config["_server_pub"], signed_bytes,
+                  base64.b64decode(sig_b64))
+    file_entry = body["files"][0]
     assert file_entry["name"] == "notes.md"
     retrieval_key = file_entry["retrieval_key"]
 
@@ -1880,7 +1884,7 @@ def create_app(config):
 - **`/api/enrol`** (POST): verify key matches + unexpired, delete it, `secret_hash = hash_secret(secret=uuid4().hex)`, `client_id = create_client(...)`, return `{client_id, client_secret}`.
 - **`/oauth/token`** (POST form): verify `grant_type=client_credentials`, client exists + `verify_secret(secret, hash)`, not revoked → `issue_access_token`; else 401.
 - **`/api/push`** (Bearer): validate token → client_id; read `target_device` (form) → **400 `{"error":"device not found"}` if missing**; resolve device via `get_device_by_name` → 400 if unknown; `push_id = uuid4().hex`; mint `challenge_key = uuid4().hex`; for each uploaded `file`, `file_id = uuid4().hex`, write bytes to `<storage_dir>/<push_id>/<file_id>/<filename>`, `add_file(...)` with a fresh retrieval key (`uuid4().hex`). Then **one** `seal_trigger(push_key, PUSH_PUBLIC_URL, push_id, challenge_key)` and a **single** `fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])`; return `{push_id, files_sent: N}`. One message regardless of file count. (When `config.FCM_SERVER_KEY` is empty and no `make_fcm_client` is injected, skip the FCM send — the integration test injects a fake.)
-- **`/api/push/<push_id>/manifest`** (POST body `{challenge_key}`): 404 unknown `push_id`; 403 unless `challenge_key` matches the push row; else build the manifest from the push's **unacked** files (`get_pending_files` filtered to this push), `manifest = build_manifest(push_id, date_iso, rows)`, and return `{"manifest": manifest, "sig": base64(sign(server_priv, manifest_bytes(manifest)))}`. Because the manifest is built from live DB state it is always current — a retry can never hand the phone an already-acked file.
+- **`/api/push/<push_id>/manifest`** (POST body `{challenge_key}`): 404 unknown `push_id`; 403 unless `challenge_key` matches the push row; else build the manifest from the push's **unacked** files (`get_pending_files` filtered to this push), `manifest = build_manifest(push_id, date_iso, rows)`, and return the **signed bytes as the response body** with `X-Push-Manifest-Signature: base64(sign(server_priv, body))`. The body being the exact signed byte string is what lets B3 verify what it received without re-serialising. Because the manifest is built from live DB state it is always current — a retry can never hand the phone an already-acked file.
 - **`/api/register-device`** (POST): if body has `pairing_token` → new registration via `pairing.register_device` (carrying `push_key`, covered by the `sig`); else update via `update_device_token`/`update_device_name`/`update_device_push_key` (requires `device_secret`+`device_auth`). On success 200 `{ok: true, device_auth}`.
 - **`/api/push/<file_id>/download`** (POST body `{key}`): find file by `file_id`; 404 if missing/acked; verify `key == retrieval_key`; if `stored_path` set, stream the bytes (`send_file`); else 404. Key is **not** consumed.
 - **`/api/push/<file_id>/received`** (POST body `{key}`): verify key, `mark_acked` (deletes bytes), 200.
@@ -2460,6 +2464,12 @@ git commit -m "feat(android): RSA-3072 Keystore keypair for Cloud Push E2E"
 the server transmitted** — the server signs `json.dumps(manifest, separators=(",", ":"),
 sort_keys=True)`. Re-serialising the parsed object would reorder keys and break the
 signature, so the raw response body string is what gets verified, then parsed.
+
+The server returns that signed byte string as the **response body**, with the base64
+signature in the `X-Push-Manifest-Signature` header. That is deliberate: it means
+`fetchManifest` has nothing to slice out of the envelope, and the bytes verified are
+byte-for-byte the bytes signed. The `verifyManifest` signature above takes both parts
+explicitly so the pairing of payload to signature cannot be fumbled at the call site.
 
 - [ ] **Step 1: Write the failing unit test** `PushCryptoTest.kt`
 

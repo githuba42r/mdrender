@@ -7,7 +7,7 @@ import time
 import uuid
 
 import qrcode
-from flask import (Flask, g, jsonify, make_response, redirect,
+from flask import (Flask, Response, g, jsonify, make_response, redirect,
                    render_template, request, send_file)
 from qrcode.image.svg import SvgImage
 
@@ -27,6 +27,11 @@ from server.app.store import (check_device, create_client, delete_device,
                               update_device_token)
 
 SESSION_COOKIE = "mdrender_session"
+
+# The manifest response body IS the signed byte string; the signature travels
+# beside it in this header. Keeping them separate is what lets the phone verify
+# the exact bytes it received instead of re-serialising a parsed object.
+MANIFEST_SIGNATURE_HEADER = "X-Push-Manifest-Signature"
 
 
 def make_fcm_client(config):
@@ -339,6 +344,13 @@ def create_app(config):
         so this needs no device credential. The manifest is signed with the
         server key the phone pinned at pairing, which is what makes the response
         trustworthy even if the TLS terminator is not.
+
+        The body is exactly the bytes that were signed, and the signature rides
+        in a header. Nesting the manifest inside a JSON envelope instead would
+        force the phone to slice the signed bytes back out of the response by
+        hand, and any such slicing is a place a signature check can silently go
+        wrong. With the body being the signed bytes, the phone verifies what it
+        received without re-serialising or parsing anything first.
         """
         push_row = push_store.get_push_by_id(g.db, push_id)
         if push_row is None:
@@ -356,9 +368,14 @@ def create_app(config):
             push_store.get_unacked_files(g.db, push_id),
         )
         server_priv = _load_private(app.config["_server_pem"])
-        sig = crypto.sign(server_priv, trigger.manifest_bytes(manifest))
-        return jsonify({"manifest": manifest,
-                        "sig": base64.b64encode(sig).decode()})
+        body = trigger.manifest_bytes(manifest)
+        sig = crypto.sign(server_priv, body)
+        return Response(
+            body,
+            status=200,
+            mimetype="application/json",
+            headers={MANIFEST_SIGNATURE_HEADER: base64.b64encode(sig).decode()},
+        )
 
     @app.route("/api/push/<file_id>/download", methods=["POST"])
     def download(file_id):

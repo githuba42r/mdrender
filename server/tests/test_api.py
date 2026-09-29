@@ -8,10 +8,11 @@ Flow: health -> login -> enrol -> oauth -> /pair -> register-device -> push
 import base64
 import hashlib
 import io
+import json
 import os
 
 from server.app import crypto
-from server.app.app import create_app
+from server.app.app import MANIFEST_SIGNATURE_HEADER, create_app
 from server.app.crypto import generate_rsa_keypair, public_to_spki_der
 from server.app.trigger import manifest_bytes, open_trigger, seal_trigger
 
@@ -145,29 +146,38 @@ def test_full_push_flow(config, db_path, monkeypatch):
     forged = seal_trigger(push_key, config.PUSH_PUBLIC_URL, "other-push", "ck")
     assert open_trigger(os.urandom(32), {"i": forged["i"], "c": forged["c"]}) is None
 
-    # Exchange the doorbell for a signed manifest.
+    # Exchange the doorbell for a signed manifest. The body is exactly the
+    # signed bytes and the signature rides in a header, so the phone never has
+    # to slice the signed bytes back out of a JSON envelope.
     r = client.post(f"/api/push/{push_id}/manifest",
                     json={"challenge_key": challenge_key})
     assert r.status_code == 200, r.data
-    manifest = r.json["manifest"]
+    signed_bytes = r.data
+    sig_b64 = r.headers[MANIFEST_SIGNATURE_HEADER]
+    manifest = json.loads(signed_bytes)
+    # The body must be byte-for-byte the canonical form that was signed, not
+    # merely an equivalent parse of it.
+    assert signed_bytes == manifest_bytes(manifest)
     # The signature must verify against the key the QR pinned, over the exact
     # bytes transmitted.
     server_pub = crypto.public_from_spki_der(
         base64.b64decode(app.config["_server_pk_b64"])
     )
-    assert crypto.verify(server_pub, manifest_bytes(manifest),
-                         base64.b64decode(r.json["sig"]))
+    assert crypto.verify(server_pub, signed_bytes, base64.b64decode(sig_b64))
     # Tampering with the manifest after signing must break verification.
-    manifest["files"].append({"file_id": "injected", "name": "x", "path": "",
+    # Tampering with a *re-serialised* copy must not verify: this is precisely
+    # why the phone must check the body bytes and not a re-encoded object.
+    tampered = json.loads(signed_bytes)
+    tampered["files"].append({"file_id": "injected", "name": "x", "path": "",
                               "size": 1, "retrieval_key": "k"})
-    assert not crypto.verify(server_pub, manifest_bytes(manifest),
-                             base64.b64decode(r.json["sig"]))
+    assert not crypto.verify(server_pub, manifest_bytes(tampered),
+                             base64.b64decode(sig_b64))
 
-    files = {f["name"]: f for f in r.json["manifest"]["files"]}
+    files = {f["name"]: f for f in manifest["files"]}
     # Names are stored basenamed; the folder is not yet implemented (see the
     # plan's known-gaps note), so the manifest path is empty.
     assert set(files) == {"notes.md", "other.md"}
-    assert all(f["path"] == "" for f in r.json["manifest"]["files"])
+    assert all(f["path"] == "" for f in manifest["files"])
     f0 = files["notes.md"]
     assert f0["size"] == 5
     retrieval_key = f0["retrieval_key"]
@@ -201,8 +211,9 @@ def test_full_push_flow(config, db_path, monkeypatch):
     # safe, since a re-ringed doorbell re-reads the same endpoint.
     r = client.post(f"/api/push/{push_id}/manifest",
                     json={"challenge_key": challenge_key})
-    assert "notes.md" not in {f["name"] for f in r.json["manifest"]["files"]}
-    assert "other.md" in {f["name"] for f in r.json["manifest"]["files"]}
+    names = {f["name"] for f in json.loads(r.data)["files"]}
+    assert "notes.md" not in names
+    assert "other.md" in names
 
     # Device status
     assert client.post("/api/device/status",

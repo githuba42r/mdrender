@@ -90,6 +90,17 @@ The QR encodes a JSON payload — `{v:1, server_url, pk, token, expires}` (see
 minutes). The app registers with the server via `/api/register-device` and
 receives a `device_auth` secret in return, which it keeps for future requests.
 
+At registration the app also sends a 32-byte `push_key` it generated itself and
+signs a proof binding that key to its device secret and public key. That key
+becomes the doorbell key: the FCM trigger is AES-256-GCM encrypted to it, so a
+captured doorbell reveals nothing and cannot be replayed to another device.
+
+Fetching a manifest (`POST /api/push/<push_id>/manifest` with
+`{"challenge_key": …}`) returns the **signed manifest as the response body**,
+with the base64 RSA-SHA256 signature in the `X-Push-Manifest-Signature` header.
+The body is byte-for-byte what was signed, so the app verifies exactly what it
+received rather than re-encoding a parsed object.
+
 The browser UI also exposes `/devices` (list/delete), `/pushes` (all pushes),
 and `/pending` (un-acked files), all behind the login session.
 

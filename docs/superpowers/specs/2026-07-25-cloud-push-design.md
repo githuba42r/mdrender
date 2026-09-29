@@ -193,7 +193,7 @@ echo "into the server image as FCM_SERVER_KEY."
 | POST | `/api/push` | `Authorization: Bearer` (client-credentials) | Upload files for push; `target_device` (LocalSend name) is **required** — 400 if missing/unknown |
 | POST | `/api/register-device` | pairing token + key-possession proof | Register FCM token + public key + `push_key` |
 | POST | `/api/register-device` (update) | JSON body `{ device_secret, device_auth }` | Rotate FCM token / device name / `push_key` (no pairing token needed) |
-| POST | `/api/push/{push_id}/manifest` | JSON body `{ challenge_key }` | Exchange a doorbell trigger for the signed file manifest (names, paths, retrieval keys) |
+| POST | `/api/push/{push_id}/manifest` | JSON body `{ challenge_key }` | Exchange a doorbell trigger for the signed file manifest (names, paths, retrieval keys); body is the signed bytes, signature in `X-Push-Manifest-Signature` |
 | POST | `/api/push/{file_id}/download` | JSON body `{ key }` | Phone downloads a file (returns bytes over HTTPS) |
 | POST | `/api/push/{file_id}/received` | JSON body `{ key }` | Ack: file downloaded and recorded → server deletes its copy |
 | POST | `/api/device/status` | JSON body `{ device_secret, device_auth }` | Registration check → 200 ok / 404 needs re-registration |
@@ -407,14 +407,24 @@ Registry entry: `device_secret` (id) → `device_auth`, `device_name`, `fcm_toke
      to this token": no `push_id`, no file names, no paths, no retrieval keys, and not
      even the number of files in the push.
 3. **The phone exchanges the trigger for a signed manifest:**
-   ```json
+   ```http
    POST /api/push/{push_id}/manifest   { "challenge_key": "…" }
-   →  { "manifest": { "push_id": "…", "date": "…",
-                     "files": [ { "file_id": "…", "name": "notes.md",
-                                  "path": "Docs/Reports", "size": 1234,
-                                  "retrieval_key": "…" } ] },
-        "sig": "<base64: RSA-SHA256(server private key, manifest JSON)>" }
+   →  200
+      X-Push-Manifest-Signature: <base64: RSA-SHA256(server private key, body)>
+      Content-Type: application/json
+
+      { "push_id": "…", "date": "…",
+        "files": [ { "file_id": "…", "name": "notes.md",
+                     "path": "Docs/Reports", "size": 1234,
+                     "retrieval_key": "…" } ] }
    ```
+   - **The response body is exactly the byte string that was signed, and the
+     signature travels beside it in a header.** Nesting the manifest inside a
+     `{"manifest": …, "sig": …}` envelope would force the phone to slice the
+     signed bytes back out of the response body by hand before verifying, and any
+     such slicing is a place a signature check can silently go wrong. Keeping the
+     payload as the body means the phone verifies precisely what it received —
+     no re-serialisation, no string surgery.
    - The server checks `challenge_key` against the push row and returns only the files
      that are **not yet acked**, so the manifest is always current. (A retry can no
      longer hand the phone a file that was already acked — a whole class of bug that
