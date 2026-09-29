@@ -101,4 +101,34 @@
     }
     pendingForm = null;
   });
+
+  // ---- Generic modals (e.g. add / edit admin) -----------------------------
+
+  document.addEventListener("click", function (event) {
+    var opener = event.target.closest("[data-open-dialog]");
+    if (opener) {
+      var target = document.querySelector(opener.getAttribute("data-open-dialog"));
+      if (target) target.showModal();
+      return;
+    }
+    var closer = event.target.closest("[data-close-dialog]");
+    if (closer) {
+      var owner = closer.closest("dialog");
+      if (owner) owner.close();
+      return;
+    }
+    var edit = event.target.closest("[data-edit-admin]");
+    if (edit) {
+      var editDialog = document.getElementById("edit-admin-dialog");
+      if (!editDialog) return;
+      editDialog.querySelector("form").setAttribute(
+        "action", "/admins/" + edit.getAttribute("data-id") + "/update");
+      editDialog.querySelector('[name="name"]').value = edit.getAttribute("data-name") || "";
+      editDialog.querySelector('[name="email"]').value = edit.getAttribute("data-email") || "";
+      editDialog.querySelector('[name="password"]').value = "";
+      editDialog.querySelector(".edit-username").textContent =
+        edit.getAttribute("data-username") || "";
+      editDialog.showModal();
+    }
+  });
 })();

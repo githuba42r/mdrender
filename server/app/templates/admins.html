@@ -2,21 +2,29 @@
 {% block title %}Admins &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Admins</h1>
-<p class="lede">People who can sign in to this server. Each has their own username and password.</p>
+<p class="lede">People who can sign in to this server. Each has their own name, username, email, and password.</p>
+<p><button type="button" class="btn-primary" data-open-dialog="#add-admin-dialog">Add admin</button></p>
+
 {% if admins %}
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Status</th></tr>
+    <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Status</th><th></th></tr>
   </thead>
   <tbody>
     {% for a in admins %}
     <tr>
+      <td>{% if a.name %}{{ a.name }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{{ a.username }}</td>
       <td>{% if a.email %}{{ a.email }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{{ a.role }}</td>
       <td>{{ a.created_at | dt }}</td>
       <td>{% if a.disabled_at %}<span class="chip failed">disabled</span>{% else %}<span class="chip">active</span>{% endif %}</td>
+      <td>
+        <button type="button" class="inline" data-edit-admin data-id="{{ a.admin_id }}"
+                data-name="{{ a.name or '' }}" data-email="{{ a.email or '' }}"
+                data-username="{{ a.username }}">Edit</button>
+      </td>
     </tr>
     {% endfor %}
   </tbody>
@@ -26,12 +34,37 @@
 <p class="empty">No admins yet.</p>
 {% endif %}
 
-<h2>Add an admin</h2>
-<form method="POST" action="/admins">
-  <label for="username">Username</label>
-  <div class="field"><input type="text" id="username" name="username" autocomplete="off" required></div>
-  <label for="password">Password</label>
-  <div class="field"><input type="password" id="password" name="password" autocomplete="new-password" required></div>
-  <button type="submit" class="btn-primary">Add admin</button>
-</form>
+<dialog id="add-admin-dialog" class="confirm">
+  <form method="POST" action="/admins">
+    <h2>Add admin</h2>
+    <label for="add-name">Name</label>
+    <div class="field"><input type="text" id="add-name" name="name"></div>
+    <label for="add-username">Username</label>
+    <div class="field"><input type="text" id="add-username" name="username" required></div>
+    <label for="add-email">Email</label>
+    <div class="field"><input type="text" id="add-email" name="email"></div>
+    <label for="add-password">Password (8+)</label>
+    <div class="field"><input type="password" id="add-password" name="password" required></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Add admin</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="edit-admin-dialog" class="confirm">
+  <form method="POST" action="">
+    <h2>Edit admin <span class="edit-username empty"></span></h2>
+    <label for="edit-name">Name</label>
+    <div class="field"><input type="text" id="edit-name" name="name"></div>
+    <label for="edit-email">Email</label>
+    <div class="field"><input type="text" id="edit-email" name="email"></div>
+    <label for="edit-password">New password (leave blank to keep)</label>
+    <div class="field"><input type="password" id="edit-password" name="password" autocomplete="new-password"></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}

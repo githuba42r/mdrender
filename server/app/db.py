@@ -277,6 +277,9 @@ class Database:
             "pairing_tokens": {
                 "account_id": "TEXT",
             },
+            "admins": {
+                "name": "TEXT",
+            },
             "billing_plans": {
                 "storage_cents_per_mb": "INTEGER NOT NULL DEFAULT 0",
                 "message_cents_per_1000": "INTEGER NOT NULL DEFAULT 0",

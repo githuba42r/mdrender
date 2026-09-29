@@ -31,7 +31,8 @@ from server.app.db import Database
 from server.app.deployment import (detect_role, get_or_create_identity,
                                    probe_fcm)
 from server.app.identity import (count_admins, create_admin,
-                                 get_identity_provider, list_admins)
+                                 get_identity_provider, list_admins,
+                                 update_admin)
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
                               get_device_by_secret,
@@ -692,8 +693,23 @@ def create_app(config):
             return auth_error
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password", "")
+        name = (request.form.get("name") or "").strip() or None
+        email = (request.form.get("email") or "").strip() or None
         if len(username) >= 3 and len(password) >= 8:
-            create_admin(g.db, username, password)
+            create_admin(g.db, username, password, email=email, name=name)
+        return redirect("/admins", 303)
+
+    @app.route("/admins/<admin_id>/update", methods=["POST"])
+    def admins_update(admin_id):
+        """Change an admin's name/email and optionally their password."""
+        auth_error = require_form_session("/admins")
+        if auth_error:
+            return auth_error
+        name = (request.form.get("name") or "").strip() or None
+        email = (request.form.get("email") or "").strip() or None
+        password = request.form.get("password", "")
+        update_admin(g.db, admin_id, name=name, email=email,
+                     password=password if len(password) >= 8 else None)
         return redirect("/admins", 303)
 
     @app.route("/status", methods=["GET"])

@@ -89,6 +89,34 @@ def test_admin_can_log_in_with_username_or_email(config, db_path):
                             "password": "longenough1"}).status_code == 302
 
 
+def test_admin_name_email_and_password_can_be_edited(config, db_path):
+    from server.app.identity import get_admin_by_username
+
+    app = _app_without_bootstrap(config)
+    c = app.test_client()
+    c.post("/setup", data={"username": "phil", "password": "longenough1"})
+    c.post("/admins", data={"name": "Ops", "username": "ops",
+                            "email": "ops@example.com", "password": "anotherpass1"})
+
+    body = c.get("/admins").data
+    assert b"Ops" in body and b"ops@example.com" in body
+
+    with app.config["_db"].connect() as conn:
+        admin_id = get_admin_by_username(conn, "ops")["admin_id"]
+    c.post(f"/admins/{admin_id}/update",
+           data={"name": "Operations", "email": "new@example.com",
+                 "password": "brandnewpass1"})
+
+    body = c.get("/admins").data
+    assert b"Operations" in body and b"new@example.com" in body
+
+    fresh = app.test_client()
+    assert fresh.post("/login",
+                      data={"username": "ops", "password": "brandnewpass1"}).status_code == 302
+    assert fresh.post("/login",
+                      data={"username": "ops", "password": "anotherpass1"}).status_code == 401
+
+
 def test_bootstrap_admin_from_server_password(config, db_path):
     # conftest sets SERVER_PASSWORD="testpass"; a fresh app seeds admin/testpass.
     config.PUSH_STORAGE_DIR = os.path.join(os.path.dirname(config.DB_PATH), "push")

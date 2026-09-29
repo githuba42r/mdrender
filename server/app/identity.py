@@ -26,7 +26,7 @@ def get_admin_by_username(conn, username):
 
 def list_admins(conn):
     return conn.execute(
-        "SELECT admin_id, username, email, role, created_at, disabled_at"
+        "SELECT admin_id, name, username, email, role, created_at, disabled_at"
         " FROM admins ORDER BY created_at").fetchall()
 
 
@@ -40,15 +40,29 @@ def get_admin(conn, admin_id):
                         (admin_id,)).fetchone()
 
 
-def create_admin(conn, username, password, *, role="admin", email=None) -> str:
+def create_admin(conn, username, password, *, role="admin", email=None,
+                 name=None) -> str:
     admin_id = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO admins (admin_id, username, email, password_hash, role, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (admin_id, username, email, hash_secret(password), role, int(time.time())),
+        "INSERT INTO admins (admin_id, name, username, email, password_hash, role,"
+        " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (admin_id, name, username, email, hash_secret(password), role,
+         int(time.time())),
     )
     conn.commit()
     return admin_id
+
+
+def update_admin(conn, admin_id, *, name=None, email=None, password=None) -> None:
+    """Update an admin's display name / email and, if given, password."""
+    if name is not None:
+        conn.execute("UPDATE admins SET name = ? WHERE admin_id = ?", (name, admin_id))
+    if email is not None:
+        conn.execute("UPDATE admins SET email = ? WHERE admin_id = ?", (email, admin_id))
+    if password:
+        conn.execute("UPDATE admins SET password_hash = ? WHERE admin_id = ?",
+                     (hash_secret(password), admin_id))
+    conn.commit()
 
 
 def disable_admin(conn, admin_id) -> None:
