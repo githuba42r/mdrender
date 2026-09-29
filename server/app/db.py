@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   account_id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   phone TEXT,
+  firebase_uid TEXT,
   password_hash TEXT,
   host TEXT NOT NULL DEFAULT 'master',
   status TEXT NOT NULL DEFAULT 'active',
@@ -298,6 +299,7 @@ class Database:
                 "messages_sent": "INTEGER NOT NULL DEFAULT 0",
                 "name": "TEXT",
                 "phone": "TEXT",
+                "firebase_uid": "TEXT",
             },
             "clients": {
                 "account_id": "TEXT",

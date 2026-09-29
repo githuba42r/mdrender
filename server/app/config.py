@@ -44,6 +44,9 @@ DEFAULTS = {
     "FIREBASE_API_KEY": "",
     "FIREBASE_AUTH_DOMAIN": "",
     "FIREBASE_APP_ID": "",
+    # Service-account JSON for Firebase Auth Admin writes (account profile edits
+    # write through to Firebase). Falls back to FCM_SERVER_KEY's path when empty.
+    "FIREBASE_SERVICE_ACCOUNT": "",
     # Which Firebase sign-in methods the login/signup pages surface, comma
     # separated. Any of: google, github, phone, password, email_link. Only the
     # listed methods are shown, so a disabled provider never renders a button.

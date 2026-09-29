@@ -20,7 +20,8 @@ from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, encryption,
                         federation, federation_client, fcm as fcm_mod, geoip,
-                        oidc, pairing, push_store, settings, storage, trigger)
+                        identity_admin, oidc, pairing, push_store, settings,
+                        storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -678,6 +679,33 @@ def create_app(config):
         if error:
             return render_template("account_profile.html", account=account,
                                    error=error), 400
+        # Write through to Firebase so the sign-in provider and the local row
+        # stay in step. Identity fields (email/phone/password) must succeed; a
+        # name-only change is best-effort, since it isn't an identity.
+        uid = account["firebase_uid"]
+        identity_changing = (email != (account["email"] or "")
+                             or phone != (account["phone"] or "")
+                             or bool(password))
+        name_changing = name != (account["name"] or "")
+        if uid and (identity_changing or name_changing) and identity_admin.available(config):
+            fields = {}
+            if email != (account["email"] or ""):
+                fields["email"] = email
+                fields["emailVerified"] = False
+            if phone != (account["phone"] or ""):
+                if phone:
+                    fields["phoneNumber"] = phone
+                else:
+                    fields["deleteAttribute"] = ["PHONE_NUMBER"]
+            if password:
+                fields["password"] = password
+            if name_changing:
+                fields["displayName"] = name
+            _result, err = identity_admin.update_user(config, uid, **fields)
+            if err and identity_changing:
+                return render_template(
+                    "account_profile.html", account=account,
+                    error=f"Could not update the sign-in provider: {err}"), 502
         accounts.update_account(
             g.db, account_id, name=name, email=email, phone=phone,
             password=password if password else None)
@@ -1286,7 +1314,11 @@ def create_app(config):
         email = (claims.get("email") or "").strip().lower()
         if not email or not claims.get("email_verified", False):
             return jsonify({"error": "verified email required"}), 403
-        account = accounts.get_account_by_email(g.db, email)
+        # Match by Firebase uid first, so an email change made via the profile
+        # (written through to Firebase) still resolves to the same account.
+        account = accounts.get_account_by_firebase_uid(g.db, uid) if uid else None
+        if account is None:
+            account = accounts.get_account_by_email(g.db, email)
         if account is None:
             # An admin's login identity is never also a customer account, so a
             # verified email/phone that belongs to an admin cannot sign up here.
@@ -1298,8 +1330,12 @@ def create_app(config):
                 return jsonify({"error": "signup disabled"}), 403
             if not accounts.domain_allowed(g.db, email):
                 return jsonify({"error": "email domain not allowed"}), 403
-            accounts.create_account(g.db, email)
-            account = accounts.get_account_by_email(g.db, email)
+            account_id = accounts.create_account(g.db, email)
+            if uid:
+                accounts.set_firebase_uid(g.db, account_id, uid)
+            account = accounts.get_account(g.db, account_id)
+        elif uid and account["firebase_uid"] != uid:
+            accounts.set_firebase_uid(g.db, account["account_id"], uid)
         if account["status"] != accounts.ACTIVE:
             return jsonify({"error": f"account {account['status']}"}), 403
         token = create_session(g.db, config.session_secret, config,

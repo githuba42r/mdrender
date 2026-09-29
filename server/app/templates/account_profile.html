@@ -2,7 +2,15 @@
 {% block title %}Account info &middot; My account{% endblock %}
 {% block content %}
 <h1>Account info</h1>
-<p class="lede">Your name, contact details and password.</p>
+<p class="lede">Your name, contact details and password. Email, phone and password
+  changes are written through to your Firebase sign-in account, so they stay in
+  step with how you sign in.</p>
+{% if account.firebase_uid %}
+<p class="lede">Linked to your sign-in account.</p>
+{% else %}
+<p class="lede">Not yet linked to a sign-in account — sign out and back in with a
+  sign-in link to link it.</p>
+{% endif %}
 {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
 <form method="POST" action="/account/profile">
   <label for="name">Name</label>

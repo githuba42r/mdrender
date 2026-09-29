@@ -74,6 +74,19 @@ def get_account_by_phone(conn, phone):
                         (phone.strip(),)).fetchone()
 
 
+def get_account_by_firebase_uid(conn, uid):
+    if not uid:
+        return None
+    return conn.execute("SELECT * FROM accounts WHERE firebase_uid = ?",
+                        (uid,)).fetchone()
+
+
+def set_firebase_uid(conn, account_id, uid) -> None:
+    conn.execute("UPDATE accounts SET firebase_uid = ? WHERE account_id = ?",
+                 (uid, account_id))
+    conn.commit()
+
+
 def list_accounts(conn):
     return conn.execute("SELECT * FROM accounts ORDER BY created_at").fetchall()
 
