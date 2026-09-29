@@ -84,6 +84,33 @@ CREATE TABLE IF NOT EXISTS push_files (
   acked_at INTEGER,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS federated_servers (
+  server_id TEXT PRIMARY KEY,
+  hostname TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  secret_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  last_seen INTEGER,
+  down_since INTEGER,
+  last_probe INTEGER
+);
+CREATE TABLE IF NOT EXISTS federated_nonces (
+  server_id TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (server_id, nonce)
+);
+CREATE TABLE IF NOT EXISTS federated_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_retry_at INTEGER,
+  acked_at INTEGER
+);
 """
 
 

@@ -3,6 +3,7 @@
 import base64
 import datetime
 import hmac
+import json
 import os
 import secrets
 import shutil
@@ -17,7 +18,8 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import crypto, fcm as fcm_mod, pairing, push_store, trigger
+from server.app import (crypto, federation, fcm as fcm_mod, pairing,
+                        push_store, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, purge_expired_sessions,
@@ -519,6 +521,92 @@ def create_app(config):
     @app.route("/api/health", methods=["GET"])
     def health():
         return jsonify({"ok": True})
+
+    # ---- Federation API (design §5/§5a) ----
+
+    def _federation_token():
+        header = request.headers.get("Authorization", "")
+        return header[7:] if header.startswith("Bearer ") else None
+
+    @app.route("/api/federation/enrol", methods=["POST"])
+    def federation_enrol():
+        """A slave enrols: verify it via the signed callback, then activate.
+
+        Automatic (D2) — no operator approval; bans/revocation still apply.
+        """
+        data = request.get_json(silent=True) or {}
+        server_id = data.get("server_id")
+        hostname = data.get("hostname")
+        base_url = data.get("base_url")
+        public_key_b64 = data.get("public_key")
+        if not all([server_id, hostname, base_url, public_key_b64]):
+            return jsonify({"error": "server_id, hostname, base_url and public_key"
+                                     " are required"}), 400
+        challenge = federation.new_challenge()
+        try:
+            signature = federation.verify_slave_callback(base_url, challenge)
+        except Exception as exc:  # noqa: BLE001 - unreachable slave => not verified
+            return jsonify({"error": "callback failed", "detail": str(exc)[:120]}), 400
+        if not federation.verify_callback_signature(public_key_b64, challenge, signature):
+            return jsonify({"error": "callback signature invalid"}), 400
+        secret = federation.register_active(
+            g.db, server_id=server_id, hostname=hostname, base_url=base_url,
+            public_key_b64=public_key_b64)
+        return jsonify({"server_id": server_id, "server_secret": secret,
+                        "status": "active"})
+
+    def _federation_alive():
+        """Shared heartbeat/ping: verify the signed request, then flush the outbox."""
+        row = federation.check_bearer(g.db, _federation_token())
+        if row is None:
+            return jsonify({"error": "unauthorized"}), 401
+        body = request.get_data() or b""
+        if not federation.verify_request(g.db, row, request.method, request.path,
+                                         body, request.headers):
+            return jsonify({"error": "bad signature"}), 401
+        federation.touch_seen(g.db, row["server_id"], up=True)
+        queued = federation.pending_outbox(g.db, row["server_id"])
+        federation.mark_outbox_sent(g.db, [q["id"] for q in queued])
+        return jsonify({"ok": True, "status": "active",
+                        "queued": [json.loads(q["payload"]) for q in queued]})
+
+    @app.route("/api/federation/heartbeat", methods=["POST"])
+    def federation_heartbeat():
+        return _federation_alive()
+
+    @app.route("/api/federation/ping", methods=["POST"])
+    def federation_ping():
+        return _federation_alive()
+
+    @app.route("/api/federation/whoami", methods=["GET"])
+    def federation_whoami():
+        row = federation.check_bearer(g.db, _federation_token())
+        if row is None:
+            return jsonify({"error": "unauthorized"}), 401
+        return jsonify({"server_id": row["server_id"], "hostname": row["hostname"],
+                        "status": row["status"]})
+
+    def _federation_sign_challenge(status=None):
+        """Slave side: sign a master challenge to prove key possession + liveness."""
+        data = request.get_json(silent=True) or {}
+        challenge = data.get("challenge", "")
+        if not challenge:
+            return jsonify({"error": "challenge required"}), 400
+        ident = app.config["_server_identity"]
+        reply = {"server_id": ident["server_id"],
+                 "signature": federation.sign_bytes(ident["private_key_pem"],
+                                                    challenge.encode())}
+        if status:
+            reply["status"] = status
+        return jsonify(reply)
+
+    @app.route("/api/federation/verify", methods=["POST"])
+    def federation_verify():
+        return _federation_sign_challenge()
+
+    @app.route("/api/federation/probe", methods=["POST"])
+    def federation_probe():
+        return _federation_sign_challenge(app.config["_server_role"])
 
     @app.route("/api/devices", methods=["GET"])
     def api_devices():
