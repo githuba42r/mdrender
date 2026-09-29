@@ -27,12 +27,14 @@ CREATE TABLE IF NOT EXISTS devices (
   device_name TEXT NOT NULL UNIQUE,
   fcm_token TEXT,
   public_key TEXT NOT NULL,
+  push_key TEXT NOT NULL,
   registered_at INTEGER NOT NULL,
   last_seen INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pushes (
   push_id TEXT PRIMARY KEY,
   target_device TEXT NOT NULL,
+  challenge_key TEXT NOT NULL,
   date INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
 );
@@ -67,4 +69,21 @@ class Database:
 
     def init_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(SCHEMA)
+        self._migrate(conn)
         conn.commit()
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Idempotently add columns introduced after a database was first created.
+
+        SQLite has no ALTER TABLE ... IF NOT EXISTS, so compare against the live
+        table and issue plain ALTERs for anything missing.
+        """
+        wanted = {
+            "devices": {"push_key": "TEXT NOT NULL DEFAULT ''"},
+            "pushes": {"challenge_key": "TEXT NOT NULL DEFAULT ''"},
+        }
+        for table, columns in wanted.items():
+            have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for column, decl in columns.items():
+                if column not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")

@@ -2,7 +2,6 @@
 """Flask application factory wiring every route for the Cloud Push server."""
 import base64
 import datetime
-import json
 import os
 import time
 import uuid
@@ -14,19 +13,18 @@ from qrcode.image.svg import SvgImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import crypto, fcm as fcm_mod, pairing, push_store
+from server.app import crypto, fcm as fcm_mod, pairing, push_store, trigger
 from server.app.config import load_config
 from server.app.auth import (LoginGate, hash_secret, issue_access_token,
                              make_session, validate_access_token,
                              verify_secret, verify_session)
 from server.app.db import Database
-from server.app.envelope import (build_envelope, build_payload, file_entry,
-                                 slice_files)
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
                               get_or_create_server_keypair, list_devices,
                               session_secret_from_pem, touch_last_seen,
-                              update_device_name, update_device_token)
+                              update_device_name, update_device_push_key,
+                              update_device_token)
 
 SESSION_COOKIE = "mdrender_session"
 
@@ -109,18 +107,25 @@ def create_app(config):
             return None
         return validate_access_token(config, header[7:])
 
-    def _dispatch_fcm(device, entries, push_id):
-        """Build envelopes per slice and send each via FCM. No-op if _fcm is None."""
-        server_priv = _load_private(app.config["_server_pem"])
-        device_pub = crypto.public_from_spki_der(base64.b64decode(device["public_key"]))
-        date_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    def _ring_doorbell(device, push_row) -> bool:
+        """Send the one FCM message that tells a device a push is waiting.
+
+        The message is a constant-size encrypted trigger naming where to look, so
+        the file count can never exhaust FCM's 4 KB limit. It carries no file
+        names, paths, or retrieval keys. Returns False if there is no client (or
+        the device has no usable doorbell key).
+        """
         fcm = app.config["_fcm"]
-        for sl in slice_files(entries):
-            payload = build_payload(config.PUSH_PUBLIC_URL, push_id, date_iso,
-                                    len(entries), sl)
-            env = build_envelope(server_priv, device_pub, payload)
-            if fcm is not None:
-                fcm.send({"p": json.dumps(env)}, device["fcm_token"])
+        if fcm is None or not device["fcm_token"]:
+            return False
+        if not device["push_key"]:
+            return False
+        sealed = trigger.seal_trigger(
+            base64.b64decode(device["push_key"]), config.PUSH_PUBLIC_URL,
+            push_row["push_id"], push_row["challenge_key"],
+        )
+        fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
+        return True
 
     # ---- Browser session-gated pages ----
 
@@ -271,8 +276,9 @@ def create_app(config):
         if not uploads:
             return jsonify({"error": "no files uploaded"}), 400
         push_id = uuid.uuid4().hex
-        push_store.create_push(g.db, push_id, target_device)
-        entries = []
+        challenge_key = uuid.uuid4().hex
+        push_store.create_push(g.db, push_id, target_device, challenge_key)
+        sent = 0
         for f in uploads:
             file_id = uuid.uuid4().hex
             retrieval_key = uuid.uuid4().hex
@@ -285,9 +291,10 @@ def create_app(config):
             push_store.add_file(g.db, file_id=file_id, push_id=push_id, file_name=name,
                                 file_path="", size=size, retrieval_key=retrieval_key,
                                 stored_path=stored_path, created_at=int(time.time()))
-            entries.append(file_entry(file_id, name, "", retrieval_key))
-        _dispatch_fcm(device, entries, push_id)
-        return jsonify({"push_id": push_id, "files_sent": len(entries)})
+            sent += 1
+        push_row = push_store.get_push_by_id(g.db, push_id)
+        _ring_doorbell(device, push_row)
+        return jsonify({"push_id": push_id, "files_sent": sent})
 
     @app.route("/api/register-device", methods=["POST"])
     def register_device_route():
@@ -299,6 +306,7 @@ def create_app(config):
                 device_name=data.get("device_name"),
                 fcm_token=data.get("fcm_token"),
                 public_key_b64=data.get("public_key"),
+                push_key_b64=data.get("push_key", ""),
                 pairing_token=data.get("pairing_token"),
                 sig_b64=data.get("sig"),
             )
@@ -316,9 +324,41 @@ def create_app(config):
         if data.get("device_name"):
             ok = update_device_name(g.db, device_secret, device_auth,
                                     data["device_name"]) and ok
+        if data.get("push_key"):
+            ok = update_device_push_key(g.db, device_secret, device_auth,
+                                        data["push_key"]) and ok
         if not ok:
             return jsonify({"error": "unauthorized"}), 401
         return jsonify({"ok": True, "device_auth": device_auth})
+
+    @app.route("/api/push/<push_id>/manifest", methods=["POST"])
+    def push_manifest(push_id):
+        """Exchange a doorbell's challenge_key for the signed file manifest.
+
+        The challenge key is a capability from inside the authenticated trigger,
+        so this needs no device credential. The manifest is signed with the
+        server key the phone pinned at pairing, which is what makes the response
+        trustworthy even if the TLS terminator is not.
+        """
+        push_row = push_store.get_push_by_id(g.db, push_id)
+        if push_row is None:
+            return jsonify({"error": "not found"}), 404
+        data = request.get_json(silent=True) or {}
+        if not data.get("challenge_key") or not push_row["challenge_key"]:
+            return jsonify({"error": "forbidden"}), 403
+        if data["challenge_key"] != push_row["challenge_key"]:
+            return jsonify({"error": "forbidden"}), 403
+        manifest = trigger.build_manifest(
+            push_id,
+            datetime.datetime.fromtimestamp(
+                push_row["date"], datetime.timezone.utc
+            ).isoformat(),
+            push_store.get_unacked_files(g.db, push_id),
+        )
+        server_priv = _load_private(app.config["_server_pem"])
+        sig = crypto.sign(server_priv, trigger.manifest_bytes(manifest))
+        return jsonify({"manifest": manifest,
+                        "sig": base64.b64encode(sig).decode()})
 
     @app.route("/api/push/<file_id>/download", methods=["POST"])
     def download(file_id):
@@ -377,10 +417,9 @@ def create_app(config):
         push_store.reset_push_retries(g.db, push_id, now)
         pending = [r for r in push_store.get_pending_files(g.db, now)
                    if r["push_id"] == push_id]
-        entries = [file_entry(r["file_id"], r["file_name"], r["file_path"] or "",
-                              r["retrieval_key"]) for r in pending]
-        _dispatch_fcm(device, entries, push_id)
-        return jsonify({"ok": True, "files_sent": len(entries)})
+        if pending:
+            _ring_doorbell(device, push_row)
+        return jsonify({"ok": True, "files_sent": len(pending)})
 
     return app
 

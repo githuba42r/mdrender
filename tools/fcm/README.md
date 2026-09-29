@@ -183,6 +183,8 @@ self-hosted operator inherits it:
   baked in) and point `FCM_SERVER_KEY` at it; they configure nothing.
 
 Operators never run this script. The trade-off of sharing one credential across all
-instances is acknowledged in the design: the FCM payload is envelope-encrypted with the
-recipient's phone public key, so even another holder of the service-account credential sees
-only ciphertext — the worst case is a spoofed notification, never a content leak.
+instances is acknowledged in the design: the FCM payload is an AES-GCM doorbell under a
+key negotiated during QR pairing, so even another holder of the service-account credential
+sees only ciphertext — and, crucially, no file names, paths, or download keys at all, since
+those travel in a separately signed manifest fetched over HTTPS. The worst case is a spoofed
+doorbell, never a content leak.

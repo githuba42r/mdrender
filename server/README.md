@@ -2,9 +2,10 @@
 
 A small self-hosted push relay for the MDRender Android app. The server stores
 incoming files and "rings the doorbell" on the target device via FCM (Firebase
-Cloud Messaging); the app then pulls the files straight from the server. All
-server→phone FCM messages are envelope-encrypted with the device's public key —
-FCM never sees plaintext.
+Cloud Messaging); the app then pulls a signed manifest and the files straight
+from the server. The FCM message is a constant-size encrypted trigger naming
+only where to look — no file names, paths, or download keys — so FCM never sees
+plaintext and a push can never overflow the 4 KB message limit.
 
 See `docs/superpowers/specs/2026-07-25-cloud-push-design.md` for the full
 endpoint and security tables.
@@ -165,6 +166,7 @@ previous device is deleted and the new one takes the name
 - Full endpoint and security tables:
   `docs/superpowers/specs/2026-07-25-cloud-push-design.md`
 - Server source: `server/app/` — `config.py`, `app.py` (routes),
-  `pairing.py`, `retry.py`, `store.py`, `push_store.py`, `fcm.py`.
-- Android app: consumes the same spec (pairing QR, envelope encryption,
-  download/ack endpoints).
+  `pairing.py`, `retry.py`, `store.py`, `push_store.py`, `fcm.py`, `trigger.py`
+  (doorbell + manifest builder/signing).
+- Android app: consumes the same spec (pairing QR, doorbell decryption, signed
+  manifest verification, download/ack endpoints).

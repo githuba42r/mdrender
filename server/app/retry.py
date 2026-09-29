@@ -1,11 +1,9 @@
 # server/app/retry.py
 import base64
-import datetime
-import json
 import time
 
-from server.app import crypto, envelope, fcm as fcm_mod, pairing, push_store
-from server.app.store import get_or_create_server_keypair, sweep_stale_devices
+from server.app import fcm as fcm_mod, pairing, push_store, trigger
+from server.app.store import sweep_stale_devices
 
 
 def _device(conn, row):
@@ -15,17 +13,25 @@ def _device(conn, row):
     return pairing.get_device_by_name(conn, push["target_device"])
 
 
-def _load_server_priv(conn):
-    from cryptography.hazmat.primitives import serialization
-    pem, _ = get_or_create_server_keypair(conn)
-    return serialization.load_pem_private_key(pem.encode(), password=None)
-
-
-def _iso(now):
-    return datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat()
+def _ring(conn, config, fcm_client, device, push_row) -> None:
+    """Send the push's doorbell. The IV is derived from push_id, so a re-ring is
+    byte-identical to the first send."""
+    sealed = trigger.seal_trigger(
+        base64.b64decode(device["push_key"]), config.PUSH_PUBLIC_URL,
+        push_row["push_id"], push_row["challenge_key"],
+    )
+    fcm_client.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
 
 
 class RetryWorker:
+    """Re-rings the doorbell for pushes that still have unacked files.
+
+    One trigger per push, not one per file: the phone re-requests the manifest,
+    which is rebuilt from current DB state and therefore never names a file that
+    has already been acked. Every pending file still gets its retry counter
+    advanced, so a single push cannot be re-ringed once per file.
+    """
+
     def __init__(self, config, db, fcm_client):
         self.config = config
         self.db = db
@@ -35,32 +41,34 @@ class RetryWorker:
         if self.fcm_client is None:
             return []
         touched = []
+        rung: set[str] = set()
         with self.db.connect() as conn:
-            _, server_pk_b64 = get_or_create_server_keypair(conn)
-            server_priv = _load_server_priv(conn)
             for row in push_store.get_pending_files(conn, now):
                 if row["retries"] >= self.config.PUSH_RETRY_COUNT:
                     push_store.mark_exhausted(conn, row["file_id"])
                     touched.append(row["file_id"])
                     continue
+                if row["push_id"] in rung:
+                    # Already re-rung for this push on this tick.
+                    push_store.increment_retry(
+                        conn, row["file_id"], now,
+                        self.config.PUSH_RETRY_INTERVAL_MINUTES,
+                    )
+                    touched.append(row["file_id"])
+                    continue
                 device = _device(conn, row)
-                # device resolved via pushes.target_device -> devices.device_name
-                if device is None:
+                if device is None or not device["fcm_token"] or not device["push_key"]:
                     push_store.mark_exhausted(conn, row["file_id"])
                     touched.append(row["file_id"])
                     continue
-                payload = envelope.build_payload(
-                    self.config.PUSH_PUBLIC_URL, row["push_id"], _iso(now),
-                    total_files=1,
-                    files=[envelope.file_entry(row["file_id"], row["file_name"],
-                                               row["file_path"], row["retrieval_key"])],
-                )
-                device_pub = crypto.public_from_spki_der(base64.b64decode(device["public_key"]))
-                env = envelope.build_envelope(server_priv, device_pub, payload)
+                push_row = push_store.get_push_by_id(conn, row["push_id"])
                 try:
-                    self.fcm_client.send({"p": json.dumps(env)}, device["fcm_token"])
-                    push_store.increment_retry(conn, row["file_id"], now,
-                                               self.config.PUSH_RETRY_INTERVAL_MINUTES)
+                    _ring(conn, self.config, self.fcm_client, device, push_row)
+                    rung.add(row["push_id"])
+                    push_store.increment_retry(
+                        conn, row["file_id"], now,
+                        self.config.PUSH_RETRY_INTERVAL_MINUTES,
+                    )
                     touched.append(row["file_id"])
                 except fcm_mod.FcmError:
                     pass  # retry next tick

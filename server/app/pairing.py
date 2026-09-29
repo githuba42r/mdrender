@@ -9,7 +9,8 @@ from server.app import crypto
 # Device helpers live in store.py; re-export for the registry module's public
 # surface so callers can import them from server.app.pairing.
 from server.app.store import (
-    check_device, get_device_by_name, update_device_token, update_device_name,
+    check_device, get_device_by_name, update_device_name, update_device_push_key,
+    update_device_token,
 )
 
 
@@ -44,14 +45,29 @@ def build_pairing_qr(server_url, server_pk_b64, token, expires_iso) -> str:
     return json.dumps(pairing_payload(server_url, server_pk_b64, token, expires_iso))
 
 
+def registration_proof_input(device_secret, device_name, fcm_token, public_key_b64,
+                             push_key_b64) -> bytes:
+    """The exact bytes a device signs to prove key possession at pairing.
+
+    push_key is last so that it is inside the signature: without that, an
+    attacker who could rewrite the request body could substitute their own
+    doorbell key and read every subsequent trigger.
+    """
+    return hashlib.sha256(
+        f"{device_secret}{device_name}{fcm_token}{public_key_b64}{push_key_b64}".encode()
+    ).digest()
+
+
 def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b64,
-                    pairing_token, sig_b64):
+                    push_key_b64, pairing_token, sig_b64):
+    if not push_key_b64:
+        return None, None
     if not consume_pairing_token(conn, pairing_token):
         return None, None
     public_key = crypto.public_from_spki_der(base64.b64decode(public_key_b64))
-    data = hashlib.sha256(
-        f"{device_secret}{device_name}{fcm_token}{public_key_b64}".encode()
-    ).digest()
+    data = registration_proof_input(
+        device_secret, device_name, fcm_token, public_key_b64, push_key_b64
+    )
     if not crypto.verify(public_key, data, base64.b64decode(sig_b64)):
         return None, None
 
@@ -66,9 +82,9 @@ def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b
     device_auth = uuid.uuid4().hex
     conn.execute(
         "INSERT OR REPLACE INTO devices (device_secret, device_auth, device_name, fcm_token,"
-        " public_key, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " public_key, push_key, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (device_secret, device_auth, device_name, fcm_token, public_key_b64,
-         int(time.time()), int(time.time())),
+         push_key_b64, int(time.time()), int(time.time())),
     )
     conn.commit()
     return device_auth, displaced

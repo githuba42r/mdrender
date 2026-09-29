@@ -18,11 +18,15 @@ def _register_device(app, client):
     assert pairing_token
     priv, pub = generate_rsa_keypair()
     pub_b64 = base64.b64encode(public_to_spki_der(pub)).decode()
-    digest = hashlib.sha256(f"sec-t1Test Devfcm-t1{pub_b64}".encode()).digest()
+    push_key_b64 = base64.b64encode(os.urandom(32)).decode()
+    digest = hashlib.sha256(
+        f"sec-t1Test Devfcm-t1{pub_b64}{push_key_b64}".encode()
+    ).digest()
     sig = base64.b64encode(sign(priv, digest)).decode()
     reg = client.post("/api/register-device", json={
         "device_secret": "sec-t1", "device_name": "Test Dev",
         "fcm_token": "fcm-t1", "public_key": pub_b64,
+        "push_key": push_key_b64,
         "pairing_token": pairing_token, "sig": sig,
     })
     assert reg.status_code == 200, reg.data

@@ -2,11 +2,11 @@
 import time
 
 
-def create_push(conn, push_id: str, target_device: str) -> None:
+def create_push(conn, push_id: str, target_device: str, challenge_key: str = "") -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO pushes (push_id, target_device, date, status)"
-        " VALUES (?, ?, ?, 'pending')",
-        (push_id, target_device, int(time.time())),
+        "INSERT OR IGNORE INTO pushes (push_id, target_device, challenge_key, date, status)"
+        " VALUES (?, ?, ?, ?, 'pending')",
+        (push_id, target_device, challenge_key, int(time.time())),
     )
     conn.commit()
 
@@ -26,6 +26,21 @@ def add_file(conn, *, file_id, push_id, file_name, file_path, size,
 def get_push_files(conn, push_id):
     return conn.execute(
         "SELECT * FROM push_files WHERE push_id = ? ORDER BY created_at", (push_id,)
+    ).fetchall()
+
+
+def get_unacked_files(conn, push_id):
+    """The rows a manifest for this push should contain right now.
+
+    Deliberately computed from live state rather than from whatever was queued at
+    push time: a re-rung doorbell re-reads this, so a file the phone already
+    acknowledged can never be offered to it a second time. `exhausted` is
+    excluded because those rows have had their bytes purged — advertising one
+    would send the phone to a download that 404s.
+    """
+    return conn.execute(
+        "SELECT * FROM push_files WHERE push_id = ? AND status = 'pending'"
+        " ORDER BY created_at", (push_id,),
     ).fetchall()
 
 

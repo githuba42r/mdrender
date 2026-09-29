@@ -81,6 +81,21 @@ def update_device_name(conn, device_secret, device_auth, new_name) -> bool:
         return False  # name already taken by another device
 
 
+def update_device_push_key(conn, device_secret, device_auth, new_push_key_b64) -> bool:
+    """Replace a device's doorbell key.
+
+    This is the revocation lever for a leaked push_key: once rotated, previously
+    captured doorbells no longer open, though Firebase may still hold undelivered
+    ones.
+    """
+    cur = conn.execute(
+        "UPDATE devices SET push_key = ? WHERE device_secret = ? AND device_auth = ?",
+        (new_push_key_b64, device_secret, device_auth),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def check_device(conn, device_secret, device_auth) -> bool:
     return conn.execute(
         "SELECT 1 FROM devices WHERE device_secret = ? AND device_auth = ?",

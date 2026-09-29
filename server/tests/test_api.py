@@ -2,17 +2,18 @@
 """Integration test for the full Flask endpoint surface (Task A9).
 
 Flow: health -> login -> enrol -> oauth -> /pair -> register-device -> push
--> decrypt envelope -> download -> ack -> status, plus auth-gating and 400s.
+-> decrypt the doorbell -> exchange it for a signed manifest -> download -> ack
+-> status, plus auth-gating and 400 checks.
 """
 import base64
 import hashlib
 import io
-import json
 import os
 
 from server.app import crypto
 from server.app.app import create_app
 from server.app.crypto import generate_rsa_keypair, public_to_spki_der
+from server.app.trigger import manifest_bytes, open_trigger, seal_trigger
 
 
 class _FakeFcm:
@@ -72,14 +73,19 @@ def test_full_push_flow(config, db_path, monkeypatch):
     pairing_token = app.config["_test_pairing_token"]
     assert pairing_token
 
-    # Register a device: sig over sha256(secret + name + token + pub), PKCS1v15
+    # Register a device. The sig covers the negotiated push_key, so the doorbell
+    # key is bound to the pairing proof.
     phone_priv, phone_pub = generate_rsa_keypair()
     pub_b64 = base64.b64encode(public_to_spki_der(phone_pub)).decode()
-    digest = hashlib.sha256(f"sec-1Sunny Falconfcm-1{pub_b64}".encode()).digest()
+    push_key = os.urandom(32)
+    push_key_b64 = base64.b64encode(push_key).decode()
+    digest = hashlib.sha256(
+        f"sec-1Sunny Falconfcm-1{pub_b64}{push_key_b64}".encode()
+    ).digest()
     sig = base64.b64encode(crypto.sign(phone_priv, digest)).decode()
     reg = client.post("/api/register-device", json={
         "device_secret": "sec-1", "device_name": "Sunny Falcon",
-        "fcm_token": "fcm-1", "public_key": pub_b64,
+        "fcm_token": "fcm-1", "public_key": pub_b64, "push_key": push_key_b64,
         "pairing_token": pairing_token, "sig": sig,
     })
     assert reg.status_code == 200, reg.data
@@ -91,11 +97,12 @@ def test_full_push_flow(config, db_path, monkeypatch):
     r = client.post("/api/push",
                     headers={"Authorization": f"Bearer {tok}"},
                     data={"target_device": "Sunny Falcon",
-                          "file": (io.BytesIO(b"hello"), "notes.md")},
+                          "file": [(io.BytesIO(b"hello"), "notes.md"),
+                                   (io.BytesIO(b"world"), "sub/other.md")]},
                     content_type="multipart/form-data")
     assert r.status_code == 200, r.data
     push_id = r.json["push_id"]
-    assert r.json["files_sent"] == 1
+    assert r.json["files_sent"] == 2
 
     # Missing target_device -> 400
     r = client.post("/api/push",
@@ -118,25 +125,60 @@ def test_full_push_flow(config, db_path, monkeypatch):
                              "file": (io.BytesIO(b"hi"), "a.md")},
                        content_type="multipart/form-data").status_code == 401
 
-    # One FCM message was sent (single small push = one slice)
+    # Exactly one FCM message, whatever the file count — no batching.
     assert len(fcm.sent) == 1
+    msg = fcm.sent[0][0]
+    # The FCM data message carries the two doorbell fields and nothing else: no
+    # file names, no paths, no retrieval keys.
+    assert set(msg) == {"p", "i"}
 
-    # Decrypt the envelope end-to-end
-    env = json.loads(fcm.sent[0][0]["p"])
-    assert env["alg"] == "RSA-OAEP-256" and env["enc"] == "A256GCM"
-    content_key = crypto.oaep_unwrap(phone_priv, base64.b64decode(env["ek"]))
-    plaintext = crypto.aes_gcm_decrypt(content_key, base64.b64decode(env["iv"]),
-                                       base64.b64decode(env["ct"]),
-                                       base64.b64decode(env["tag"]))
-    payload = json.loads(plaintext)
-    assert payload["push_id"] == push_id
-    assert payload["total_files"] == 1
-    assert payload["server_url"] == config.PUSH_PUBLIC_URL
-    f0 = payload["files"][0]
-    assert f0["name"] == "notes.md"
+    # Decrypt the doorbell end-to-end.
+    doorbell = open_trigger(push_key, {"i": msg["i"], "c": msg["p"]})
+    assert doorbell is not None
+    assert doorbell["push_id"] == push_id
+    assert doorbell["server_url"] == config.PUSH_PUBLIC_URL
+    challenge_key = doorbell["challenge_key"]
+    assert challenge_key
+
+    # A doorbell sealed for this device under someone else's key is a silent
+    # no-op, not an error: there is nothing useful to tell the sender.
+    forged = seal_trigger(push_key, config.PUSH_PUBLIC_URL, "other-push", "ck")
+    assert open_trigger(os.urandom(32), {"i": forged["i"], "c": forged["c"]}) is None
+
+    # Exchange the doorbell for a signed manifest.
+    r = client.post(f"/api/push/{push_id}/manifest",
+                    json={"challenge_key": challenge_key})
+    assert r.status_code == 200, r.data
+    manifest = r.json["manifest"]
+    # The signature must verify against the key the QR pinned, over the exact
+    # bytes transmitted.
+    server_pub = crypto.public_from_spki_der(
+        base64.b64decode(app.config["_server_pk_b64"])
+    )
+    assert crypto.verify(server_pub, manifest_bytes(manifest),
+                         base64.b64decode(r.json["sig"]))
+    # Tampering with the manifest after signing must break verification.
+    manifest["files"].append({"file_id": "injected", "name": "x", "path": "",
+                              "size": 1, "retrieval_key": "k"})
+    assert not crypto.verify(server_pub, manifest_bytes(manifest),
+                             base64.b64decode(r.json["sig"]))
+
+    files = {f["name"]: f for f in r.json["manifest"]["files"]}
+    # Names are stored basenamed; the folder is not yet implemented (see the
+    # plan's known-gaps note), so the manifest path is empty.
+    assert set(files) == {"notes.md", "other.md"}
+    assert all(f["path"] == "" for f in r.json["manifest"]["files"])
+    f0 = files["notes.md"]
+    assert f0["size"] == 5
     retrieval_key = f0["retrieval_key"]
     file_id = f0["file_id"]
-    assert retrieval_key
+
+    # Wrong challenge_key -> 403
+    assert client.post(f"/api/push/{push_id}/manifest",
+                       json={"challenge_key": "nope"}).status_code == 403
+    # Unknown push -> 404
+    assert client.post("/api/push/nope/manifest",
+                       json={"challenge_key": challenge_key}).status_code == 404
 
     # Download roundtrip (key NOT consumed)
     dl = client.post(f"/api/push/{file_id}/download", json={"key": retrieval_key})
@@ -155,6 +197,13 @@ def test_full_push_flow(config, db_path, monkeypatch):
     assert client.post(f"/api/push/{file_id}/download",
                        json={"key": retrieval_key}).status_code == 404
 
+    # A re-fetched manifest omits the acked file — this is what makes a retry
+    # safe, since a re-ringed doorbell re-reads the same endpoint.
+    r = client.post(f"/api/push/{push_id}/manifest",
+                    json={"challenge_key": challenge_key})
+    assert "notes.md" not in {f["name"] for f in r.json["manifest"]["files"]}
+    assert "other.md" in {f["name"] for f in r.json["manifest"]["files"]}
+
     # Device status
     assert client.post("/api/device/status",
                        json={"device_secret": "sec-1",
@@ -172,9 +221,14 @@ def test_full_push_flow(config, db_path, monkeypatch):
     ps = client.get(f"/api/push/{push_id}/status",
                     headers={"Authorization": f"Bearer {tok}"})
     assert ps.status_code == 200
-    assert ps.json["files"][0]["status"] == "acked"
+    statuses = {f["name"]: f["status"] for f in ps.json["files"]}
+    assert statuses["notes.md"] == "acked"
+    assert statuses["other.md"] == "pending"
 
-    # Retry (session-gated): all-acked push -> 200, no extra FCM
+    # Retry (session-gated): one file still pending -> one more doorbell.
     ret = client.post(f"/api/push/{push_id}/retry")
     assert ret.status_code == 200
-    assert len(fcm.sent) == 1
+    assert ret.json["files_sent"] == 1
+    assert len(fcm.sent) == 2
+    # And it is the same doorbell, byte for byte.
+    assert fcm.sent[1][0] == msg
