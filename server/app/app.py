@@ -24,6 +24,8 @@ from server.app.auth import (LoginGate, create_session, delete_session,
                              make_session, revoke_access_tokens, session_is_valid,
                              validate_access_token, verify_secret, verify_session)
 from server.app.db import Database
+from server.app.identity import (count_admins, create_admin,
+                                 get_identity_provider, list_admins)
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
                               get_or_create_server_keypair, list_clients,
@@ -69,6 +71,10 @@ def create_app(config):
     with db.connect() as conn:
         db.init_schema(conn)
         server_pem, server_pk_b64 = get_or_create_server_keypair(conn)
+        # Bootstrap an admin from SERVER_PASSWORD so an existing deployment
+        # keeps a working login until the operator sets up a named admin.
+        if count_admins(conn) == 0 and getattr(config, "SERVER_PASSWORD", ""):
+            create_admin(conn, "admin", config.SERVER_PASSWORD)
 
     # The server keypair is stable per database; the session secret derives from it.
     config.session_secret = session_secret_from_pem(server_pem)
@@ -78,6 +84,7 @@ def create_app(config):
     app.config["_server_pk_b64"] = server_pk_b64
     app.config["_enrol_keys"] = {}          # enrolment_id -> {"key", "expires"}
     app.config["_login_gate"] = LoginGate(config)
+    app.config["_identity"] = get_identity_provider(config)
     app.config["_pairing_tokens"] = {}      # current pairing token (browser artefact)
     app.config["_test_pairing_token"] = None
     try:
@@ -265,22 +272,60 @@ def create_app(config):
 
     @app.route("/")
     def index():
-        """Landing page: the login form when anonymous, the push list otherwise."""
+        """Landing page: setup on a fresh server, else login, else the push list."""
         if not session_is_valid(g.db, config.session_secret,
                                 request.cookies.get(SESSION_COOKIE), config):
+            if count_admins(g.db) == 0:
+                return redirect("/setup")
             return render_template("login.html")
         return redirect("/pushes")
 
+    @app.route("/setup", methods=["GET"])
+    def setup_page():
+        """First-run admin creation; only while no admin exists."""
+        if count_admins(g.db) > 0:
+            return redirect("/login")
+        return render_template("setup.html")
+
+    @app.route("/setup", methods=["POST"])
+    def setup():
+        """Create the first admin. The only unauthenticated write path, and it
+        closes permanently once an admin exists."""
+        if count_admins(g.db) > 0:
+            return jsonify({"error": "already_configured"}), 409
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password", "")
+        if len(username) < 3 or len(password) < 8:
+            return render_template(
+                "setup.html",
+                error="Choose a username of 3+ characters and a password of 8+."), 400
+        create_admin(g.db, username, password)
+        purge_expired_sessions(g.db)
+        token = create_session(g.db, config.session_secret, config)
+        resp = make_response(redirect("/pushes"))
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
+        return resp
+
     @app.route("/login", methods=["GET"])
     def login_page():
+        if count_admins(g.db) == 0:
+            return redirect("/setup")
         return render_template("login.html", next=request.args.get("next", ""))
 
     @app.route("/login", methods=["POST"])
     def login():
+        username = (request.form.get("username") or "").strip()
         password = request.form.get("password", "")
-        allowed, retry = app.config["_login_gate"].check(request.remote_addr, password)
-        if not allowed:
+        gate = app.config["_login_gate"]
+        key = f"{username}@{request.remote_addr}"
+        retry = gate.is_locked(key)
+        if retry:
             return jsonify({"error": "locked", "retry_after": retry}), 401
+        if app.config["_identity"].authenticate(g.db, username, password) is None:
+            retry = gate.record_failure(key)
+            return jsonify({"error": "invalid_credentials", "retry_after": retry}), 401
+        gate.record_success(key)
         # Opportunistic cleanup so a long-lived server does not accumulate rows
         # for sessions nobody is holding any more.
         purge_expired_sessions(g.db)
@@ -368,6 +413,24 @@ def create_app(config):
         if entry is not None and not entry["approved"]:
             _refresh_code(entry)
         return redirect(f"/enrol/{eid}", 303)
+
+    @app.route("/admins", methods=["GET"])
+    def admins():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        return render_template("admins.html", admins=list_admins(g.db))
+
+    @app.route("/admins", methods=["POST"])
+    def admins_create():
+        auth_error = require_form_session("/admins")
+        if auth_error:
+            return auth_error
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password", "")
+        if len(username) >= 3 and len(password) >= 8:
+            create_admin(g.db, username, password)
+        return redirect("/admins", 303)
 
     @app.route("/devices", methods=["GET"])
     def devices():

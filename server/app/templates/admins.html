@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Admins &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Admins</h1>
+<p class="lede">People who can sign in to this server. Each has their own username and password.</p>
+{% if admins %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for a in admins %}
+    <tr>
+      <td>{{ a.username }}</td>
+      <td>{% if a.email %}{{ a.email }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{{ a.role }}</td>
+      <td>{{ a.created_at | dt }}</td>
+      <td>{% if a.disabled_at %}<span class="chip failed">disabled</span>{% else %}<span class="chip">active</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No admins yet.</p>
+{% endif %}
+
+<h2>Add an admin</h2>
+<form method="POST" action="/admins">
+  <label for="username">Username</label>
+  <div class="field"><input type="text" id="username" name="username" autocomplete="off" required></div>
+  <label for="password">Password</label>
+  <div class="field"><input type="password" id="password" name="password" autocomplete="new-password" required></div>
+  <button type="submit" class="btn-primary">Add admin</button>
+</form>
+{% endblock %}

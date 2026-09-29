@@ -3,15 +3,14 @@ def test_login_gate_locks_out(config):
 
     gate = LoginGate(config)
     # config.LOGIN_MAX_ATTEMPTS == 5
-    for _ in range(5):
-        allowed, _ = gate.check("1.2.3.4", "wrong")
-        assert allowed is False
-    allowed, retry_after = gate.check("1.2.3.4", "wrong")
-    assert allowed is False
-    assert retry_after > 0
-    # A different IP is not locked out, and the right password resets:
-    allowed, _ = gate.check("5.6.7.8", config.SERVER_PASSWORD)
-    assert allowed is True
+    for _ in range(4):
+        assert gate.record_failure("admin@1.2.3.4") == 0
+    assert gate.record_failure("admin@1.2.3.4") > 0  # 5th trips the lock
+    assert gate.is_locked("admin@1.2.3.4") > 0
+    # A different identity is not locked out, and success resets the counter.
+    assert gate.is_locked("other@1.2.3.4") == 0
+    gate.record_success("admin@1.2.3.4")
+    assert gate.is_locked("admin@1.2.3.4") == 0
 
 
 def test_session_token_roundtrip(config):

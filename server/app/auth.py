@@ -23,27 +23,38 @@ def verify_secret(secret: str, stored: str) -> bool:
 
 
 class LoginGate:
+    """Brute-force lockout, keyed by an arbitrary identity string.
+
+    Since logins are now per-user, the caller keys this by ``username@ip`` (or
+    any identity), so one user's failures do not lock out another. Credential
+    verification lives in the identity provider, not here.
+    """
+
     def __init__(self, config):
         self.config = config
         self._failures: dict[str, list[float]] = {}
         self._locked_until: dict[str, float] = {}
 
-    def check(self, ip: str, password: str) -> tuple[bool, int]:
+    def is_locked(self, key: str) -> int:
+        """Seconds until `key` may retry, or 0 if not locked."""
+        remaining = self._locked_until.get(key, 0.0) - time.time()
+        return int(remaining) if remaining > 0 else 0
+
+    def record_failure(self, key: str) -> int:
+        """Count a failed attempt; returns the new lockout seconds if tripped."""
         now = time.time()
-        locked_until = self._locked_until.get(ip, 0.0)
-        if now < locked_until:
-            return False, int(locked_until - now)
-        if password == self.config.SERVER_PASSWORD:
-            self._failures.pop(ip, None)
-            self._locked_until.pop(ip, None)
-            return True, 0
-        attempts = self._failures.setdefault(ip, [])
+        attempts = self._failures.setdefault(key, [])
         attempts.append(now)
-        attempts[:] = [t for t in attempts if now - t < self.config.LOGIN_LOCKOUT_SECONDS]
+        attempts[:] = [t for t in attempts
+                       if now - t < self.config.LOGIN_LOCKOUT_SECONDS]
         if len(attempts) >= self.config.LOGIN_MAX_ATTEMPTS:
-            self._locked_until[ip] = now + self.config.LOGIN_LOCKOUT_SECONDS
-            return False, self.config.LOGIN_LOCKOUT_SECONDS
-        return False, 0
+            self._locked_until[key] = now + self.config.LOGIN_LOCKOUT_SECONDS
+            return self.config.LOGIN_LOCKOUT_SECONDS
+        return 0
+
+    def record_success(self, key: str) -> None:
+        self._failures.pop(key, None)
+        self._locked_until.pop(key, None)
 
 
 def _sig(secret: str, payload: str) -> str:

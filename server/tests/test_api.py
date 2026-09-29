@@ -47,9 +47,9 @@ def test_full_push_flow(config, db_path, monkeypatch):
     assert anon.headers["Location"] == "/login?next=/pair"
 
     # Password login (session cookie)
-    r = client.post("/login", data={"password": "testpass"})
+    r = client.post("/login", data={"username": "admin", "password": "testpass"})
     assert r.status_code == 302
-    assert client.post("/login", data={"password": "wrong"}).status_code == 401
+    assert client.post("/login", data={"username": "admin", "password": "wrong"}).status_code == 401
 
     # Enrol a tool via the one-time code
     enrol = client.post("/api/enrol/start", json={}).json

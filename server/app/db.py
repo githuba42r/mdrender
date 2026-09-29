@@ -18,6 +18,23 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admins (
+  admin_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT,
+  password_hash TEXT,
+  role TEXT NOT NULL DEFAULT 'admin',
+  created_at INTEGER NOT NULL,
+  disabled_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS users (
+  user_id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT,
+  verified_at INTEGER,
+  created_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active'
+);
 CREATE TABLE IF NOT EXISTS clients (
   client_id TEXT PRIMARY KEY,
   client_secret_hash TEXT NOT NULL,
