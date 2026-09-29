@@ -58,11 +58,18 @@ server/tests` is green (**112 tests**).
 - **Metered charging**: per-MB plan rates and `billing.bill_storage` (charges
   aged pending bytes, idempotent per interval), run by the worker.
 
+## Also complete (fourth pass)
+
+- **Message metering**: per-1000 message rate, counter incremented on each
+  delivered doorbell (master direct + relay), `billing.bill_messages` run by the
+  worker.
+
 ## Remaining
 
-- **Android app**: content decryption keypair (Phase J app change, D10).
-- Optional polish: per-account credit/suspend UI, slave-side ban display,
-  message metering on doorbells (storage metering is wired).
+- **Android app**: content decryption keypair (Phase J app change, D10) — the
+  sole substantive remainder, and it is an Android-app change rather than server
+  work.
+- Optional polish only: per-account credit/suspend UI, slave-side ban display.
 
 ## Notes
 
