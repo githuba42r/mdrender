@@ -30,6 +30,7 @@ def tick(config, db) -> None:
         if bool(getattr(config, "BILLING_ENFORCEMENT", False)):
             try:
                 billing.bill_storage(conn, config)
+                billing.bill_messages(conn, config)
             except Exception:  # noqa: BLE001
                 pass
         identity = get_or_create_identity(conn)

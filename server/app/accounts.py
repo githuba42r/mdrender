@@ -38,6 +38,12 @@ def list_accounts(conn):
     return conn.execute("SELECT * FROM accounts ORDER BY created_at").fetchall()
 
 
+def increment_messages(conn, account_id, n: int = 1) -> None:
+    conn.execute("UPDATE accounts SET messages_sent = messages_sent + ?"
+                 " WHERE account_id = ?", (n, account_id))
+    conn.commit()
+
+
 def set_account_status(conn, account_id, status) -> None:
     conn.execute("UPDATE accounts SET status = ? WHERE account_id = ?",
                  (status, account_id))

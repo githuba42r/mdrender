@@ -142,6 +142,32 @@ def entitled(conn, account_type, account_id) -> bool:
     return balance(conn, account_type, account_id) > 0
 
 
+def bill_messages(conn, config, *, now=None) -> list[str]:
+    """Charge accounts for doorbells sent since the last billing.
+
+    Charges ``ceil(messages / 1000) * message_cents_per_1000`` at the account's
+    effective-plan rate and resets the counter (so it is naturally idempotent).
+    Returns the account ids charged.
+    """
+    now = int(now or time.time())
+    charged = []
+    rows = conn.execute("SELECT account_id, messages_sent FROM accounts"
+                        " WHERE messages_sent > 0").fetchall()
+    for row in rows:
+        account_id, count = row["account_id"], row["messages_sent"]
+        plan = effective_plan(conn, SCOPE_ACCOUNT, account_id)
+        rate = plan["message_cents_per_1000"] if plan else 0
+        if rate:
+            thousands = math.ceil(count / 1000)
+            debit(conn, SCOPE_ACCOUNT, account_id, rate * thousands,
+                  reason="messages")
+            charged.append(account_id)
+        conn.execute("UPDATE accounts SET messages_sent = 0 WHERE account_id = ?",
+                     (account_id,))
+    conn.commit()
+    return charged
+
+
 def bill_storage(conn, config, *, now=None, min_interval_hours=24) -> list[str]:
     """Charge accounts for pending bytes older than the bill threshold.
 

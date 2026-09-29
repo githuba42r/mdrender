@@ -312,11 +312,13 @@ def create_app(config):
             base64.b64decode(device["push_key"]), config.PUSH_PUBLIC_URL,
             push_row["push_id"], push_row["challenge_key"],
         )
+        account_id = device["account_id"] if "account_id" in device.keys() else None
         fcm = app.config["_fcm"]
         if fcm is not None and device["fcm_token"]:
             fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
+            if account_id:
+                accounts.increment_messages(g.db, account_id)  # metering (D5)
             return True
-        account_id = device["account_id"] if "account_id" in device.keys() else None
         if account_id and federation_client.get_state(g.db) is not None:
             try:
                 federation_client.ring_via_master(
@@ -1007,6 +1009,7 @@ def create_app(config):
             fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
         except Exception:  # noqa: BLE001 - report, the slave's retry worker will retry
             return jsonify({"error": "fcm send failed"}), 502
+        accounts.increment_messages(g.db, account_id)  # metering (D5)
         return jsonify({"ok": True})
 
     def _federation_sign_challenge(status=None):

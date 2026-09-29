@@ -30,6 +30,23 @@ def test_bill_storage_charges_per_mb_once_per_interval(config, db_path):
     conn.close()
 
 
+def test_bill_messages_charges_per_1000_then_resets(config, db_path):
+    from server.app import accounts
+
+    conn = _setup(db_path)
+    plan = billing.create_plan(conn, "M", billing.SCOPE_ACCOUNT,
+                               message_cents_per_1000=50)
+    billing.set_group_plan(conn, billing.ensure_default_group(conn), plan)
+    account_id = accounts.create_account(conn, "u@example.com", "longenough1")
+    accounts.increment_messages(conn, account_id, 1500)
+
+    assert billing.bill_messages(conn, config) == [account_id]
+    assert billing.balance(conn, "account", account_id) == -100  # ceil(1.5)*50
+    # Counter reset -> nothing further to charge.
+    assert billing.bill_messages(conn, config) == []
+    conn.close()
+
+
 def test_bill_storage_skips_recent_files(config, db_path):
     conn = _setup(db_path)
     plan = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,

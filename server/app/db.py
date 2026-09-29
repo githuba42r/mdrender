@@ -273,6 +273,9 @@ class Database:
                 "storage_cents_per_mb": "INTEGER NOT NULL DEFAULT 0",
                 "message_cents_per_1000": "INTEGER NOT NULL DEFAULT 0",
             },
+            "accounts": {
+                "messages_sent": "INTEGER NOT NULL DEFAULT 0",
+            },
         }
         for table, columns in wanted.items():
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
