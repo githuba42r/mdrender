@@ -202,6 +202,19 @@ class PushClient @Inject constructor() {
         postJson(config.serverUrl, "/api/device/status", credentials(config) {}).code == 200
     }.getOrDefault(false)
 
+    /**
+     * The server's verdict on this device: `true` still paired, `false` the
+     * server no longer knows it (404), `null` unreachable/undecided. Callers that
+     * clear local pairing must only do so on `false` — clearing on `null` would
+     * wipe a perfectly good pairing just because the phone was offline.
+     */
+    suspend fun verifyRegistration(config: PushServerConfig): Boolean? = call {
+        postJson(config.serverUrl, "/api/device/status", credentials(config) {}).code
+    }.fold(
+        onSuccess = { code -> if (code == 200) true else if (code == 404) false else null },
+        onFailure = { null },
+    )
+
     /** The exact bytes the server signs at registration; kept here so both sides agree. */
     fun registrationProofInput(
         deviceSecret: String,

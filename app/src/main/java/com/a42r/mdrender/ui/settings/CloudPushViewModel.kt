@@ -124,6 +124,35 @@ class CloudPushViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Called when the Cloud Push settings are opened: ask the server whether it
+     * still knows this device. If it explicitly doesn't (404), forget the pairing
+     * on the device so the UI returns to "not paired" instead of showing a stale
+     * server. An unreachable server leaves the pairing untouched.
+     */
+    fun verifyRegistrationOnOpen() {
+        if (!config.isPaired) return
+        viewModelScope.launch {
+            when (client.verifyRegistration(config)) {
+                true -> _status.update { it.copy(registrationKnown = true) }
+                false -> {
+                    config.clear()
+                    keyStore.deleteKeyPair()
+                    keyStore.deleteContentKeyPair()
+                    manager.setReRegistrationNeeded(false)
+                    _status.update {
+                        it.copy(
+                            message = "This server no longer recognises this device. " +
+                                "Pairing cleared — scan a new pairing code.",
+                            registrationKnown = false,
+                        )
+                    }
+                }
+                null -> Unit // unreachable: keep the pairing as-is
+            }
+        }
+    }
+
     /** Forget this server entirely, including the key it trusts. */
     fun rotateKeys() {
         viewModelScope.launch {

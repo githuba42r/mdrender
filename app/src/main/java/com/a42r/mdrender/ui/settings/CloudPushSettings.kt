@@ -61,6 +61,10 @@ fun CloudPushSettings(
     val context = LocalContext.current
     var confirmRotate by remember { mutableStateOf(false) }
 
+    // On opening the screen, confirm the server still knows this device; if it
+    // doesn't, clear the pairing so the app stops pretending to be paired.
+    LaunchedEffect(Unit) { viewModel.verifyRegistrationOnOpen() }
+
     val cameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) onScan() }
