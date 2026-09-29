@@ -35,19 +35,21 @@
 {% endif %}
 
 <dialog id="add-admin-dialog" class="confirm">
-  <form method="POST" action="/admins">
+  <form method="POST" action="/admins" data-validate>
     <h2>Add admin</h2>
     <label for="add-name">Name</label>
-    <div class="field"><input type="text" id="add-name" name="name"></div>
+    <div class="field"><input type="text" id="add-name" name="name" required></div>
     <label for="add-username">Username</label>
     <div class="field"><input type="text" id="add-username" name="username" required></div>
     <label for="add-email">Email</label>
-    <div class="field"><input type="text" id="add-email" name="email"></div>
+    <div class="field"><input type="text" id="add-email" name="email" required></div>
     <label for="add-password">Password (8+)</label>
     <div class="field"><input type="password" id="add-password" name="password" required></div>
+    <label for="add-confirm">Confirm password</label>
+    <div class="field"><input type="password" id="add-confirm" name="confirm_password" required></div>
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
-      <button type="submit" class="btn-primary">Add admin</button>
+      <button type="submit" class="btn-primary" disabled>Add admin</button>
     </div>
   </form>
 </dialog>

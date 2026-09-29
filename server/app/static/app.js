@@ -73,6 +73,47 @@
     }).catch(function () {});
   });
 
+  // ---- Password visibility toggles ---------------------------------------
+
+  var EYE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
+    '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>' +
+    '<circle cx="12" cy="12" r="3"/></svg>';
+
+  document.querySelectorAll('input[type="password"]').forEach(function (input) {
+    var field = input.closest(".field") || input.parentElement;
+    if (!field || field.querySelector(".pw-toggle")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pw-toggle";
+    btn.setAttribute("aria-label", "Show password");
+    btn.innerHTML = EYE;
+    btn.addEventListener("click", function () {
+      var show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    });
+    field.appendChild(btn);
+  });
+
+  // ---- Disable submit until required fields are complete ------------------
+
+  document.querySelectorAll("form[data-validate]").forEach(function (form) {
+    var submit = form.querySelector('button[type="submit"]');
+    function check() {
+      var ok = true;
+      form.querySelectorAll("input[required]").forEach(function (input) {
+        if (!input.value.trim()) ok = false;
+      });
+      var pw = form.querySelector('input[name="password"]');
+      var confirmPw = form.querySelector('input[name="confirm_password"]');
+      if (pw && confirmPw && pw.value !== confirmPw.value) ok = false;
+      if (submit) submit.disabled = !ok;
+    }
+    form.addEventListener("input", check);
+    check();
+  });
+
   // ---- Confirm dialog -----------------------------------------------------
 
   var dialog = document.getElementById("confirm-dialog");

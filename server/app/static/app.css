@@ -420,7 +420,28 @@ dialog.confirm .field + label { margin-top: 0.7rem; }
 dialog.confirm::backdrop { background: rgba(4, 7, 12, 0.62); }
 dialog.confirm h2 { margin: 0 0 0.5rem; font-size: 1.15rem; }
 dialog.confirm p { margin: 0 0 1.2rem; color: var(--muted); }
-.confirm-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }
+.confirm-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin-top: 1.4rem;
+}
+.confirm-actions button[type="submit"] { min-width: 9rem; }
+.pw-toggle {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  padding: 0.2rem;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.pw-toggle:hover { color: var(--text); background: none; }
+button[disabled], .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- Pending groups ---- */
 
