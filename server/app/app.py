@@ -19,7 +19,7 @@ from qrcode.image.svg import SvgPathImage
 from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, crypto, federation, fcm as fcm_mod, pairing,
-                        push_store, trigger)
+                        push_store, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -384,7 +384,47 @@ def create_app(config):
         principal = _principal()
         account = accounts.get_account(g.db, principal["id"])
         devices = accounts.list_devices(g.db, principal["id"], account["host"])
-        return render_template("account.html", account=account, devices=devices)
+        return render_template("account.html", account=account, devices=devices,
+                               usage=storage.usage(g.db, principal["id"]),
+                               quota=storage.effective_quota(g.db, principal["id"], config))
+
+    def require_account_api():
+        principal = _principal()
+        if principal is not None and principal["type"] == "account":
+            return None
+        return jsonify({"error": "unauthorized"}), 401
+
+    @app.route("/api/account/upload", methods=["POST"])
+    def account_upload():
+        """Upload files into the account's pending storage, enforcing quota.
+
+        With client-side encryption the bytes are already ciphertext and the
+        filename is inside the payload; the server stores an opaque blob (§7a).
+        """
+        auth_error = require_account_api()
+        if auth_error:
+            return auth_error
+        account_id = _principal()["id"]
+        uploads = request.files.getlist("file")
+        if not uploads:
+            return jsonify({"error": "no files"}), 400
+        stored = []
+        account_dir = os.path.join(config.PUSH_STORAGE_DIR, "accounts", account_id)
+        for f in uploads:
+            data = f.read()
+            if not storage.can_store(g.db, account_id, len(data), config):
+                return jsonify({"error": "quota exceeded"}), 413
+            file_id = uuid.uuid4().hex
+            os.makedirs(account_dir, exist_ok=True)
+            stored_path = os.path.join(account_dir, file_id)
+            with open(stored_path, "wb") as fh:
+                fh.write(data)
+            storage.add_file(g.db, file_id=file_id, account_id=account_id,
+                             size=len(data), stored_path=stored_path,
+                             alg=request.form.get("alg"),
+                             nonce=request.form.get("nonce"))
+            stored.append(file_id)
+        return jsonify({"ok": True, "file_ids": stored})
 
     @app.route("/login", methods=["POST"])
     def login():

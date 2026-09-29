@@ -3,6 +3,8 @@
 {% block content %}
 <h1>My account</h1>
 <p class="lede">{{ account.email }} &middot; hosted on <code>{{ account.host }}</code></p>
+<p class="lede">Pending storage: {{ usage.files }} file(s), {{ usage.bytes }} bytes
+  (quota {{ quota.max_files }} files / {{ quota.max_bytes }} bytes, purge after {{ quota.max_age_hours }}h).</p>
 
 <h2>Devices</h2>
 {% if devices %}
