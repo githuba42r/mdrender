@@ -5,6 +5,8 @@ import android.app.Application
 import android.os.Bundle
 import android.view.WindowManager
 import com.a42r.mdrender.audio.AudioPlayerState
+import com.a42r.mdrender.cloudpush.CloudPushDownloadService
+import com.a42r.mdrender.cloudpush.CloudPushManager
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.ScreenOffReceiver
@@ -22,6 +24,7 @@ class MDRenderApplication : Application() {
     @Inject lateinit var appLock: AppLock
     @Inject lateinit var shareOutManager: ShareOutManager
     @Inject lateinit var audioPlayerState: AudioPlayerState
+    @Inject lateinit var cloudPushManager: CloudPushManager
 
     @Volatile
     var isForeground: Boolean = false
@@ -79,6 +82,12 @@ class MDRenderApplication : Application() {
         instance = this
         thread { shareOutManager.clearShareCache() }
         thread { cleanupOrphanedFiles() }
+
+        // The manager only fires this once a manifest has been verified, so the
+        // download service is never started by an unverified doorbell.
+        cloudPushManager.onPushReady { pushId ->
+            CloudPushDownloadService.start(this, pushId)
+        }
 
         screenOffReceiver = ScreenOffReceiver().also {
             it.onScreenOff = {

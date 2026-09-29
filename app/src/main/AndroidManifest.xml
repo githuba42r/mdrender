@@ -64,6 +64,10 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
         <service
+            android:name=".cloudpush.CloudPushDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
             android:name=".cloudpush.PushFcmService"
             android:exported="false">
             <intent-filter>
