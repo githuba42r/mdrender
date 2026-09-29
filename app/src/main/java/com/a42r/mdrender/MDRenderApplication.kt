@@ -7,6 +7,8 @@ import android.view.WindowManager
 import com.a42r.mdrender.audio.AudioPlayerState
 import com.a42r.mdrender.cloudpush.CloudPushDownloadService
 import com.a42r.mdrender.cloudpush.CloudPushManager
+import com.a42r.mdrender.cloudpush.PushClient
+import com.a42r.mdrender.cloudpush.PushServerConfig
 import com.a42r.mdrender.data.repository.FileRepository
 import com.a42r.mdrender.security.AppLock
 import com.a42r.mdrender.security.ScreenOffReceiver
@@ -14,8 +16,10 @@ import com.a42r.mdrender.share.ShareOutManager
 import com.a42r.mdrender.ui.ShareReceiverActivity
 import dagger.hilt.android.HiltAndroidApp
 import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import kotlin.concurrent.thread
+import kotlinx.coroutines.runBlocking
 
 @HiltAndroidApp
 class MDRenderApplication : Application() {
@@ -25,6 +29,8 @@ class MDRenderApplication : Application() {
     @Inject lateinit var shareOutManager: ShareOutManager
     @Inject lateinit var audioPlayerState: AudioPlayerState
     @Inject lateinit var cloudPushManager: CloudPushManager
+    @Inject lateinit var pushConfig: PushServerConfig
+    @Inject lateinit var pushClient: PushClient
 
     @Volatile
     var isForeground: Boolean = false
@@ -43,6 +49,28 @@ class MDRenderApplication : Application() {
     private fun isAudioActive(): Boolean = audioPlayerState.info.value.fileId != 0L
 
     private fun isTransient(activity: Activity): Boolean = activity is ShareReceiverActivity
+
+    @Volatile
+    private var registrationCheckDue = AtomicBoolean(true)
+
+    /**
+     * Ask the paired server once per foreground whether it still knows us.
+     *
+     * There is no polling on purpose: a push that fails because the server
+     * dropped us is indistinguishable from one that never arrived, so the
+     * cheapest honest moment to find out is when the user is already looking
+     * at the app.
+     */
+    private fun checkPushRegistration() {
+        if (!pushConfig.isPaired) return
+        if (!registrationCheckDue.compareAndSet(true, false)) return
+        thread {
+            val known = runBlocking { pushClient.checkRegistration(pushConfig) }
+            cloudPushManager.setReRegistrationNeeded(!known)
+            // Allow another check next time the app comes back to the front.
+            registrationCheckDue.set(true)
+        }
+    }
 
     private fun cleanupOrphanedFiles() {
         val prefs = getSharedPreferences("mdrender_cleanup", MODE_PRIVATE)
@@ -109,6 +137,7 @@ class MDRenderApplication : Application() {
                 if (!isTransient(activity)) {
                     isForeground = true
                     foregroundActivity = WeakReference(activity)
+                    checkPushRegistration()
                 }
             }
             override fun onActivityPaused(activity: Activity) {

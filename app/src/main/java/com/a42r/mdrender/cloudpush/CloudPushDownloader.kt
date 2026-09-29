@@ -61,6 +61,12 @@ class CloudPushDownloader @Inject constructor(
                 client.ackReceived(config, fileId, task.file.retrievalKey)
                     .getOrThrow()
                 pushHistory.record(ROOT_FOLDER, task.file.name, size, folderId)
+            }.onFailure { e ->
+                // 401/404 means the server has forgotten us. Retrying will not
+                // help, so ask for re-pairing instead of failing silently forever.
+                if (e is PushHttpException && e.isUnregistered) {
+                    manager.setReRegistrationNeeded(true)
+                }
             }.isSuccess
             if (ok) imported++
             temp.delete()

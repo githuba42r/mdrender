@@ -173,6 +173,28 @@ class CloudPushDownloaderTest {
     }
 
     @Test
+    fun `a 404 from the server flags that re-pairing is needed`() = runBlocking {
+        server.on("/api/push/gone/download") {
+            TestHttpServer.Resp(404, """{"error":"unknown device"}""")
+        }
+        manager.enqueue(doorbell(), listOf(file("gone")))
+
+        downloader.drain("push-1", tempDir) { }
+
+        assertTrue(manager.needsReRegistration.value)
+    }
+
+    @Test
+    fun `an ordinary server error does not demand re-pairing`() = runBlocking {
+        manager.enqueue(doorbell(), listOf(file("broken")))
+
+        downloader.drain("push-1", tempDir) { }
+
+        // A 500 is transient; nagging the user to re-pair would be wrong.
+        assertTrue(!manager.needsReRegistration.value)
+    }
+
+    @Test
     fun `an unknown push id drains nothing`() = runBlocking {
         manager.enqueue(doorbell(), listOf(file("f1")))
 

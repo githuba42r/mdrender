@@ -36,6 +36,15 @@ class CloudPushManager @Inject constructor() {
 
     private val readyCallbacks = mutableListOf<(String) -> Unit>()
 
+    private val _needsReRegistration = MutableStateFlow(false)
+
+    /** Set when the server no longer knows this device, or rejects its credentials. */
+    val needsReRegistration: StateFlow<Boolean> = _needsReRegistration.asStateFlow()
+
+    fun setReRegistrationNeeded(needed: Boolean) {
+        _needsReRegistration.value = needed
+    }
+
     /** Register a listener woken when a push has work to do. */
     fun onPushReady(callback: (String) -> Unit) {
         readyCallbacks.add(callback)

@@ -115,7 +115,7 @@ class PushClient @Inject constructor() {
                 val message = connection.errorStream?.use {
                     String(it.readBytes(), Charsets.UTF_8)
                 }.orEmpty()
-                throw IOException("download failed: HTTP $code ${message.take(200)}")
+                throw PushHttpException(code, "download", message.take(200))
             }
             dest.parentFile?.mkdirs()
             val tmp = File(dest.parentFile, dest.name + ".part")
@@ -219,7 +219,7 @@ class PushClient @Inject constructor() {
     }
 
     private fun Response.fail(what: String): Nothing =
-        throw IOException("$what failed: HTTP $code ${body.take(200)}")
+        throw PushHttpException(code, what, body.take(200))
 
     private fun Response.json(): JsonObject =
         runCatching { Json.parseToJsonElement(body).jsonObject }.getOrElse {
@@ -240,4 +240,22 @@ class PushClient @Inject constructor() {
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 60_000
     }
+}
+
+/**
+ * A server response with a non-success status.
+ *
+ * The code is carried rather than only formatted into the message so callers
+ * can tell "this device is no longer registered" (401/404) apart from a
+ * transient failure, which is the difference between prompting the user to
+ * re-pair and quietly retrying.
+ */
+class PushHttpException(
+    val code: Int,
+    val what: String,
+    val detail: String,
+) : java.io.IOException("$what failed: HTTP $code $detail") {
+
+    /** The server has forgotten this device, or rejects its credentials. */
+    val isUnregistered: Boolean get() = code == 401 || code == 404
 }

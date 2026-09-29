@@ -34,6 +34,7 @@ enum class SettingsSection(val label: String) {
     FOLDERS("Folders"),
     AUDIO("Audio"),
     LOCALSEND("LocalSend"),
+    CLOUDPUSH("Cloud Push"),
     PUSHES("Push History"),
     ADVANCED("Advanced"),
     ABOUT("About")
@@ -109,6 +110,7 @@ fun SettingsScreen(
                         context = context,
                         notificationPermission = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
                     )
+                    SettingsSection.CLOUDPUSH -> CloudPushSettings()
                     SettingsSection.ADVANCED -> AdvancedSettings(unhideViewModel = unhideViewModel)
                     SettingsSection.ABOUT -> AboutSection(uiState = uiState)
                     SettingsSection.PUSHES -> Unit // handled above; unreachable here
@@ -154,6 +156,13 @@ private fun SettingsMenu(
         leadingContent = { Icon(Icons.Filled.Sensors, null) },
         trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
         modifier = Modifier.clickable { onSelectSection(SettingsSection.LOCALSEND) }
+    )
+    ListItem(
+        headlineContent = { Text("Cloud Push") },
+        supportingContent = { Text("Pair a push server, view transfers") },
+        leadingContent = { Icon(Icons.Filled.CloudQueue, null) },
+        trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+        modifier = Modifier.clickable { onSelectSection(SettingsSection.CLOUDPUSH) }
     )
     ListItem(
         headlineContent = { Text("Push History") },
