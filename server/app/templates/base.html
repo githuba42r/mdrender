@@ -19,6 +19,7 @@
     <nav>
       <a href="/pair" class="{{ 'active' if request.path.startswith('/pair') else '' }}">Pair</a>
       <a href="/devices" class="{{ 'active' if request.path.startswith('/devices') else '' }}">Devices</a>
+      <a href="/accounts" class="{{ 'active' if request.path.startswith('/accounts') else '' }}">Users</a>
       <a href="/federation" class="{{ 'active' if request.path.startswith('/federation') else '' }}">Federation</a>
       <a href="/clients" class="{{ 'active' if request.path.startswith('/clients') else '' }}">Clients</a>
       <a href="/pushes" class="{{ 'active' if request.path.startswith('/pushes') else '' }}">Pushes</a>

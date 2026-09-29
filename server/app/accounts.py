@@ -13,15 +13,43 @@ from server.app.auth import hash_secret, verify_secret
 ACTIVE, BLOCKED, BANNED = "active", "blocked", "banned"
 
 
-def create_account(conn, email, password=None, *, host="master") -> str:
+def create_account(conn, email, password=None, *, host="master", name=None) -> str:
     account_id = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO accounts (account_id, email, password_hash, host, status,"
-        " balance, created_at) VALUES (?, ?, ?, ?, 'active', 0, ?)",
-        (account_id, email.strip().lower(),
-         hash_secret(password) if password else None, host, int(time.time())))
+        "INSERT INTO accounts (account_id, email, name, password_hash, host, status,"
+        " balance, created_at) VALUES (?, ?, ?, ?, ?, 'active', 0, ?)",
+        (account_id, email.strip().lower(), name, hash_secret(password) if password else None,
+         host, int(time.time())))
     conn.commit()
     return account_id
+
+
+def update_account(conn, account_id, *, name=None, email=None, password=None) -> None:
+    """Edit a user/account's name, email, and (optionally) password."""
+    if name is not None:
+        conn.execute("UPDATE accounts SET name = ? WHERE account_id = ?",
+                     (name, account_id))
+    if email is not None:
+        conn.execute("UPDATE accounts SET email = ? WHERE account_id = ?",
+                     (email.strip().lower(), account_id))
+    if password:
+        conn.execute("UPDATE accounts SET password_hash = ? WHERE account_id = ?",
+                     (hash_secret(password), account_id))
+    conn.commit()
+
+
+def delete_account(conn, account_id) -> None:
+    """Remove a user/account and its device rows."""
+    conn.execute("DELETE FROM account_devices WHERE account_id = ?", (account_id,))
+    conn.execute("UPDATE devices SET account_id = NULL, approved_at = NULL"
+                 " WHERE account_id = ?", (account_id,))
+    conn.execute("DELETE FROM accounts WHERE account_id = ?", (account_id,))
+    conn.commit()
+
+
+def device_count(conn, account_id) -> int:
+    return conn.execute("SELECT COUNT(*) FROM devices WHERE account_id = ?",
+                        (account_id,)).fetchone()[0]
 
 
 def get_account(conn, account_id):

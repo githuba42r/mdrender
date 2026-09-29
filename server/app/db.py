@@ -286,6 +286,7 @@ class Database:
             },
             "accounts": {
                 "messages_sent": "INTEGER NOT NULL DEFAULT 0",
+                "name": "TEXT",
             },
         }
         for table, columns in wanted.items():

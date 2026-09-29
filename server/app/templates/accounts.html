@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Users &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<p class="lede">Accounts (customers) and the devices related to them. Users sign in with their email; devices are paired to a user.</p>
+<p><button type="button" class="btn-primary" data-open-dialog="#add-account-dialog">Add user</button></p>
+
+{% if accounts %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Email</th><th>Name</th><th>Host</th><th>Devices</th><th>Status</th><th>Balance</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for a in accounts %}
+    <tr>
+      <td>{{ a.email }}</td>
+      <td>{% if a.name %}{{ a.name }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{{ a.host }}</td>
+      <td>{{ a.device_count }}</td>
+      <td>
+        {% if a.status == 'active' %}<span class="chip acked">active</span>
+        {% elif a.status == 'banned' %}<span class="chip failed">banned</span>
+        {% else %}<span class="chip pending">{{ a.status }}</span>{% endif %}
+      </td>
+      <td>{{ a.balance }}</td>
+      <td>
+        <button type="button" class="inline" data-edit-account data-id="{{ a.account_id }}"
+                data-name="{{ a.name or '' }}" data-email="{{ a.email }}">Edit</button>
+        {% if a.status == 'active' %}
+        <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline"
+              data-confirm="Deactivate {{ a.email }}? Their devices will stop receiving pushes."
+              data-confirm-ok="Deactivate">
+          <input type="hidden" name="status" value="blocked">
+          <button type="submit">Deactivate</button>
+        </form>
+        {% else %}
+        <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline">
+          <input type="hidden" name="status" value="active">
+          <button type="submit">Activate</button>
+        </form>
+        {% endif %}
+        <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline"
+              data-confirm="Ban {{ a.email }}? They cannot sign in or push."
+              data-confirm-ok="Ban">
+          <input type="hidden" name="status" value="banned">
+          <button type="submit" class="btn-danger">Ban</button>
+        </form>
+        <form method="POST" action="/accounts/{{ a.account_id }}/delete" class="inline"
+              data-confirm="Delete {{ a.email }} and detach their devices?"
+              data-confirm-ok="Delete">
+          <button type="submit" class="btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No users yet.</p>
+{% endif %}
+
+<dialog id="add-account-dialog" class="confirm">
+  <form method="POST" action="/accounts">
+    <h2>Add user</h2>
+    <label for="add-email">Email</label>
+    <div class="field"><input type="text" id="add-email" name="email" required></div>
+    <label for="add-name">Name</label>
+    <div class="field"><input type="text" id="add-name" name="name"></div>
+    <label for="add-pw">Password (optional)</label>
+    <div class="field"><input type="password" id="add-pw" name="password"></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Add user</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="edit-account-dialog" class="confirm">
+  <form method="POST" action="">
+    <h2>Edit user</h2>
+    <label for="ed-email">Email</label>
+    <div class="field"><input type="text" id="ed-email" name="email"></div>
+    <label for="ed-name">Name</label>
+    <div class="field"><input type="text" id="ed-name" name="name"></div>
+    <label for="ed-pw">New password (leave blank to keep)</label>
+    <div class="field"><input type="password" id="ed-pw" name="password" autocomplete="new-password"></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

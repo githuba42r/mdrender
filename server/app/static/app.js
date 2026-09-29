@@ -129,6 +129,20 @@
       editDialog.querySelector(".edit-username").textContent =
         edit.getAttribute("data-username") || "";
       editDialog.showModal();
+      return;
+    }
+    var editAccount = event.target.closest("[data-edit-account]");
+    if (editAccount) {
+      var accountDialog = document.getElementById("edit-account-dialog");
+      if (!accountDialog) return;
+      accountDialog.querySelector("form").setAttribute(
+        "action", "/accounts/" + editAccount.getAttribute("data-id") + "/update");
+      accountDialog.querySelector('[name="email"]').value =
+        editAccount.getAttribute("data-email") || "";
+      accountDialog.querySelector('[name="name"]').value =
+        editAccount.getAttribute("data-name") || "";
+      accountDialog.querySelector('[name="password"]').value = "";
+      accountDialog.showModal();
     }
   });
 })();

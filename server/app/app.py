@@ -712,6 +712,60 @@ def create_app(config):
                      password=password if len(password) >= 8 else None)
         return redirect("/admins", 303)
 
+    @app.route("/accounts", methods=["GET"])
+    def accounts_page():
+        """Users (accounts) and the devices related to them (design §9)."""
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        rows = accounts.list_accounts(g.db)
+        items = [{**dict(r), "device_count": accounts.device_count(g.db, r["account_id"])}
+                 for r in rows]
+        return render_template("accounts.html", accounts=items)
+
+    @app.route("/accounts", methods=["POST"])
+    def accounts_create():
+        auth_error = require_form_session("/accounts")
+        if auth_error:
+            return auth_error
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password", "")
+        name = (request.form.get("name") or "").strip() or None
+        if "@" in email and accounts.get_account_by_email(g.db, email) is None:
+            accounts.create_account(g.db, email, password or None, name=name)
+        return redirect("/accounts", 303)
+
+    @app.route("/accounts/<account_id>/update", methods=["POST"])
+    def accounts_update(account_id):
+        auth_error = require_form_session("/accounts")
+        if auth_error:
+            return auth_error
+        accounts.update_account(
+            g.db, account_id,
+            name=(request.form.get("name") or "").strip() or None,
+            email=(request.form.get("email") or "").strip() or None,
+            password=request.form.get("password") or None)
+        return redirect("/accounts", 303)
+
+    @app.route("/accounts/<account_id>/status", methods=["POST"])
+    def accounts_status(account_id):
+        """Activate / deactivate (block) / ban a user."""
+        auth_error = require_form_session("/accounts")
+        if auth_error:
+            return auth_error
+        status = request.form.get("status", "")
+        if status in (accounts.ACTIVE, accounts.BLOCKED, accounts.BANNED):
+            accounts.set_account_status(g.db, account_id, status)
+        return redirect("/accounts", 303)
+
+    @app.route("/accounts/<account_id>/delete", methods=["POST"])
+    def accounts_delete(account_id):
+        auth_error = require_form_session("/accounts")
+        if auth_error:
+            return auth_error
+        accounts.delete_account(g.db, account_id)
+        return redirect("/accounts", 303)
+
     @app.route("/status", methods=["GET"])
     def status():
         auth_error = require_page_session()
