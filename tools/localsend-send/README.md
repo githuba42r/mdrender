@@ -111,6 +111,25 @@ and push credentials exist.
 The one-time code is case-insensitive and short-lived (60 s by default). If it
 expires, click **New code** on the page and type the fresh one.
 
+## Bash completion
+
+`--completion [bash]` prints a completion script generated from the parser, so
+it always matches the current arguments:
+
+```bash
+# this shell
+source <(mdrender-send --completion bash)
+
+# or system-wide (the Arch package installs this for you)
+mdrender-send --completion bash | sudo tee /etc/bash_completion.d/mdrender-send
+```
+
+`--name` completes the known device names, gathered from
+`mdrender-send --list --names` (LAN aliases plus the server's registered
+devices), cached for a minute. `--list --names` prints those names one per
+line. From a source checkout, point completion at the script:
+`export MDRENDER_SEND=/path/to/localsend-send.py`.
+
 ## How it maps to the receiver
 
 1. `POST /api/localsend/v2/prepare-upload?pin=<pin>` with the file manifest.

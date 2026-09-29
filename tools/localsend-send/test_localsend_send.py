@@ -269,6 +269,46 @@ def test_await_enrolment_times_out(cloud_server, monkeypatch):
                                interval=0.05) is None
 
 
+def test_device_names_merges_lan_and_registered_and_de_dupes(monkeypatch):
+    monkeypatch.setattr(ls, "_discover", lambda timeout=3.0: {"Sunny Falcon": {}})
+    monkeypatch.setattr(ls, "list_push_devices", lambda creds, server_url=None: [
+        {"name": "Clever Juniper"}, {"name": "Sunny Falcon"}])
+    args = argparse.Namespace(discover_timeout=0.01,
+                              server="https://push.example.com", creds=None)
+    assert ls._device_names(args) == ["Sunny Falcon", "Clever Juniper"]
+
+
+def test_names_flag_prints_names_only(monkeypatch, capsys):
+    monkeypatch.setattr(ls, "_device_names",
+                        lambda args: ["Clever Juniper", "Laptop"])
+    assert ls.main(["--list", "--names"]) == 0
+    assert capsys.readouterr().out == "Clever Juniper\nLaptop\n"
+
+
+def test_bash_completion_script_lists_options_and_choices(capsys):
+    script = ls._bash_completion_script()
+    assert "complete -o default -F _mdrender_send mdrender-send localsend-send.py" in script
+    assert "--enrol" in script and "--name" in script and "--conflict" in script
+    # Value choices are completed for their options.
+    assert '--conflict) COMPREPLY=( $(compgen -W "replace skip rename"' in script
+    assert '--completion) COMPREPLY=( $(compgen -W "bash"' in script
+    # --name pulls device names from `--list --names` (both forms).
+    assert "--name)" in script
+    assert "--list --names" in script
+    assert "--name=)" in script
+    # --opt=value form completes the value (bash splits the word at '=').
+    assert '-P "--conflict="' in script
+    # File arguments defer to readline's filename completion.
+    assert "compopt -o default" in script
+
+    # main() prints it and exits 0 without needing files/host.
+    assert ls.main(["--completion", "bash"]) == 0
+    assert "complete -o default -F _mdrender_send" in capsys.readouterr().out
+    # Bare --completion defaults to bash.
+    assert ls.main(["--completion"]) == 0
+    assert "complete -o default -F _mdrender_send" in capsys.readouterr().out
+
+
 def test_open_browser_detaches_from_the_terminal(monkeypatch):
     """xdg-open must not inherit the tty, or its logs clobber the CLI prompt."""
     calls = {}

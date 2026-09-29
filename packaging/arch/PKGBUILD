@@ -17,4 +17,7 @@ sha256sums=('SKIP' 'SKIP')
 package() {
   install -Dm755 "$srcdir/localsend-send.py" "$pkgdir/usr/bin/mdrender-send"
   install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -d "$pkgdir/usr/share/bash-completion/completions"
+  python3 "$srcdir/localsend-send.py" --completion bash \
+    > "$pkgdir/usr/share/bash-completion/completions/mdrender-send"
 }

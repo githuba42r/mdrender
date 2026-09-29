@@ -513,12 +513,34 @@ def _fmt_ts(ts):
         return "-"
 
 
+def _device_names(args):
+    """Every known device name: LAN aliases plus the server's registered ones.
+
+    Kept as a plain function so `--list --names` and bash completion share one
+    implementation. Failures are swallowed: completion just gets fewer names.
+    """
+    names = sorted(_discover(timeout=args.discover_timeout))
+
+    creds = args.creds or _default_creds_path()
+    if args.server or os.path.exists(creds):
+        try:
+            names += [d["name"] for d in list_push_devices(creds, args.server)]
+        except Exception:  # noqa: BLE001 - completion must never error out
+            pass
+    return list(dict.fromkeys(names))  # de-dupe, keep order
+
+
 def cmd_list(args):
     """List LocalSend clients on the LAN and the server's registered devices.
 
     The LAN list flags MDRender receivers (which advertise the "mds"
     extension), so it is clear which ones accept --folder/--conflict.
     """
+    if getattr(args, "names", False):
+        for name in _device_names(args):
+            print(name)
+        return 0
+
     print(f"Discovering LocalSend clients on the LAN "
           f"(~{args.discover_timeout:g}s)…", flush=True)
     clients = _discover(timeout=args.discover_timeout)
@@ -558,7 +580,7 @@ def cmd_list(args):
     return 0
 
 
-def main(argv=None):
+def _build_parser():
     p = argparse.ArgumentParser(
         description="Send files to a LocalSend receiver by IP, or enrol this "
                     "CLI with the cloud-push server.")
@@ -584,6 +606,9 @@ def main(argv=None):
     p.add_argument("--discover-timeout", type=float, default=3.0,
                    help="seconds to listen for LAN discovery replies with --list "
                         "(default 3)")
+    p.add_argument("--names", action="store_true",
+                   help="with --list, print device names only, one per line "
+                        "(used by shell completion)")
     p.add_argument("--enrol", action="store_true",
                    help="enrol an OAuth client with the cloud-push server (requires --server)")
     p.add_argument("--server", default=None,
@@ -592,7 +617,120 @@ def main(argv=None):
     p.add_argument("--creds", default=None,
                    help="path for the push credentials JSON "
                         "(default ~/.config/mdrender/push-credentials.json)")
+    p.add_argument("--completion", nargs="?", const="bash", choices=["bash"],
+                   metavar="SHELL",
+                   help="print a shell completion script to stdout and exit "
+                        "(default: bash)")
+    return p
+
+
+def _bash_completion_script():
+    """A bash completion script generated from the parser's own arguments.
+
+    Generating it from the parser keeps completion in step with the CLI: every
+    option and its choices is reflected automatically. Load it with:
+
+        source <(mdrender-send --completion bash)
+
+    or install it system-wide:
+
+        mdrender-send --completion bash > /etc/bash_completion.d/mdrender-send
+    """
+    parser = _build_parser()
+    options = []
+    choices_by_option = {}
+    for action in parser._actions:
+        for opt in action.option_strings:
+            options.append(opt)
+            if action.choices:
+                choices_by_option[opt] = [str(c) for c in action.choices]
+    options = sorted(set(options))
+    choice_cases = "\n".join(
+        f'        {opt}) COMPREPLY=( $(compgen -W "{" ".join(vals)}" -- "$cur") ); return 0 ;;'
+        for opt, vals in sorted(choices_by_option.items())
+    )
+    # Same choices for the --opt=value form (bash may not split on '=').
+    choice_cases_eq = "\n".join(
+        f'        {opt}=) COMPREPLY=( $(compgen -W "{" ".join(vals)}" -P "{opt}=" '
+        f'-- "$val") ); return 0 ;;'
+        for opt, vals in sorted(choices_by_option.items())
+    )
+
+    return f"""\
+# bash completion for mdrender-send (localsend-send.py).
+# Load with:  source <(mdrender-send --completion bash)
+# Install:    mdrender-send --completion bash > /etc/bash_completion.d/mdrender-send
+# --name completes device names gathered from:  mdrender-send --list --names
+# Running from a source checkout?  export MDRENDER_SEND=/path/to/localsend-send.py
+
+_mdrender_send_names() {{
+    local cache="${{TMPDIR:-/tmp}}/mdrender-send-devices"
+    if [ -s "$cache" ] && [ -z "$(find "$cache" -mmin +1 2>/dev/null)" ]; then
+        cat "$cache"
+    else
+        "${{MDRENDER_SEND:-mdrender-send}}" --list --names --discover-timeout 1 2>/dev/null > "$cache"
+        cat "$cache"
+    fi
+}}
+
+_mdrender_send() {{
+    local cur prev
+    COMPREPLY=()
+    cur="${{COMP_WORDS[COMP_CWORD]}}"
+    prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+
+    # --opt=value form: bash splits the word at '=', so the option is two
+    # words back from the value and the previous word is a lone '='.
+    local opt="" val="$cur"
+    if [[ "$prev" == "=" && $COMP_CWORD -ge 2 ]]; then
+        opt="${{COMP_WORDS[COMP_CWORD-2]}}="
+    elif [[ "$cur" == --*=* ]]; then
+        opt="${{cur%%=*}}="
+        val="${{cur#*=}}"
+    fi
+    case "$opt" in
+        --name=)
+            local n_eq
+            while IFS= read -r n_eq; do
+                [ -n "$n_eq" ] || continue
+                [[ "$n_eq" == "$val"* ]] && COMPREPLY+=( "$(printf '%q' "$opt$n_eq")" )
+            done < <(_mdrender_send_names)
+            return 0 ;;
+{choice_cases_eq}
+    esac
+
+    case "$prev" in
+{choice_cases}
+        --name)
+            local n
+            while IFS= read -r n; do
+                [ -n "$n" ] || continue
+                [[ "$n" == "$cur"* ]] && COMPREPLY+=( "$(printf '%q' "$n")" )
+            done < <(_mdrender_send_names)
+            return 0 ;;
+    esac
+
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "{' '.join(options)}" -- "$cur") )
+        return 0
+    fi
+
+    # Files to send: defer to readline's own filename completion, so ~, spaces,
+    # directories, and single-match insertion all behave exactly as usual.
+    compopt -o default 2>/dev/null || true
+    COMPREPLY=()
+}}
+complete -o default -F _mdrender_send mdrender-send localsend-send.py
+"""
+
+
+def main(argv=None):
+    p = _build_parser()
     args = p.parse_args(argv)
+
+    if args.completion:
+        print(_bash_completion_script())
+        return 0
 
     if args.enrol:
         if not args.server:
@@ -600,7 +738,7 @@ def main(argv=None):
             return 2
         return cmd_enrol(args)
 
-    if args.list:
+    if args.list or args.names:
         return cmd_list(args)
 
     if not args.files:
