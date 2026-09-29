@@ -12,7 +12,7 @@
   sign-in link to link it.</p>
 {% endif %}
 {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
-<form method="POST" action="/account/profile">
+<form method="POST" action="/account/profile" class="stack">
   <label for="name">Name</label>
   <div class="field"><input type="text" id="name" name="name" value="{{ account.name or '' }}"></div>
   <label for="email">Email</label>

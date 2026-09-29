@@ -214,6 +214,18 @@ tbody tr:hover { background: var(--surface-2); }
 
 form.inline { display: inline-block; margin: 0 0.35rem 0.35rem 0; }
 
+/* Stacked page forms: constrain the width so fields are not comically long,
+   and space the fields and submit button out. */
+form.stack {
+  display: flex;
+  flex-direction: column;
+  max-width: 30rem;
+}
+form.stack > label { margin-top: 0.9rem; }
+form.stack > label:first-child { margin-top: 0; }
+form.stack > .btn-primary,
+form.stack > button[type="submit"] { margin-top: 1.5rem; align-self: flex-start; }
+
 button,
 .btn {
   font: inherit;

@@ -4,7 +4,12 @@ import hmac
 import time
 import uuid
 
-SESSION_TTL_SECONDS = 15 * 60  # ENROL_SESSION_TTL_MINUTES
+# Default browser-session lifetime (overridable with SESSION_TTL_SECONDS).
+SESSION_TTL_SECONDS = 30 * 24 * 3600
+
+
+def session_ttl(config) -> int:
+    return int(getattr(config, "SESSION_TTL_SECONDS", SESSION_TTL_SECONDS))
 
 
 def hash_secret(secret: str) -> str:
@@ -75,7 +80,7 @@ def verify_session(session_secret: str, token: str, config) -> bool:
         created = int(created_s)
     except ValueError:
         return False
-    if time.time() - created > SESSION_TTL_SECONDS:
+    if time.time() - created > session_ttl(config):
         return False
     expected = _sig(session_secret, f"{payload}:{created_s}")
     if not hmac.compare_digest(expected, given_sig):
@@ -108,7 +113,7 @@ def create_session(conn, session_secret: str, config, *, principal_type: str = "
     conn.execute(
         "INSERT INTO sessions (token_hash, created_at, expires_at, principal_type,"
         " principal_id) VALUES (?, ?, ?, ?, ?)",
-        (session_token_hash(session_secret, token), now, now + SESSION_TTL_SECONDS,
+        (session_token_hash(session_secret, token), now, now + session_ttl(config),
          principal_type, principal_id),
     )
     conn.commit()
