@@ -30,7 +30,10 @@ server/tests` is green (**112 tests**).
   credits).
 - **I — policy**: terms, privacy, acceptable-use templates.
 - **J — encryption (server side)**: account/device content public keys + opaque
-  sealed CEK endpoints; `encryption.py`.
+  sealed CEK endpoints; `encryption.py`; **server-enforced policy
+  (`ENCRYPTION_MODE` off/optional/required, §7b)** — when required, plaintext
+  uploads and doorbells without a sealed CEK are refused, forcing the client and
+  app to negotiate.
 - **Auth surface**: `IDENTITY_PROVIDER`, `/auth/providers`, `/auth/oidc` stub.
 
 ## Also complete (second pass)
