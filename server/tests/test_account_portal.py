@@ -57,12 +57,13 @@ def test_account_session_cannot_reach_admin_pages(config, db_path):
     assert admin.get("/account").headers["Location"] == "/account/login"
 
 
-def test_auth_providers_and_oidc_stub(config, db_path):
+def test_auth_providers_and_oidc_rejects_a_missing_token(config, db_path):
     config.IDENTITY_PROVIDER = "firebase"
     app = _app(config)
     c = app.test_client()
     assert c.get("/auth/providers").get_json() == {"providers": ["local", "firebase"]}
-    assert c.post("/auth/oidc", json={}).status_code == 501
+    # No id_token (and no project configured) -> unauthorized.
+    assert c.post("/auth/oidc", json={}).status_code == 401
 
 
 def test_account_portal_is_gated(config, db_path):

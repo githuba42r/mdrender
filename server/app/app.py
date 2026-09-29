@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, encryption,
                         federation, federation_client, fcm as fcm_mod, geoip,
-                        pairing, push_store, storage, trigger)
+                        oidc, pairing, push_store, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -861,12 +861,31 @@ def create_app(config):
 
     @app.route("/auth/oidc", methods=["POST"])
     def auth_oidc():
-        """Exchange a hosted-IdP token (Firebase/Auth0/Cognito) for a session.
+        """Exchange a hosted-IdP (Firebase) ID token for an account session.
 
-        Wired when the chosen provider is configured; local accounts work now
-        (D3/D11).
+        The token is verified against Google's signing certs; only a verified
+        email may sign in, and it must match an existing active account
+        (D3/D11). Local accounts work without a provider.
         """
-        return jsonify({"error": "hosted identity provider not configured"}), 501
+        data = request.get_json(silent=True) or {}
+        claims = oidc.verify_firebase_id_token(config, data.get("id_token", ""))
+        if claims is None:
+            return jsonify({"error": "invalid token"}), 401
+        email = (claims.get("email") or "").strip().lower()
+        if not email or not claims.get("email_verified", False):
+            return jsonify({"error": "verified email required"}), 403
+        account = accounts.get_account_by_email(g.db, email)
+        if account is None:
+            return jsonify({"error": "account not found"}), 404
+        if account["status"] != accounts.ACTIVE:
+            return jsonify({"error": f"account {account['status']}"}), 403
+        token = create_session(g.db, config.session_secret, config,
+                               principal_type="account",
+                               principal_id=account["account_id"])
+        resp = jsonify({"ok": True, "account_id": account["account_id"]})
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
+        return resp
 
     # ---- Federation API (design §5/§5a) ----
 
