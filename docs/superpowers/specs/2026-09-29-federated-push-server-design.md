@@ -57,6 +57,14 @@ Config: `FCM_SERVER_KEY` present ⇒ master-capable; `FEDERATION_URL` set ⇒ sl
 (default baked in, overridable). `ROLE=master|slave|standalone` forces a mode.
 Detection is advisory: an explicit `ROLE` always wins.
 
+**Startup detection (D1, resolved).** On startup the server first checks the
+FCM service-account **file is present**, then runs a **live probe** (mints an
+OAuth token from the service account and authenticates against Google). If the
+file is absent, or the probe fails, the server still starts but marks FCM
+**unavailable**: it does not act as a master-capable sender, logs the failure,
+surfaces it in the admin UI, and **re-probes periodically** so a later-valid
+credential recovers without a restart.
+
 A master-capable server plays **both roles at once**: it hosts clients directly
 (registration, uploads, devices, own FCM doorbells) **and** relays doorbells for
 enrolled slaves.
@@ -160,6 +168,53 @@ Security invariants (carried over): for relayed pushes the master cannot read
 the doorbell (no `push_key`) or forge a manifest (no server signing key); only
 the holder of a device's `push_key` can produce an effective doorbell.
 
+## 7a. File content encryption (server-blind)
+
+**Goal:** a client's files are encrypted **before upload**, so no server — slave
+or master — can read them, and the operator is not responsible for the content.
+
+### Key material
+- The **client machine** holds a long-term **content keypair** (`Cpriv`/`Cpub`).
+  `Cpriv` is stored locally with 0600, **never uploaded**; only `Cpub` is
+  registered with the server when the client registers.
+- Each device holds a random **Content Encryption Key (CEK)** (32 bytes) in its
+  Keystore. Files are encrypted with AES-256-GCM under the CEK.
+- The CEK is never sent to a server; only a **wrapped** copy is.
+
+### Key exchange at device registration
+1. Device registration hands the device the client's `Cpub` (from the account).
+2. The device generates a fresh CEK, wraps it to `Cpub`
+   (`wrapped_CEK = wrap(Cpub, CEK)`), sends only `wrapped_CEK` to the server, and
+   keeps `CEK` in its Keystore.
+3. The server stores `wrapped_CEK` as an **opaque blob** — it cannot unwrap it,
+   having no `Cpriv`.
+
+### Push / fetch
+1. The client fetches `wrapped_CEK` for the target device, unwraps with `Cpriv`
+   to recover `CEK`, encrypts each file (AES-256-GCM, per-file nonce), and
+   uploads ciphertext + nonce.
+2. The server stores **ciphertext only**.
+3. The device decrypts with its local `CEK`.
+
+### Rotation
+- **Changing the client keypair** (`Cpriv`/`Cpub`) makes every existing
+  `wrapped_CEK` undecryptable, so each device must **re-register** to re-wrap
+  its CEK to the new `Cpub` — the consequence noted in the requirements.
+- Devices may rotate their CEK (producing a new wrap) without re-pairing.
+- Key history is tracked so retired wraps are rejected.
+
+### Properties and trade-offs
+- The server (master or slave) sees only ciphertext and opaque wraps, so it
+  **cannot read file content** — the "we are not responsible for the content"
+  posture.
+- Consequently the server **cannot scan, deduplicate, or moderate** content;
+  abuse handling must be policy/report-driven.
+- The doorbell `push_key` (§7) is **separate** and unchanged: it protects the
+  trigger, not file content.
+- Encryption is per client and may be opted out (plaintext); the server records
+  the mode per client/device.
+- Whether **file names/metadata** are also encrypted is open (D13).
+
 ## 8. Master administration of slave servers
 
 Admin UI + API to:
@@ -175,7 +230,8 @@ Admin UI + API to:
 ## 9. Client (tenant) accounts
 
 - Clients register with an **email address as the login** (password or
-  email-link auth).
+  email-link auth), and include their **content public key** `Cpub` (§7a) so
+  devices can wrap content keys to them.
 - Master/admin can **delete, block, or ban** an email address.
 - **Banned email domains**: a configurable blocklist of free/consumer and
   temporary/disposable email domains is rejected at signup (operator-editable,
@@ -189,7 +245,8 @@ Admin UI + API to:
 
 - Each client has a **pending collection**: their uploaded files live in
   per-client storage on their **host** (the master or a slave) until the client
-  collects them.
+  collects them. When client-side encryption is on (§7a), the server stores
+  **ciphertext + nonce**, never plaintext.
 - An admin configures, per client (with global defaults):
   - **max pending bytes / file count** (quota), and
   - **max age of pending files** before automatic **purge**.
@@ -237,7 +294,9 @@ Build the foundation now; wire real providers later.
 | `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| client`; reason, created_by, expires |
 | `clients` | email, password hash (nullable), `host` (master \| federated server_id), status (active/blocked/banned), balance |
 | `client_devices` | device_id, client_id, server_id, fcm_token, name |
-| `client_files` | pending files: client_id, size, created, stored_path, status |
+| `client_files` | pending files: client_id, size, created, stored_path, `encryption` (alg, nonce), status |
+| `client_keys` | client content public key `Cpub`: client_id, pubkey, created, retired_at |
+| `device_content_keys` | per-device content key: device_id, `wrapped_cek`, alg, created, retired_at |
 | `client_quotas` | per-client overrides (max bytes/count, max age) |
 | `email_domain_rules` | allow/deny list for signup domains |
 | `billing_ledger` | charges/credits, reason, period, provider ref |
@@ -268,6 +327,11 @@ mint an MDRender session); local login always remains available.
 slave): signup by email, device pairing, upload to pending
 (`POST /api/client/upload`), list/quota, collect/ack.
 
+**Content key exchange (§7a):** `PUT /api/client/keys` (register/rotate `Cpub`);
+device registration returns the client's `Cpub` and accepts `wrapped_cek`;
+`GET /api/client/devices/{id}/cek` returns the opaque wrap; uploads carry the
+`nonce` alongside ciphertext.
+
 **Master admin:** list/revoke/deactivate/delete/ban slaves;
 list/block/ban clients and email domains; **network bans (ip, cidr, asn,
 hostname, domain)**; quotas; billing/ledger; **plan CRUD (many plans);
@@ -292,6 +356,9 @@ group auto-includes every account).
 - First-run admin setup closes permanently after the first admin exists.
 - Rate-limit login, signup, upload, and doorbell endpoints per identity/IP.
 - No secrets in URLs; no card data stored.
+- **Server-blind content (§7a):** file bytes are encrypted on the client and
+  only ciphertext + opaque key wraps reach a server; the operator holds no
+  decryption key. This also means servers cannot scan or moderate content.
 
 ## 15. Phases (tracer bullets)
 
@@ -311,6 +378,9 @@ group auto-includes every account).
   checks, master FCM); slave `_ring_doorbell` federation branch.
 - **F — Client storage + quotas.** per-client pending storage, upload API,
   quota/age config, sweeper, usage UI.
+- **F2 — Client-side content encryption.** client content keypair, device CEK
+  wrap at registration, server-blind ciphertext upload/fetch, key change ⇒
+  device re-registration, per-client encryption toggle.
 - **G — Master admin.** slave list/revoke/deactivate/delete/ban (ip/host/domain);
   client list/block/ban; email-domain rules.
 - **H — Billing foundation.** multiple plans, groups + membership with
@@ -321,8 +391,10 @@ Each phase lands independently with tests; the app is untouched.
 
 ## 16. Open decisions
 
-- **D1** FCM-availability detection: file presence vs a live probe; failure
-  behaviour when the credential is present but invalid.
+- **D1 (resolved)** FCM availability: require the service-account file's
+  **presence**, then run a **live probe** at startup; a failed/absent probe
+  disables FCM (no master sending), warns in the admin UI, and re-probes
+  periodically rather than blocking startup.
 - **D2** Slave registration approval: auto (master URL known) vs
   operator-approved.
 - **D3** Client auth: password vs magic-link email; email verification
