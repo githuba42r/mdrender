@@ -44,6 +44,35 @@ def increment_messages(conn, account_id, n: int = 1) -> None:
     conn.commit()
 
 
+def domain_allowed(conn, email) -> bool:
+    """Allow signup unless the email's domain is denied (design §9).
+
+    An explicit allow rule wins over a deny rule, so operators can exempt a
+    domain from a broad deny.
+    """
+    domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+    if not domain:
+        return False
+    rules = conn.execute("SELECT kind, domain FROM email_domain_rules").fetchall()
+    allow = [r["domain"].lower() for r in rules if r["kind"] == "allow"]
+    deny = [r["domain"].lower() for r in rules if r["kind"] == "deny"]
+
+    def matches(rule):
+        return domain == rule or domain.endswith("." + rule)
+
+    if any(matches(d) for d in allow):
+        return True
+    if any(matches(d) for d in deny):
+        return False
+    return True
+
+
+def add_domain_rule(conn, kind, domain) -> None:
+    conn.execute("INSERT INTO email_domain_rules (kind, domain, created_at)"
+                 " VALUES (?, ?, ?)", (kind, domain.strip().lower(), int(time.time())))
+    conn.commit()
+
+
 def set_account_status(conn, account_id, status) -> None:
     conn.execute("UPDATE accounts SET status = ? WHERE account_id = ?",
                  (status, account_id))

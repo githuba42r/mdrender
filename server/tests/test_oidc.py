@@ -73,7 +73,24 @@ def test_oidc_endpoint_signs_in_an_existing_account(config, db_path, monkeypatch
     assert c.post("/auth/oidc", json={"id_token": "x"}).status_code == 200
     assert c.get("/account").status_code == 200
 
+    # A first verified login for a new email creates the account (signup).
     monkeypatch.setattr(oidc, "verify_firebase_id_token",
                         lambda config, token, **k: {"email": "nobody@example.com",
                                                     "email_verified": True})
-    assert c.post("/auth/oidc", json={"id_token": "x"}).status_code == 404
+    assert c.post("/auth/oidc", json={"id_token": "x"}).status_code == 200
+
+
+def test_oidc_rejects_a_denied_email_domain(config, db_path, monkeypatch):
+    from server.app import accounts
+
+    config.PUSH_STORAGE_DIR = os.path.join(os.path.dirname(config.DB_PATH), "push")
+    config.PUSH_PUBLIC_URL = "https://push.example.com"
+    config.IDENTITY_PROVIDER = "firebase"
+    app = create_app(config)
+    app.config["TESTING"] = True
+    with app.config["_db"].connect() as conn:
+        accounts.add_domain_rule(conn, "deny", "tempmail.example")
+    monkeypatch.setattr(oidc, "verify_firebase_id_token",
+                        lambda config, token, **k: {"email": "x@tempmail.example",
+                                                    "email_verified": True})
+    assert app.test_client().post("/auth/oidc", json={"id_token": "x"}).status_code == 403

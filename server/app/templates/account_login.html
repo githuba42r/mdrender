@@ -6,6 +6,19 @@
     <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
     <h1>Account login</h1>
   </div>
+  {% if firebase %}
+  <p class="lede">Sign in with a social account or a magic email link.</p>
+  <p id="auth-error" class="lede" style="color: var(--danger)"></p>
+  <p id="auth-message" class="lede"></p>
+  <button type="button" class="btn-primary" onclick="mdrenderGoogle()">Continue with Google</button>
+  <button type="button" onclick="mdrenderGithub()">Continue with GitHub</button>
+  <label for="magic-email">Email (magic link)</label>
+  <div class="field"><input type="text" id="magic-email" name="email" autocomplete="email"></div>
+  <button type="button" class="btn-primary" onclick="mdrenderMagic()">Send magic link</button>
+  <script>window.__FIREBASE__ = {{ firebase | tojson }};</script>
+  <script type="module" src="{{ url_for('static', filename='firebase-auth.js') }}"></script>
+  <p class="lede">No account? <a href="/signup">Create one</a>.</p>
+  {% else %}
   <p class="lede">Sign in with your email to manage your devices and pending files.</p>
   {% if error %}<p class="lede" style="color: var(--danger)">{{ error }}</p>{% endif %}
   <form method="POST" action="/account/login">
@@ -16,5 +29,6 @@
     <button type="submit" class="btn-primary">Log in</button>
   </form>
   <p class="lede">No account? <a href="/signup">Create one</a>.</p>
+  {% endif %}
 </div>
 {% endblock %}

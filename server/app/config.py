@@ -40,6 +40,10 @@ DEFAULTS = {
     # such as "firebase". Admins always use local username/password.
     "IDENTITY_PROVIDER": "local",
     "FIREBASE_PROJECT_ID": "",
+    # Firebase **web** config, for the account portal's social + magic-link UI.
+    "FIREBASE_API_KEY": "",
+    "FIREBASE_AUTH_DOMAIN": "",
+    "FIREBASE_APP_ID": "",
     # Server-enforced content encryption: on (clients must encrypt) | off.
     "ENCRYPTION_MODE": "off",
     # DB-IP Lite MMDB paths for local ASN/country lookups (D9).

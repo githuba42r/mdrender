@@ -335,6 +335,21 @@ def create_app(config):
     # ---- Browser session-gated pages ----
 
     @app.context_processor
+    def _inject_firebase():
+        """Expose the Firebase web config to templates when it is configured."""
+        api_key = getattr(config, "FIREBASE_API_KEY", "")
+        project = getattr(config, "FIREBASE_PROJECT_ID", "")
+        auth_domain = getattr(config, "FIREBASE_AUTH_DOMAIN", "") or (
+            f"{project}.firebaseapp.com" if project else "")
+        firebase = None
+        if api_key and auth_domain and (getattr(config, "IDENTITY_PROVIDER", "local")
+                                        == "firebase"):
+            firebase = {"apiKey": api_key, "authDomain": auth_domain,
+                        "projectId": project,
+                        "appId": getattr(config, "FIREBASE_APP_ID", "")}
+        return {"firebase": firebase}
+
+    @app.context_processor
     def _inject_auth_state():
         """Let every template hide the admin menu unless a session is live.
 
@@ -901,7 +916,12 @@ def create_app(config):
             return jsonify({"error": "verified email required"}), 403
         account = accounts.get_account_by_email(g.db, email)
         if account is None:
-            return jsonify({"error": "account not found"}), 404
+            # A first verified login creates the account (signup via the same
+            # flow), subject to the operator's email-domain rules (design §9).
+            if not accounts.domain_allowed(g.db, email):
+                return jsonify({"error": "email domain not allowed"}), 403
+            accounts.create_account(g.db, email)
+            account = accounts.get_account_by_email(g.db, email)
         if account["status"] != accounts.ACTIVE:
             return jsonify({"error": f"account {account['status']}"}), 403
         token = create_session(g.db, config.session_secret, config,
