@@ -96,10 +96,13 @@ session) so the concrete choice is swappable and a local fallback always works.
 | **AWS Cognito** | Google/Facebook/Apple/SAML/OIDC | **No built-in email magic link** — needs `CUSTOM_AUTH` Lambda + SES (or phone OTP) | AWS-native and cheap at scale; passwordless is DIY and the hosted UI is less polished. |
 | **Self-hosted local** | — | magic link (own SMTP) | No per-MAU cost, full control; must own email deliverability, MFA, passkey/WebAuthn, and account security. |
 
-**Recommendation:** default to **Firebase Authentication** (it reuses the FCM
-project already owned by the master) with **Auth0** as the drop-in alternative;
-keep **local username/password** as the break-glass admin path and for
-deployments with no external IdP.
+**Decision (D3):** use a **low-cost hosted provider** that supports **social
+login and magic-link** email. Run a short spike comparing **Auth0**, **AWS
+Cognito**, and **Firebase Auth** (which reuses the FCM project) on price,
+passwordless fit, and email deliverability, behind the `IdentityProvider`
+interface. **Local username/password** stays as the break-glass admin path and
+for deployments with no external IdP. (Supersedes the earlier
+Firebase-as-default recommendation.)
 
 - **Clients** (tenants) get social + passwordless (lower friction, self-serve).
 - **Admins/operators** stay on **local accounts or enterprise SSO with MFA** —
@@ -120,8 +123,9 @@ deployments with no external IdP.
   (short-code/browser approve, mirroring the CLI-enrolment pattern):
   - slave `POST /api/federation/enrol/start` → master returns an enrolment;
   - operator approves on the master (or types the code);
-  - credentials exchanged; the slave submits its **hostname**, **server_id**,
-    and **public key**, and the master records them.
+  -   credentials exchanged; the slave submits its **hostname**, **server_id**,
+    and **public key**, and the master records them. **Enrolment is automatic
+    (D2)** — no per-slave operator approval; bans/revocation still apply.
 - Thereafter, slave↔master API calls are **Bearer-authenticated** with the
   issued secret; the master may additionally verify a **signed request**
   (RSA) so an intercepted token alone is not enough.
@@ -245,8 +249,9 @@ Admin UI + API to:
 
 - Each client has a **pending collection**: their uploaded files live in
   per-client storage on their **host** (the master or a slave) until the client
-  collects them. When client-side encryption is on (§7a), the server stores
-  **ciphertext + nonce**, never plaintext.
+  collects them. Tenants are isolated by **per-client directories** (D7). When
+  client-side encryption is on (§7a), the server stores **ciphertext + nonce**,
+  never plaintext; only server-hosted clients store files at all.
 - An admin configures, per client (with global defaults):
   - **max pending bytes / file count** (quota), and
   - **max age of pending files** before automatic **purge**.
@@ -276,9 +281,16 @@ Build the foundation now; wire real providers later.
 - **Entitlement layer**: every billable action checks an entitlement
   (`active`, `grace`, `suspended`) derived from a prepaid balance/period, so the
   payment provider is swappable.
-- **Provider abstraction**: a `PaymentProvider` interface with a no-op/manual
-  implementation first; **Stripe / PayPal / crypto** added later. Manual credit
-  adjustment by admins must always work.
+- **Account states**: **free** (requires **admin approval**), **trial**
+  (requires a **card on file**, once a payment provider is integrated), and
+  **paid**; each plan carries a **grace period** before suspension.
+- **Provider abstraction**: a `PaymentProvider` interface with a **manual
+  implementation first** — admins **add credits** to an account, and that path
+  always works; **Stripe / PayPal / crypto** are added later behind the same
+  interface. No card data is stored before a real gateway exists.
+- **Metering (D5)**: clients are charged **$X per KB stored** once files are
+  retained beyond the plan's threshold **Y**, and **$Z per message**
+  (doorbell/file) sent; rates and thresholds are per-plan configuration.
 - Ledger of charges/credits; admin UI to view/adjust; client/slave self-serve
   top-up page (stubbed initially).
 - No card data is ever stored by this codebase.
@@ -395,27 +407,46 @@ Each phase lands independently with tests; the app is untouched.
   **presence**, then run a **live probe** at startup; a failed/absent probe
   disables FCM (no master sending), warns in the admin UI, and re-probes
   periodically rather than blocking startup.
-- **D2** Slave registration approval: auto (master URL known) vs
-  operator-approved.
-- **D3** Client auth: password vs magic-link email; email verification
-  requirement.
-- **D4** Slave billing period vs metered; trial length; grace window.
-- **D5** Client metering units: per byte stored, per file, per doorbell —
-  and how prepaid balance is debited.
-- **D6** Free/temp email domain list source and update cadence.
-- **D7** Multi-tenant data isolation model (per-client encryption or directory
-  scoping).
-- **D8** Whether a slave may also be a standalone (own FCM) for some tenants.
+- **D2 (resolved)** Slave registration is **automatic**: a slave that completes
+  the enrolment handshake is accepted without per-slave operator approval.
+  Bans/revocation (§8) still apply, and the master may require a signed request.
+- **D3 (resolved direction)** Use a **low-cost hosted identity provider** for
+  clients supporting **social login and magic-link** email. Evaluate **Auth0**,
+  **AWS Cognito**, and other low-cost options (e.g. Firebase Auth) on price,
+  passwordless fit, and email deliverability; the concrete choice is a short
+  spike, behind the `IdentityProvider` interface. Admins stay on local/SSO.
+- **D4 (resolved)** Account types: **free** (requires **admin approval**),
+  **trial** (requires a **card on file** — available once a payment provider is
+  integrated), and **paid**; each plan carries a **grace period**. **No payment
+  gateway initially**: a **manual billing provider** where admins **add credits**
+  to an account. The provider interface allows Stripe/PayPal/crypto later.
+- **D5 (resolved)** Client pricing is metered: **$X per KB stored** once files
+  are retained beyond **Y** (per-plan threshold), and **$Z per message**
+  (doorbell/file) sent. Exact values are per-plan configuration.
+- **D6 (resolved — suggestion)** Source the free/temporary-domain list from
+  open, regularly-updated community lists (e.g. the `disposable-email-domains`
+  project and free-provider lists), **vendored and refreshed on a schedule**,
+  with an admin allow/deny override.
+- **D7 (resolved)** Tenant isolation is by **directory scoping** (per-client
+  directories). Only server-hosted ("local") clients store files on the server;
+  if a client opts into content encryption, those files are stored **encrypted**
+  and decrypted on the device (§7a).
+- **D8 (resolved — no)** A slave will **not** also run its own FCM: it would
+  require a custom APK and the Android namespace would collide with the Play
+  Store app. A slave is always relay-only.
 - **D12** Plan resolution details: group priority ordering when an account is in
   several groups, proration/effective-date on plan changes, whether the default
   group's plan is free, and whether clients and slaves share one plan space or
   separate ones.
-- **D10** Identity provider: Firebase Auth (reuses the FCM project) vs Auth0 vs
-  Cognito vs self-hosted; which social providers; and whether passwordless is
-  email-link, passkey, or phone OTP.
-- **D11** Email deliverability for passwordless/verification (Firebase vs
-  SES/SMTP), plus signup abuse controls (rate limits, CAPTCHA, verified-email
-  requirement).
+- **D10 (folded into D3)** Provider selection is a short spike across Auth0 /
+  Cognito / Firebase Auth (and other low-cost options) covering social set,
+  magic-link/passkey support, and price.
+- **D11 (open)** Email deliverability for magic-link/verification follows the
+  chosen provider (D3); decide the fallback SMTP/SES path and signup abuse
+  controls (rate limits, CAPTCHA, verified-email requirement).
+- **D13 (open)** Content-encryption details (§7a): algorithm (RSA-OAEP vs
+  X25519+HKDF), whether file names/metadata are also encrypted, CEK scope
+  (per-device vs per-client vs per-push), and streaming AEAD for large files.
 - **D9** ASN/CIDR source and matching: a bundled IP→ASN database
   (e.g. MaxMind GeoLite2 ASN, self-updated) vs an external lookup; how to trust
   the forwarded client IP through Cloudflare; IPv4 vs IPv6 CIDR handling; and
