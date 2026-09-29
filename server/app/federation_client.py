@@ -74,3 +74,33 @@ def send_heartbeat(config, conn, identity, path="/api/federation/heartbeat"):
 def ping(config, conn, identity):
     """Announce 'back online' (e.g. on restart)."""
     return send_heartbeat(config, conn, identity, path="/api/federation/ping")
+
+
+def _signed_request(conn, identity, method, path, body):
+    state = get_state(conn)
+    if state is None:
+        raise ValueError("not registered with a master")
+    headers = federation.sign_request(identity["private_key_pem"], method, path, body)
+    headers["Authorization"] = f"Bearer {identity['server_id']}.{state['server_secret']}"
+    headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(state["master_url"] + path, data=body,
+                                 method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read() or b"{}")
+
+
+def sync_device(config, conn, identity, account_id, device_id, fcm_token, *,
+                delete=False):
+    """Push a device's no-PII routing tuple to the master (design §6)."""
+    path = f"/api/federation/accounts/{account_id}/devices/{device_id}"
+    if delete:
+        return _signed_request(conn, identity, "DELETE", path, b"")
+    return _signed_request(conn, identity, "PUT", path,
+                           json.dumps({"fcm_token": fcm_token}).encode())
+
+
+def ring_via_master(config, conn, identity, account_id, device_id, sealed):
+    """Ask the master to send a sealed doorbell (design §7B)."""
+    body = json.dumps({"account_id": account_id, "device_id": device_id,
+                       "sealed": sealed}).encode()
+    return _signed_request(conn, identity, "POST", "/api/federation/doorbell", body)

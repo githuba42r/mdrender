@@ -27,11 +27,15 @@ def test_account_login_and_portal_lists_devices(config, db_path):
                 data={"email": "user@example.com", "password": "longenough1"})
     assert ok.status_code == 302 and ok.headers["Location"] == "/account"
 
-    # Register a device for this account, then it shows in the portal.
+    # A paired device for this account shows in the portal.
     with app.config["_db"].connect() as conn:
         account_id = accounts.get_account_by_email(conn, "user@example.com")["account_id"]
-        accounts.upsert_device(conn, account_id=account_id, device_id="dev-1",
-                               server_id="master", fcm_token="tok", name="Clever Juniper")
+        conn.execute(
+            "INSERT INTO devices (device_secret, device_auth, device_name, fcm_token,"
+            " public_key, push_key, registered_at, last_seen, account_id, approved_at)"
+            " VALUES ('dev-1','auth','Clever Juniper','tok','PUB','PUSH',1,1,?,1)",
+            (account_id,))
+        conn.commit()
     body = c.get("/account").data
     assert b"Clever Juniper" in body
 

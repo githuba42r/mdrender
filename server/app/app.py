@@ -19,8 +19,8 @@ from qrcode.image.svg import SvgPathImage
 from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, encryption,
-                        federation, fcm as fcm_mod, pairing, push_store,
-                        storage, trigger)
+                        federation, federation_client, fcm as fcm_mod, pairing,
+                        push_store, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -34,8 +34,9 @@ from server.app.identity import (count_admins, create_admin,
                                  get_identity_provider, list_admins)
 from server.app.store import (check_device, create_client, delete_device,
                               get_client, get_device_by_name,
-                              get_or_create_server_keypair, list_clients,
-                              list_devices, revoke_client,
+                              get_device_by_secret,
+                              get_or_create_server_keypair, list_account_devices,
+                              list_clients, list_devices, revoke_client,
                               session_secret_from_pem, touch_last_seen,
                               update_device_name, update_device_push_key,
                               update_device_token)
@@ -268,25 +269,54 @@ def create_app(config):
             entry["approved"] = True
         return entry["creds"]
 
-    def _ring_doorbell(device, push_row) -> bool:
-        """Send the one FCM message that tells a device a push is waiting.
+    def _publish_device(device: dict) -> None:
+        """Register a device's no-PII routing tuple at its host (design §6)."""
+        account_id = device.get("account_id")
+        if not account_id:
+            return
+        account = accounts.get_account(g.db, account_id)
+        host = account["host"] if account else "master"
+        if host == "master":
+            # Hosted here: keep the local no-PII routing registry current.
+            accounts.upsert_device(g.db, account_id=account_id,
+                                   device_id=device["device_secret"],
+                                   server_id="master",
+                                   fcm_token=device.get("fcm_token") or "")
+        elif federation_client.get_state(g.db) is not None:
+            try:
+                federation_client.sync_device(
+                    config, g.db, app.config["_server_identity"], account_id,
+                    device["device_secret"], device.get("fcm_token") or "")
+            except Exception:  # noqa: BLE001 - the worker will resync
+                pass
 
-        The message is a constant-size encrypted trigger naming where to look, so
-        the file count can never exhaust FCM's 4 KB limit. It carries no file
-        names, paths, or retrieval keys. Returns False if there is no client (or
-        the device has no usable doorbell key).
+    def _ring_doorbell(device, push_row) -> bool:
+        """Tell a device a push is waiting.
+
+        A master sends FCM directly; a slave (no FCM of its own) forwards the
+        sealed trigger to the master, which sends it (design §7). The trigger is
+        constant-size and carries no file names or keys.
         """
-        fcm = app.config["_fcm"]
-        if fcm is None or not device["fcm_token"]:
-            return False
         if not device["push_key"]:
             return False
         sealed = trigger.seal_trigger(
             base64.b64decode(device["push_key"]), config.PUSH_PUBLIC_URL,
             push_row["push_id"], push_row["challenge_key"],
         )
-        fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
-        return True
+        fcm = app.config["_fcm"]
+        if fcm is not None and device["fcm_token"]:
+            fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
+            return True
+        account_id = device["account_id"] if "account_id" in device.keys() else None
+        if account_id and federation_client.get_state(g.db) is not None:
+            try:
+                federation_client.ring_via_master(
+                    config, g.db, app.config["_server_identity"], account_id,
+                    device["device_secret"], sealed)
+                return True
+            except Exception:  # noqa: BLE001 - retry worker will retry
+                return False
+        return False
 
     # ---- Browser session-gated pages ----
 
@@ -391,10 +421,36 @@ def create_app(config):
             return auth_error
         principal = _principal()
         account = accounts.get_account(g.db, principal["id"])
-        devices = accounts.list_devices(g.db, principal["id"], account["host"])
+        devices = list_account_devices(g.db, principal["id"])
         return render_template("account.html", account=account, devices=devices,
                                usage=storage.usage(g.db, principal["id"]),
                                quota=storage.effective_quota(g.db, principal["id"], config))
+
+    @app.route("/account/pair", methods=["GET"])
+    def account_pair():
+        """Mint an account-bound pairing token and show its QR (device approval)."""
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        token = pairing.create_pairing_token(
+            g.db, config.ENROL_SESSION_TTL_MINUTES, account_id=_principal()["id"])
+        qr_text = pairing.build_pairing_qr(config.PUSH_PUBLIC_URL, token)
+        img = qrcode.make(qr_text, image_factory=SvgPathImage)
+        return render_template("account_pair.html",
+                               qr_svg=img.to_string().decode(),
+                               server_url=config.PUSH_PUBLIC_URL)
+
+    @app.route("/account/devices/<device_secret>/approve", methods=["POST"])
+    def account_device_approve(device_secret):
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        device = get_device_by_secret(g.db, device_secret)
+        if device is None or device["account_id"] != _principal()["id"]:
+            return redirect("/account", 303)
+        pairing.approve_device(g.db, device_secret)
+        _publish_device(dict(device))
+        return redirect("/account", 303)
 
     def require_account_api():
         principal = _principal()

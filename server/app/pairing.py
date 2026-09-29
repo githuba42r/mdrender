@@ -14,14 +14,25 @@ from server.app.store import (
 )
 
 
-def create_pairing_token(conn, ttl_minutes: int) -> str:
+def create_pairing_token(conn, ttl_minutes: int, *, account_id: str | None = None) -> str:
+    """Mint a single-use pairing token.
+
+    When *account_id* is given the token binds the registering device to that
+    account (the device still needs approval before it can receive pushes).
+    """
     token = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO pairing_tokens (token, expires_at, used) VALUES (?, ?, 0)",
-        (token, int(time.time()) + ttl_minutes * 60),
+        "INSERT INTO pairing_tokens (token, expires_at, used, account_id) VALUES (?, ?, 0, ?)",
+        (token, int(time.time()) + ttl_minutes * 60, account_id),
     )
     conn.commit()
     return token
+
+
+def approve_device(conn, device_secret, now: float | None = None) -> None:
+    conn.execute("UPDATE devices SET approved_at = ? WHERE device_secret = ?",
+                 (int(now or time.time()), device_secret))
+    conn.commit()
 
 
 def consume_pairing_token(conn, token: str, now: float | None = None) -> bool:
@@ -69,6 +80,9 @@ def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b
                     push_key_b64, pairing_token, sig_b64):
     if not push_key_b64:
         return None, None
+    token_row = conn.execute("SELECT account_id FROM pairing_tokens WHERE token = ?",
+                             (pairing_token,)).fetchone()
+    account_id = token_row["account_id"] if token_row else None
     if not consume_pairing_token(conn, pairing_token):
         return None, None
     public_key = crypto.public_from_spki_der(base64.b64decode(public_key_b64))
@@ -89,9 +103,10 @@ def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b
     device_auth = uuid.uuid4().hex
     conn.execute(
         "INSERT OR REPLACE INTO devices (device_secret, device_auth, device_name, fcm_token,"
-        " public_key, push_key, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        " public_key, push_key, registered_at, last_seen, account_id, approved_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
         (device_secret, device_auth, device_name, fcm_token, public_key_b64,
-         push_key_b64, int(time.time()), int(time.time())),
+         push_key_b64, int(time.time()), int(time.time()), account_id),
     )
     conn.commit()
     return device_auth, displaced

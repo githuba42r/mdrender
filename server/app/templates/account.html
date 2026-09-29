@@ -7,22 +7,31 @@
   (quota {{ quota.max_files }} files / {{ quota.max_bytes }} bytes, purge after {{ quota.max_age_hours }}h).</p>
 
 <h2>Devices</h2>
+<p class="lede"><a href="/account/pair">Pair a new device</a></p>
 {% if devices %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Device</th><th>Updated</th></tr></thead>
+  <thead><tr><th>Device</th><th>Registered</th><th>Status</th><th></th></tr></thead>
   <tbody>
     {% for d in devices %}
     <tr>
-      <td>{{ d.name or d.device_id }}</td>
-      <td>{{ d.updated_at | dt }}</td>
+      <td>{{ d.device_name }}</td>
+      <td>{{ d.registered_at | dt }}</td>
+      <td>{% if d.approved_at %}<span class="chip acked">approved</span>{% else %}<span class="chip pending">pending approval</span>{% endif %}</td>
+      <td>
+        {% if not d.approved_at %}
+        <form method="POST" action="/account/devices/{{ d.device_secret }}/approve" class="inline">
+          <button type="submit" class="btn-primary">Approve</button>
+        </form>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No devices registered yet. Pair the MDRender app from your push client.</p>
+<p class="empty">No devices yet. Pair the MDRender app from the link above.</p>
 {% endif %}
 
 <form method="POST" action="/account/logout" class="inline">

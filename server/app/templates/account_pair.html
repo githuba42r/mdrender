@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Pair a device &middot; My account{% endblock %}
+{% block content %}
+<h1>Pair a device</h1>
+<p class="lede">Scan this code with the MDRender app. The device registers to your account and appears here for approval.</p>
+<p>Server URL: <code>{{ server_url }}</code></p>
+<div class="qr">{{ qr_svg | safe }}</div>
+<p class="lede"><a href="/account">Back to my account</a></p>
+{% endblock %}

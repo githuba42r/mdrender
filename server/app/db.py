@@ -247,7 +247,11 @@ class Database:
         table and issue plain ALTERs for anything missing.
         """
         wanted = {
-            "devices": {"push_key": "TEXT NOT NULL DEFAULT ''"},
+            "devices": {
+                "push_key": "TEXT NOT NULL DEFAULT ''",
+                "account_id": "TEXT",
+                "approved_at": "INTEGER",
+            },
             "pushes": {
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",
                 "target_folder": "TEXT NOT NULL DEFAULT ''",
@@ -259,6 +263,9 @@ class Database:
             "sessions": {
                 "principal_type": "TEXT NOT NULL DEFAULT 'admin'",
                 "principal_id": "TEXT",
+            },
+            "pairing_tokens": {
+                "account_id": "TEXT",
             },
         }
         for table, columns in wanted.items():

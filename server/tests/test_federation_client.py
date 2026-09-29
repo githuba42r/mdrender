@@ -51,8 +51,35 @@ class _FakeMaster(BaseHTTPRequestHandler):
                 self._json({"ok": True, "queued": [{"type": "notice"}]})
             else:
                 self._json({"error": "bad signature"}, status=401)
+        elif self.path.startswith("/api/federation/accounts/"):
+            if not self._signed_ok(body):
+                self._json({"error": "bad signature"}, status=401)
+                return
+            self.state.setdefault("synced", []).append((self.command, self.path, body))
+            self._json({"ok": True})
+        elif self.path == "/api/federation/doorbell":
+            if not self._signed_ok(body):
+                self._json({"error": "bad signature"}, status=401)
+                return
+            self.state["doorbell"] = json.loads(body)
+            self._json({"ok": True})
         else:
             self._json({"error": "not found"}, status=404)
+
+    do_PUT = do_POST
+    do_DELETE = do_POST
+
+    def _signed_ok(self, body):
+        auth = self.headers.get("Authorization", "")
+        pub = self.state.get("public_key")
+        ts = self.headers.get("X-Federation-Timestamp")
+        nonce = self.headers.get("X-Federation-Nonce")
+        sig = self.headers.get("X-Federation-Signature")
+        if not (auth.startswith("Bearer ") and pub and ts and nonce and sig):
+            return False
+        key = crypto.public_from_spki_der(base64.b64decode(pub))
+        canon = federation.canonical_request(self.command, self.path, ts, nonce, body)
+        return crypto.verify(key, canon, base64.b64decode(sig))
 
 
 @pytest.fixture()
@@ -88,6 +115,44 @@ def test_slave_enrols_and_heartbeats(config, db_path, fake_master):
     assert state["heartbeat_ok"] is True
     assert hb == {"ok": True, "queued": [{"type": "notice"}]}
     assert federation_client.get_state(conn)["last_heartbeat"] is not None
+    conn.close()
+
+
+def _enrolled(config, db_path, master_url):
+    config.MASTER_URL = master_url
+    config.PUSH_PUBLIC_URL = "https://slave.example"
+    db = Database(db_path)
+    conn = db.connect()
+    db.init_schema(conn)
+    identity = get_or_create_identity(conn)
+    federation_client.enrol(config, conn, identity)
+    return conn, identity
+
+
+def test_sync_device_signs_and_sends(config, db_path, fake_master):
+    master_url, state = fake_master
+    conn, identity = _enrolled(config, db_path, master_url)
+
+    federation_client.sync_device(config, conn, identity, "acct-1", "dev-1", "tok-1")
+    method, path, body = state["synced"][-1]
+    assert method == "PUT"
+    assert path == "/api/federation/accounts/acct-1/devices/dev-1"
+    assert json.loads(body) == {"fcm_token": "tok-1"}
+
+    federation_client.sync_device(config, conn, identity, "acct-1", "dev-1", "",
+                                  delete=True)
+    assert state["synced"][-1][0] == "DELETE"
+    conn.close()
+
+
+def test_ring_via_master_posts_sealed_trigger(config, db_path, fake_master):
+    master_url, state = fake_master
+    conn, identity = _enrolled(config, db_path, master_url)
+
+    federation_client.ring_via_master(config, conn, identity, "acct-1", "dev-1",
+                                      {"c": "CIPHER", "i": "IV"})
+    assert state["doorbell"] == {"account_id": "acct-1", "device_id": "dev-1",
+                                 "sealed": {"c": "CIPHER", "i": "IV"}}
     conn.close()
 
 
