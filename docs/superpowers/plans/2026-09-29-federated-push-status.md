@@ -33,18 +33,31 @@ server/tests` is green (**112 tests**).
   sealed CEK endpoints; `encryption.py`.
 - **Auth surface**: `IDENTITY_PROVIDER`, `/auth/providers`, `/auth/oidc` stub.
 
+## Also complete (second pass)
+
+- **C tail**: outbound slave client + maintenance worker (enrol/heartbeat/restart
+  ping; master liveness sweep).
+- **D**: account session/login + `/account` portal; **account-bound pairing with
+  approval**; device publishing (local registry on the master, signed sync to
+  the master from a slave).
+- **E**: slave `_ring_doorbell` federation branch (seals and forwards to the
+  master when there is no local FCM).
+- **F**: `POST /api/account/upload` + quota enforcement + purge in the worker.
+- **G**: `/bans` UI, edge enforcement, `country` ban kind, DB-IP Lite ASN/country
+  lookups + `CF-IPCountry`.
+- **H**: `/billing` UI (plans, groups, manual credits) + entitlement
+  primitives (`BILLING_ENFORCEMENT` flags upload 402 when unentitled).
+- **J**: content key-exchange endpoints; **auth surface**: `/auth/providers`,
+  `/auth/oidc` stub.
+
 ## Remaining
 
-- **Device → account binding (approval)** and wiring the existing `/pair` +
-  `/api/register-device` flow to an account (`devices.account_id`).
-- **Slave `_ring_doorbell` federation branch**: when a slave has no FCM, seal and
-  forward to the master (needs device→account binding).
-- **DB-IP Lite** ASN lookup + `CF-IPCountry` for ASN/country bans (D9).
-- **Entitlement enforcement**: debit on upload/doorbell per the plan; grace and
-  suspension.
-- **Hosted IdP**: implement `/auth/oidc` verification (Firebase, D3/D11).
+- **Hosted IdP implementation**: verify a Firebase/Auth0 ID token at `/auth/oidc`
+  and mint a session (D3/D11). Local accounts are fully wired.
+- **Metered charging**: automatically debit storage/messages on the plan's
+  schedule (primitives exist; policy wiring remains).
 - **Android app**: content decryption keypair (Phase J app change, D10).
-- Ban management on the *slave* side and per-account credit UI ergonomics.
+- Optional polish: per-account credit/suspend UI, slave-side ban display.
 
 ## Notes
 
