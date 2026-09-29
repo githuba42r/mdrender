@@ -115,6 +115,15 @@ def test_pushes_and_pending_are_account_scoped(config, db_path):
         assert push_store.get_push_by_id(conn, "push-1") is None
 
 
+def test_account_menu_is_rendered(config, db_path):
+    app = _app(config)
+    c, _ = _account(app)
+    body = c.get("/account").data
+    for link in (b"/account/pair", b"/account/devices", b"/account/clients",
+                 b"/account/profile", b"/account/pushes", b"/account/pending"):
+        assert link in body
+
+
 def test_portal_pages_are_gated(config, db_path):
     app = _app(config)
     for path in ("/account/devices", "/account/clients", "/account/profile",
