@@ -5,6 +5,7 @@ import datetime
 import hmac
 import json
 import os
+import queue
 import re
 import secrets
 import shutil
@@ -19,7 +20,7 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import (accounts, bans, billing, crypto, encryption,
+from server.app import (accounts, bans, billing, crypto, encryption, events,
                         federation, federation_client, fcm as fcm_mod, geoip,
                         identity_admin, oidc, pairing, push_store, settings,
                         storage, trigger)
@@ -598,7 +599,39 @@ def create_app(config):
         img = qrcode.make(qr_text, image_factory=SvgPathImage)
         return render_template("account_pair.html",
                                qr_svg=img.to_string().decode(),
-                               server_url=config.PUSH_PUBLIC_URL)
+                               server_url=config.PUSH_PUBLIC_URL,
+                               pairing_token=token)
+
+    @app.route("/account/pair/events", methods=["GET"])
+    def account_pair_events():
+        """SSE stream: tell the pairing page the moment its device registers."""
+        principal = _principal()
+        if principal is None or principal["type"] != "account":
+            return jsonify({"error": "unauthorized"}), 401
+        token = request.args.get("token", "")
+        row = g.db.execute(
+            "SELECT account_id FROM pairing_tokens WHERE token = ?", (token,)).fetchone()
+        if row is None or row["account_id"] != principal["id"]:
+            return jsonify({"error": "unknown pairing token"}), 404
+
+        def stream():
+            channel = events.subscribe(token)
+            try:
+                yield ": connected\n\n"
+                while True:
+                    try:
+                        item = channel.get(timeout=15)
+                    except queue.Empty:
+                        yield ": keep-alive\n\n"
+                        continue
+                    yield (f"event: {item['event']}\n"
+                           f"data: {json.dumps(item['data'])}\n\n")
+            finally:
+                events.unsubscribe(token, channel)
+
+        return Response(stream(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache",
+                                 "X-Accel-Buffering": "no"})
 
     @app.route("/account/devices", methods=["GET"])
     def account_devices():
@@ -1662,6 +1695,14 @@ def create_app(config):
                 set_device_content_pubkey(g.db, data["device_secret"],
                                           data["content_pubkey"],
                                           data.get("content_proof"))
+            # An account-bound device is approved at registration, so publish its
+            # no-PII routing tuple now rather than waiting for a manual approval.
+            device = get_device_by_secret(g.db, data.get("device_secret"))
+            if device is not None and device["account_id"] and device["approved_at"]:
+                _publish_device(dict(device))
+            # Tell the pairing page (SSE) that its QR was scanned and paired.
+            events.publish(data.get("pairing_token", ""), "paired",
+                           {"device_name": data.get("device_name") or ""})
             # The device needs this key to verify the manifest signature, and it
             # only ever learns it from here, so hand it over in the same response
             # that completes pairing. The request arrived over the TLS connection

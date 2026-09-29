@@ -23,7 +23,9 @@ def main():
     host, port = config.LISTEN_ADDR.rsplit(":", 1)
     host = host or "0.0.0.0"
     from waitress import serve
-    serve(app, host=host, port=int(port))
+    # Headroom for long-lived Server-Sent Event streams (pairing page) alongside
+    # ordinary requests; waitress keeps each stream on its own thread.
+    serve(app, host=host, port=int(port), threads=24)
 
 
 if __name__ == "__main__":

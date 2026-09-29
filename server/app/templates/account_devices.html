@@ -2,6 +2,7 @@
 {% block title %}Devices &middot; My account{% endblock %}
 {% block content %}
 <h1>Devices</h1>
+{% if request.args.get('paired') %}<p class="login-msg">Device paired successfully.</p>{% endif %}
 <p class="lede">Phones paired to your account. Removing one makes it re-pair before it can receive pushes again. <a href="/account/pair">Pair a new device</a>.</p>
 {% if devices %}
 <div class="table-wrap">

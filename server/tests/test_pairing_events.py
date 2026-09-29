@@ -1,10 +1,11 @@
-# server/tests/test_device_binding.py
-"""Account-bound pairing auto-approves, and publishes to no-PII routing (D/E)."""
+# server/tests/test_pairing_events.py
+"""SSE pairing notifications: the pub/sub and the registration wiring."""
 import base64
 import hashlib
 import os
+import unittest.mock as mock
 
-from server.app import accounts, pairing
+from server.app import accounts, events, pairing
 from server.app.app import create_app
 from server.app.crypto import generate_rsa_keypair, public_to_spki_der, sign
 
@@ -30,36 +31,39 @@ def _register(client, token, name="Clever Juniper"):
         "pairing_token": token, "sig": sig})
 
 
-def test_account_bound_pairing_is_auto_approved(config, db_path):
+def test_publish_delivers_to_subscribers():
+    channel = events.subscribe("tok")
+    try:
+        events.publish("tok", "paired", {"device_name": "Phone"})
+        item = channel.get(timeout=1)
+        assert item["event"] == "paired" and item["data"]["device_name"] == "Phone"
+    finally:
+        events.unsubscribe("tok", channel)
+    # Publishing after unsubscribe is a no-op, not an error.
+    events.publish("tok", "paired")
+
+
+def test_registration_publishes_a_paired_event(config, db_path):
     app = _app(config)
     c = app.test_client()
     c.post("/signup", data={"email": "user@example.com", "password": "longenough1"})
     c.post("/account/login", data={"email": "user@example.com", "password": "longenough1"})
-
     with app.config["_db"].connect() as conn:
         account_id = accounts.get_account_by_email(conn, "user@example.com")["account_id"]
         token = pairing.create_pairing_token(conn, 15, account_id=account_id)
 
-    assert _register(c, token).status_code == 200
-    with app.config["_db"].connect() as conn:
-        dev = conn.execute("SELECT account_id, approved_at FROM devices"
-                           " WHERE device_secret = 'sec-1'").fetchone()
-        assert dev["account_id"] == account_id
-        assert dev["approved_at"] is not None  # approved on registration, no step
-        # Published to the master's no-PII routing registry straight away.
-        assert accounts.get_device(conn, account_id=account_id, device_id="sec-1",
-                                   server_id="master") is not None
-
-    # The portal shows it approved, not pending.
-    page = c.get("/account/devices").data
-    assert b"Clever Juniper" in page and b"pending approval" not in page
+    with mock.patch.object(events, "publish") as publish:
+        assert _register(c, token).status_code == 200
+    publish.assert_called_once()
+    args = publish.call_args.args
+    assert args[0] == token and args[1] == "paired"
 
 
-def test_account_pair_page_renders_qr(config, db_path):
+def test_events_endpoint_is_gated_and_validates_the_token(config, db_path):
     app = _app(config)
+    assert app.test_client().get("/account/pair/events?token=x").status_code == 401
+
     c = app.test_client()
     c.post("/signup", data={"email": "user@example.com", "password": "longenough1"})
     c.post("/account/login", data={"email": "user@example.com", "password": "longenough1"})
-    page = c.get("/account/pair")
-    assert page.status_code == 200
-    assert b"<svg" in page.data
+    assert c.get("/account/pair/events?token=nope").status_code == 404

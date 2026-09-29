@@ -2,8 +2,25 @@
 {% block title %}Pair a device &middot; My account{% endblock %}
 {% block content %}
 <h1>Pair a device</h1>
-<p class="lede">Scan this code with the MDRender app. The device registers to your account and appears here for approval.</p>
+<p class="lede">Scan this code with the MDRender app. The device registers to your account automatically.</p>
 <p>Server URL: <code>{{ server_url }}</code></p>
 <div class="qr">{{ qr_svg | safe }}</div>
-<p class="lede"><a href="/account">Back to my account</a></p>
+<p id="pair-status" class="login-msg">Waiting for the device to scan&hellip;</p>
+<p class="lede"><a href="/account/devices">Go to my devices</a></p>
+<script>
+  (function () {
+    const token = {{ pairing_token | tojson }};
+    const status = document.getElementById("pair-status");
+    const source = new EventSource(
+      "/account/pair/events?token=" + encodeURIComponent(token));
+    source.addEventListener("paired", function (evt) {
+      let name = "";
+      try { name = (JSON.parse(evt.data || "{}").device_name) || ""; } catch (e) {}
+      status.textContent = (name ? name + " paired successfully." : "Device paired successfully.");
+      source.close();
+      setTimeout(function () { window.location = "/account/devices?paired=1"; }, 900);
+    });
+    source.onerror = function () { /* EventSource retries on its own */ };
+  })();
+</script>
 {% endblock %}

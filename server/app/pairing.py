@@ -18,7 +18,8 @@ def create_pairing_token(conn, ttl_minutes: int, *, account_id: str | None = Non
     """Mint a single-use pairing token.
 
     When *account_id* is given the token binds the registering device to that
-    account (the device still needs approval before it can receive pushes).
+    account. The account already authorised the pairing by minting the token
+    from their signed-in session, so such a device is approved on registration.
     """
     token = uuid.uuid4().hex
     conn.execute(
@@ -101,12 +102,17 @@ def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b
         conn.execute("DELETE FROM devices WHERE device_secret = ?", (displaced,))
 
     device_auth = uuid.uuid4().hex
+    now = int(time.time())
+    # An account-bound device is approved on the spot: the account proved
+    # authorisation by minting the pairing token while signed in. Admin-paired
+    # devices (no account) still require manual approval.
+    approved_at = now if account_id else None
     conn.execute(
         "INSERT OR REPLACE INTO devices (device_secret, device_auth, device_name, fcm_token,"
         " public_key, push_key, registered_at, last_seen, account_id, approved_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (device_secret, device_auth, device_name, fcm_token, public_key_b64,
-         push_key_b64, int(time.time()), int(time.time()), account_id),
+         push_key_b64, now, now, account_id, approved_at),
     )
     conn.commit()
     return device_auth, displaced
