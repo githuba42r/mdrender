@@ -7,6 +7,7 @@ admin tables, the device-remove form redirect, and the enrol key page.
 import base64
 import hashlib
 import os
+import re
 
 from server.app.app import create_app
 from server.app.crypto import generate_rsa_keypair, public_to_spki_der, sign
@@ -57,6 +58,12 @@ def test_browser_pages_render(config, db_path):
     pair = client.get("/pair")
     assert pair.status_code == 200
     assert b"<svg" in pair.data
+    # Regression: the QR must be inline-renderable. SvgImage emits namespace-
+    # prefixed <svg:rect> children that browsers render as nothing when the
+    # SVG is embedded in HTML, so assert on the factory's actual raster: the
+    # <path> element. Also keep the token hook stable across both fetches.
+    assert b'xmlns:svg=' not in pair.data
+    assert re.search(rb"<path d=", pair.data)
     assert app.config["_test_pairing_token"]
 
     # Admin pages render (empty states)

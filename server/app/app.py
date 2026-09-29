@@ -9,7 +9,7 @@ import uuid
 import qrcode
 from flask import (Flask, Response, g, jsonify, make_response, redirect,
                    render_template, request, send_file)
-from qrcode.image.svg import SvgImage
+from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
@@ -162,8 +162,11 @@ def create_app(config):
         qr_text = pairing.build_pairing_qr(config.PUSH_PUBLIC_URL,
                                            app.config["_server_pk_b64"],
                                            token, expires_iso)
-        # Inline SVG QR (qrcode SVG factory; no Pillow required).
-        img = qrcode.make(qr_text, image_factory=SvgImage)
+        # Inline SVG QR (qrcode SvgPathImage; no Pillow required). Uses
+        # SvgPathImage, not SvgImage/SvgFragmentImage, because those emit
+        # <svg:rect> children with a namespace prefix that browsers discard
+        # when the SVG is embedded inline in HTML, so no QR code renders.
+        img = qrcode.make(qr_text, image_factory=SvgPathImage)
         qr_svg = img.to_string().decode()
         return render_template(
             "pair.html",
