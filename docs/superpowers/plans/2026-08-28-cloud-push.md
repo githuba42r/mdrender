@@ -212,11 +212,11 @@ camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "
 ```
 > Implemented with `firebaseBom = "33.7.0"` rather than 33.0.0, which was already stale.
 
-- [ ] **Step 2: Add the google-services plugin to the top-level `build.gradle.kts`**
-> Deferred together with Step 4. The plugin fails the build without
-> `app/google-services.json`, which the maintainer has not created yet, so applying it
-> would break every Android build. All other Phase B work compiles and is tested
-> without it. Do not fabricate the file.
+- [x] **Step 2: Add the google-services plugin to the top-level `build.gradle.kts`**
+> Done in `b602316`, using the version-catalog alias `libs.plugins.gcp.services`
+> (`gcpServices = "4.4.2"`) rather than an inline `id(...) version`. The earlier
+> deferral existed only because the plugin fails the build without
+> `app/google-services.json`; that file now exists, so the plugin applies cleanly.
 
 ```kotlin
 plugins {
@@ -246,7 +246,13 @@ dependencies {
 }
 ```
 
-- [ ] **Step 4: Obtain `app/google-services.json`**
+- [x] **Step 4: Obtain `app/google-services.json`**
+> Provisioned manually on personal project `mdrender-push` (no organization/folder
+> parent), committed in `b602316`. The Android app `com.a42r.mdrender` is registered
+> and `processDebugGoogleServices` emits `gcm_defaultSenderId=626486255098` and
+> `google_app_id=1:626486255098:android:a30d17437e1d47f4c91843` into the merged
+> resources. `app/google-services.json` is client-side config only and is safe to
+> commit; the server's `fcm-service-account.json` private key is not.
 
 ```bash
 # Maintainer step — one Google browser login. Runs the idempotent script (Task C4).
@@ -3447,7 +3453,11 @@ APP_ID="$(firebase apps:create android com.a42r.mdrender --project "$PROJECT_ID"
 firebase apps:sdkconfig android "$APP_ID" --project "$PROJECT_ID" \
     > app/google-services.json
 
-gcloud services enable firebasemessaging.googleapis.com --project "$PROJECT_ID"
+# The FCM v1 send API is fcm.googleapis.com. There is no
+# firebasemessaging.googleapis.com service in the catalog -- enabling that name
+# fails with SERVICE_CONFIG_NOT_FOUND_OR_PERMISSION_DENIED, which looks exactly
+# like a permission problem but is not one.
+gcloud services enable fcm.googleapis.com --project "$PROJECT_ID"
 gcloud iam service-accounts create fcm-pusher --project "$PROJECT_ID" || true
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member "serviceAccount:$SA" --role roles/firebasecloudmessaging.admin

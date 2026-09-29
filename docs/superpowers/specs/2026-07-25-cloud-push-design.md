@@ -151,7 +151,9 @@ firebase apps:sdkconfig android "$APP_ID" --project "$PROJECT_ID" \
     > app/google-services.json
 
 # 4. Enable the FCM v1 send API and create the service-account credential.
-gcloud services enable firebasemessaging.googleapis.com --project "$PROJECT_ID"
+# The send API is fcm.googleapis.com; there is no firebasemessaging.googleapis.com
+# service to enable.
+gcloud services enable fcm.googleapis.com --project "$PROJECT_ID"
 gcloud iam service-accounts create fcm-pusher --project "$PROJECT_ID" || true
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member "serviceAccount:$SA" --role roles/firebasecloudmessaging.admin
