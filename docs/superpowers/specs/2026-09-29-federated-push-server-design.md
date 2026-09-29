@@ -182,6 +182,17 @@ Build the foundation now; wire real providers later.
   - **Slave servers**: a **flat access fee** (prepaid period) for federation.
   - **Clients**: metered on **storage** (pending usage) and **messages**
     (doorbells/files delivered), prepaid via a balance.
+- **Plans** are first-class and there can be **many**: admins create any number
+  of plans per account scope (`slave` = flat access, `client` = metered), each
+  with a price, currency, interval, included allowances, and overage rates.
+- **Groups**: accounts can be grouped and a plan applied to a group. Every
+  account also carries an optional individual plan assignment.
+  **Effective-plan precedence: account plan → group plan → default-group plan.**
+- A **default group** exists that **every account is automatically a member of**
+  (it cannot be deleted); its plan is the baseline used when there is no more
+  specific assignment. Membership is additive — an account can be in several
+  groups; where groups disagree, the **highest-priority group's plan** wins
+  (the default group is lowest priority).
 - **Entitlement layer**: every billable action checks an entitlement
   (`active`, `grace`, `suspended`) derived from a prepaid balance/period, so the
   payment provider is swappable.
@@ -207,7 +218,10 @@ Build the foundation now; wire real providers later.
 | `client_quotas` | per-client overrides (max bytes/count, max age) |
 | `email_domain_rules` | allow/deny list for signup domains |
 | `billing_ledger` | charges/credits, reason, period, provider ref |
-| `billing_plans` | flat slave plans, client price per storage/message |
+| `billing_plans` | id, name, `scope` (slave\|client), price, currency, interval, included storage/messages, overage rates, active |
+| `billing_groups` | id, name, `plan_id` (nullable), `priority`, `is_default` |
+| `billing_group_members` | `group_id`, `account_type` (admin/slave/client), `account_id` |
+| `account_plans` | per-account plan override: `account_type`, `account_id`, `plan_id` |
 
 Existing `devices`, `pushes`, `push_files`, `sessions`, `oauth clients`
 remain; the client/tenant layer wraps them.
@@ -232,7 +246,9 @@ mint an MDRender session); local login always remains available.
 
 **Master admin:** list/revoke/deactivate/delete/ban slaves;
 list/block/ban clients and email domains; **network bans (ip, cidr, asn,
-hostname, domain)**; quotas; billing/ledger; plans.
+hostname, domain)**; quotas; billing/ledger; **plan CRUD (many plans);
+group CRUD + membership; assign a plan to an account or a group** (the default
+group auto-includes every account).
 
 **Ban management (shared vocabulary):** `GET/POST/DELETE /api/admin/bans` with a
 `kind` of `ip | cidr | asn | hostname | domain`, a `scope`
@@ -271,8 +287,9 @@ hostname, domain)**; quotas; billing/ledger; plans.
   quota/age config, sweeper, usage UI.
 - **G — Master admin.** slave list/revoke/deactivate/delete/ban (ip/host/domain);
   client list/block/ban; email-domain rules.
-- **H — Billing foundation.** plans, ledger, entitlements, provider interface
-  (manual first), top-up page stub.
+- **H — Billing foundation.** multiple plans, groups + membership with
+  account → group → default-group precedence, the default group, entitlements,
+  ledger, provider interface (manual first), top-up page stub.
 
 Each phase lands independently with tests; the app is untouched.
 
@@ -291,6 +308,10 @@ Each phase lands independently with tests; the app is untouched.
 - **D7** Multi-tenant data isolation model (per-client encryption or directory
   scoping).
 - **D8** Whether a slave may also be a standalone (own FCM) for some tenants.
+- **D12** Plan resolution details: group priority ordering when an account is in
+  several groups, proration/effective-date on plan changes, whether the default
+  group's plan is free, and whether clients and slaves share one plan space or
+  separate ones.
 - **D10** Identity provider: Firebase Auth (reuses the FCM project) vs Auth0 vs
   Cognito vs self-hosted; which social providers; and whether passwordless is
   email-link, passkey, or phone OTP.
