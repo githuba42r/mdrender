@@ -130,6 +130,84 @@ CREATE TABLE IF NOT EXISTS account_devices (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (server_id, account_id, device_id)
 );
+CREATE TABLE IF NOT EXISTS account_files (
+  file_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  stored_path TEXT NOT NULL,
+  alg TEXT,
+  nonce TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_quotas (
+  account_id TEXT PRIMARY KEY,
+  max_bytes INTEGER,
+  max_files INTEGER,
+  max_age_hours INTEGER
+);
+CREATE TABLE IF NOT EXISTS account_keys (
+  account_id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  retired_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS device_content_keys (
+  device_id TEXT PRIMARY KEY,
+  sealed_cek TEXT NOT NULL,
+  alg TEXT NOT NULL DEFAULT 'rsa-oaep-sha256',
+  created_at INTEGER NOT NULL,
+  retired_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS bans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'global',
+  reason TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS billing_plans (
+  plan_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  price_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'AUD',
+  interval TEXT NOT NULL DEFAULT 'month',
+  included_bytes INTEGER NOT NULL DEFAULT 0,
+  included_messages INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS billing_groups (
+  group_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  plan_id TEXT,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_groups (
+  account_type TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  PRIMARY KEY (account_type, account_id)
+);
+CREATE TABLE IF NOT EXISTS account_plans (
+  account_type TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  PRIMARY KEY (account_type, account_id)
+);
+CREATE TABLE IF NOT EXISTS billing_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_type TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  reason TEXT,
+  provider_ref TEXT,
+  created_at INTEGER NOT NULL
+);
 """
 
 

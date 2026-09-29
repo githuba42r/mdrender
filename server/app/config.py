@@ -29,6 +29,10 @@ DEFAULTS = {
     # with (baked-in default, overridable).
     "ROLE": "",
     "MASTER_URL": "",
+    # Per-account pending-storage defaults (overridable per account).
+    "ACCOUNT_MAX_BYTES": 104857600,   # 100 MB
+    "ACCOUNT_MAX_FILES": 1000,
+    "ACCOUNT_MAX_AGE_HOURS": 168,     # 7 days
 }
 
 
@@ -41,7 +45,8 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "ENROL_CODE_TTL_SECONDS", "ENROL_CODE_MAX_ATTEMPTS",
                  "ACCESS_TOKEN_TTL_SECONDS", "PUSH_FILE_TTL_HOURS",
                  "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
-                 "DEVICE_TTL_DAYS"):
+                 "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
+                 "ACCOUNT_MAX_AGE_HOURS"):
             env[k] = int(env[k])
     if overrides:
         env.update(overrides)
