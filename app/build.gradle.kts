@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.play.publisher)
+    alias(libs.plugins.gcp.services)
     kotlin("kapt")
 }
 

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "626486255098",
+    "project_id": "mdrender-push",
+    "storage_bucket": "mdrender-push.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:626486255098:android:a30d17437e1d47f4c91843",
+        "android_client_info": {
+          "package_name": "com.a42r.mdrender"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCnOFCUSkdy4dxk4J8A7qTtpVN15cgnNcc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
