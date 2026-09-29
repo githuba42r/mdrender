@@ -50,14 +50,19 @@ server/tests` is green (**112 tests**).
 - **J**: content key-exchange endpoints; **auth surface**: `/auth/providers`,
   `/auth/oidc` stub.
 
+## Also complete (third pass)
+
+- **Hosted IdP**: `/auth/oidc` verifies a **Firebase ID token** (RS256, Google
+  signing certs, aud/iss/exp/sub) and mints an account session — no SDK
+  (`oidc.py`); `FIREBASE_PROJECT_ID` config.
+- **Metered charging**: per-MB plan rates and `billing.bill_storage` (charges
+  aged pending bytes, idempotent per interval), run by the worker.
+
 ## Remaining
 
-- **Hosted IdP implementation**: verify a Firebase/Auth0 ID token at `/auth/oidc`
-  and mint a session (D3/D11). Local accounts are fully wired.
-- **Metered charging**: automatically debit storage/messages on the plan's
-  schedule (primitives exist; policy wiring remains).
 - **Android app**: content decryption keypair (Phase J app change, D10).
-- Optional polish: per-account credit/suspend UI, slave-side ban display.
+- Optional polish: per-account credit/suspend UI, slave-side ban display,
+  message metering on doorbells (storage metering is wired).
 
 ## Notes
 
