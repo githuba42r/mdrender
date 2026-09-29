@@ -24,6 +24,22 @@ def get_account_public_key(conn, account_id):
     return row["public_key"] if row else None
 
 
+def set_device_public_key(conn, device_id, public_key_b64) -> None:
+    """Register the app's content decryption public key for a device."""
+    conn.execute(
+        "INSERT INTO device_content_pubkeys (device_id, public_key, created_at)"
+        " VALUES (?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET"
+        " public_key = excluded.public_key, created_at = excluded.created_at",
+        (device_id, public_key_b64, int(time.time())))
+    conn.commit()
+
+
+def get_device_public_key(conn, device_id):
+    row = conn.execute("SELECT public_key FROM device_content_pubkeys WHERE device_id = ?",
+                       (device_id,)).fetchone()
+    return row["public_key"] if row else None
+
+
 def set_sealed_cek(conn, device_id, sealed_cek, *, alg="rsa-oaep-sha256") -> None:
     conn.execute(
         "INSERT INTO device_content_keys (device_id, sealed_cek, alg, created_at)"

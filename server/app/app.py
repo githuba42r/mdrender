@@ -18,8 +18,9 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import (accounts, bans, billing, crypto, federation,
-                        fcm as fcm_mod, pairing, push_store, storage, trigger)
+from server.app import (accounts, bans, billing, crypto, encryption,
+                        federation, fcm as fcm_mod, pairing, push_store,
+                        storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -432,6 +433,52 @@ def create_app(config):
                              nonce=request.form.get("nonce"))
             stored.append(file_id)
         return jsonify({"ok": True, "file_ids": stored})
+
+    @app.route("/api/account/keys", methods=["PUT"])
+    def account_set_key():
+        """Register the account's content public key (design §7a)."""
+        auth_error = require_account_api()
+        if auth_error:
+            return auth_error
+        data = request.get_json(silent=True) or {}
+        public_key = data.get("public_key")
+        if not public_key:
+            return jsonify({"error": "public_key required"}), 400
+        encryption.set_account_public_key(g.db, _principal()["id"], public_key)
+        return jsonify({"ok": True})
+
+    @app.route("/api/account/devices/<device_id>/content-pubkey",
+               methods=["PUT", "GET"])
+    def account_device_content_pubkey(device_id):
+        """The app's content public key (the client seals the CEK to it)."""
+        auth_error = require_account_api()
+        if auth_error:
+            return auth_error
+        if request.method == "PUT":
+            data = request.get_json(silent=True) or {}
+            public_key = data.get("public_key")
+            if not public_key:
+                return jsonify({"error": "public_key required"}), 400
+            encryption.set_device_public_key(g.db, device_id, public_key)
+            return jsonify({"ok": True})
+        public_key = encryption.get_device_public_key(g.db, device_id)
+        if public_key is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify({"device_id": device_id, "public_key": public_key})
+
+    @app.route("/api/account/devices/<device_id>/sealed-cek", methods=["PUT"])
+    def account_device_sealed_cek(device_id):
+        """Store the client-sealed CEK (opaque; the server cannot open it)."""
+        auth_error = require_account_api()
+        if auth_error:
+            return auth_error
+        data = request.get_json(silent=True) or {}
+        sealed = data.get("sealed_cek")
+        if not sealed:
+            return jsonify({"error": "sealed_cek required"}), 400
+        encryption.set_sealed_cek(g.db, device_id, sealed,
+                                  alg=data.get("alg", "rsa-oaep-sha256"))
+        return jsonify({"ok": True})
 
     @app.route("/login", methods=["POST"])
     def login():

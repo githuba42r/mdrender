@@ -159,6 +159,11 @@ CREATE TABLE IF NOT EXISTS account_keys (
   created_at INTEGER NOT NULL,
   retired_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS device_content_pubkeys (
+  device_id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS device_content_keys (
   device_id TEXT PRIMARY KEY,
   sealed_cek TEXT NOT NULL,
