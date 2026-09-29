@@ -69,6 +69,9 @@ def test_signup_toggle_closes_signup(config, db_path):
                                   data={"email": "u@example.com",
                                         "password": "longenough1"}).status_code == 403
 
+    # Login pages no longer advertise signup while it is closed.
+    assert b'href="/signup"' not in c.get("/login").data
+
     # The admin can still create users directly.
     with app.config["_db"].connect() as conn:
         assert accounts.create_account(conn, "x@example.com", "longenough1")

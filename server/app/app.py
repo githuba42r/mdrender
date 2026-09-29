@@ -361,6 +361,14 @@ def create_app(config):
         return {"firebase": firebase}
 
     @app.context_processor
+    def _inject_settings():
+        """Expose the signup toggle so pages can show/hide signup links."""
+        try:
+            return {"signup_open": settings.signup_enabled(g.db)}
+        except Exception:
+            return {"signup_open": True}
+
+    @app.context_processor
     def _inject_auth_state():
         """Let every template hide the admin menu unless a session is live.
 

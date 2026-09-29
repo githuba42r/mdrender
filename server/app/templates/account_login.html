@@ -9,7 +9,7 @@
   {% if firebase %}
   <p class="lede">Sign in with a social account, phone code, or magic email link.</p>
   {% include "_firebase_auth.html" %}
-  <p class="lede">No account? <a href="/signup">Create one</a>.</p>
+  {% if signup_open %}<p class="lede">No account? <a href="/signup">Create one</a>.</p>{% endif %}
   {% else %}
   <p class="lede">Sign in with your email to manage your devices and pending files.</p>
   {% if error %}<p class="lede" style="color: var(--danger)">{{ error }}</p>{% endif %}

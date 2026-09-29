@@ -9,7 +9,7 @@
   {% if firebase %}
   <p class="lede">Sign in with Google, GitHub, a phone code, or an email magic link.</p>
   {% include "_firebase_auth.html" %}
-  <p class="lede">No account? <a href="/signup">Create one</a>.</p>
+  {% if signup_open %}<p class="lede">No account? <a href="/signup">Create one</a>.</p>{% endif %}
   <hr>
   <h2>Server admin</h2>
   <p class="lede">Administrators sign in with their local account.</p>
