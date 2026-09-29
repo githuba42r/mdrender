@@ -130,6 +130,13 @@ CREATE TABLE IF NOT EXISTS account_devices (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (server_id, account_id, device_id)
 );
+CREATE TABLE IF NOT EXISTS federation_client (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  master_url TEXT NOT NULL,
+  server_secret TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  last_heartbeat INTEGER
+);
 CREATE TABLE IF NOT EXISTS account_files (
   file_id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
