@@ -51,6 +51,11 @@ class PushServerConfig @Inject constructor(
 
     val pushKeyB64: String get() = Base64.getEncoder().encodeToString(pushKey)
 
+    /** Server policy at pairing: "on" forces end-to-end content encryption. */
+    var encryptionMode: String
+        get() = prefs.getString(KEY_ENCRYPTION_MODE, "off") ?: "off"
+        set(value) = prefs.edit().putString(KEY_ENCRYPTION_MODE, value).apply()
+
     val deviceName: String get() = localSendPrefs.alias
 
     val isPaired: Boolean
@@ -61,6 +66,7 @@ class PushServerConfig @Inject constructor(
             .putString(KEY_SERVER_URL, "")
             .putString(KEY_SERVER_PUBLIC_KEY, "")
             .putString(KEY_DEVICE_AUTH, "")
+            .putString(KEY_ENCRYPTION_MODE, "off")
             // Removed rather than blanked: these two are generated on first read,
             // and only a missing entry triggers that. Storing "" would leave a
             // re-paired device with an empty device secret and push key.
@@ -76,5 +82,6 @@ class PushServerConfig @Inject constructor(
         private const val KEY_DEVICE_SECRET = "device_secret"
         private const val KEY_DEVICE_AUTH = "device_auth"
         private const val KEY_PUSH_KEY = "push_key"
+        private const val KEY_ENCRYPTION_MODE = "encryption_mode"
     }
 }

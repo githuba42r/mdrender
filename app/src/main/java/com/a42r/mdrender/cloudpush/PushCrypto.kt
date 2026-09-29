@@ -124,6 +124,51 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
     fun signRegistration(data: ByteArray): String =
         Base64.getEncoder().encodeToString(keyStore.sign(data))
 
+    /**
+     * Proof that this device owns its content public key: the pairing key signs
+     * `content:<pubkey>`. A client verifies this against the device's pairing
+     * public key before sealing the content key, so the server cannot substitute
+     * a content key (design §7c).
+     */
+    fun signContentKey(contentPublicKeyB64: String): String =
+        Base64.getEncoder().encodeToString(
+            keyStore.sign("content:$contentPublicKeyB64".toByteArray(Charsets.UTF_8))
+        )
+
+    /**
+     * Open the client-sealed content key with the content private key. The server
+     * only ever held the sealed blob, so it could not open it. Null if it is not
+     * addressed to this device's content key.
+     */
+    fun decryptSealedCek(sealedB64: String): ByteArray? = try {
+        keyStore.decryptOaep(Base64.getDecoder().decode(sealedB64))
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Decrypt one file. The client stores `nonce(12) || ciphertext||tag` as an
+     * opaque blob, so the nonce travels with the bytes and the server never sees
+     * it (design §7a). Null if it does not authenticate.
+     */
+    fun decryptFile(blob: ByteArray, cek: ByteArray): ByteArray? = try {
+        if (blob.size <= CONTENT_NONCE_LENGTH) {
+            null
+        } else {
+            val nonce = blob.copyOfRange(0, CONTENT_NONCE_LENGTH)
+            val ciphertext = blob.copyOfRange(CONTENT_NONCE_LENGTH, blob.size)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(cek, "AES"),
+                GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce),
+            )
+            cipher.doFinal(ciphertext)
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
         /**
          * Every cloud-push payload is snake_case on the wire (`push_id`,
@@ -141,6 +186,7 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
         }
 
         private const val IV_LENGTH = 12
+        private const val CONTENT_NONCE_LENGTH = 12
         private const val GCM_TAG_LENGTH = 16
         private const val GCM_TAG_LENGTH_BITS = 128
     }

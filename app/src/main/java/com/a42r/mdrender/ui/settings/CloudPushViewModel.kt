@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.Base64
 import javax.inject.Inject
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -77,6 +78,17 @@ class CloudPushViewModel @Inject constructor(
             }
             runCatching {
                 val publicKey = keyStore.getOrCreateKeyPair().public.encoded
+                // Server-enforced encryption (design §7b): if the server requires
+                // it, register a content key and a pairing-key proof so clients
+                // can seal to this device (design §7c).
+                val policy = client.fetchPolicy(info.serverUrl).getOrDefault("off")
+                var contentPub: String? = null
+                var contentProof: String? = null
+                if (policy == "on") {
+                    contentPub = Base64.getEncoder()
+                        .encodeToString(keyStore.getContentPublicKeySpkiDer())
+                    contentProof = crypto.signContentKey(contentPub)
+                }
                 val registered = client.registerDevice(
                     serverUrl = info.serverUrl,
                     config = config,
@@ -84,6 +96,8 @@ class CloudPushViewModel @Inject constructor(
                     publicKeySpkiDer = publicKey,
                     fcmToken = awaitFcmToken(),
                     pairingToken = info.token,
+                    contentPublicKeyB64 = contentPub,
+                    contentProofB64 = contentProof,
                 ).getOrThrow()
                 val serverPem = pairing.pemFromBase64(registered.serverPublicKeyB64)
                     ?: throw IllegalStateException("server sent an unreadable public key")
@@ -93,6 +107,7 @@ class CloudPushViewModel @Inject constructor(
                 config.serverUrl = info.serverUrl
                 config.serverPublicKeyPem = serverPem
                 config.deviceAuth = registered.deviceAuth
+                config.encryptionMode = policy
             }.onSuccess {
                 _status.update { it.copy(message = "Paired with ${config.serverUrl}", isBusy = false) }
             }.onFailure { e ->
@@ -114,6 +129,7 @@ class CloudPushViewModel @Inject constructor(
         viewModelScope.launch {
             config.clear()
             keyStore.deleteKeyPair()
+            keyStore.deleteContentKeyPair()
             manager.setReRegistrationNeeded(false)
             _status.update {
                 it.copy(message = "Pairing cleared. Scan a new pairing code.", registrationKnown = null)

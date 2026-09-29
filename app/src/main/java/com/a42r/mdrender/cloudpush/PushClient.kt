@@ -56,6 +56,8 @@ class PushClient @Inject constructor() {
         publicKeySpkiDer: ByteArray,
         fcmToken: String,
         pairingToken: String,
+        contentPublicKeyB64: String? = null,
+        contentProofB64: String? = null,
     ): Result<Registered> = call {
         val publicKeyB64 = Base64.getEncoder().encodeToString(publicKeySpkiDer)
         val pushKeyB64 = config.pushKeyB64
@@ -72,6 +74,14 @@ class PushClient @Inject constructor() {
             put("push_key", pushKeyB64)
             put("pairing_token", pairingToken)
             put("sig", crypto.signRegistration(digest))
+            // Server-enforced encryption (design §7b): register the content key
+            // and the pairing-key proof so clients can seal to it (design §7c).
+            if (contentPublicKeyB64 != null) {
+                put("content_pubkey", contentPublicKeyB64)
+            }
+            if (contentProofB64 != null) {
+                put("content_proof", contentProofB64)
+            }
         }
         val response = postJson(serverUrl, "/api/register-device", body)
         if (response.code != 200) response.fail("register-device")
@@ -83,6 +93,33 @@ class PushClient @Inject constructor() {
         val serverPublicKeyB64 = json["server_pk"]?.jsonPrimitive?.content
             ?: throw IOException("server did not return its public key")
         Registered(deviceAuth, serverPublicKeyB64)
+    }
+
+    /** The server's encryption policy (design §7b). Defaults to "off". */
+    suspend fun fetchPolicy(serverUrl: String): Result<String> = call {
+        val connection = URL(serverUrl.trimEnd('/') + "/api/server/policy")
+            .openConnection() as HttpURLConnection
+        connection.requestMethod = "GET"
+        connection.connectTimeout = CONNECT_TIMEOUT_MS
+        connection.readTimeout = READ_TIMEOUT_MS
+        try {
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
+            if (code != 200) throw PushHttpException(code, "policy", body.take(200))
+            Json.parseToJsonElement(body).jsonObject["encryption"]?.jsonPrimitive?.content
+                ?: "off"
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** Fetch the client-sealed content key (opaque; design §7a). */
+    suspend fun fetchSealedCek(config: PushServerConfig): Result<String> = call {
+        val response = postJson(config.serverUrl, "/api/device/content-key", credentials(config) {})
+        if (response.code != 200) response.fail("content key")
+        response.json()["sealed_cek"]?.jsonPrimitive?.content
+            ?: throw IOException("no sealed content key")
     }
 
     /** Tell the server this device's FCM token changed. */

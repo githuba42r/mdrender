@@ -6,6 +6,7 @@ import com.a42r.mdrender.data.repository.FolderRepository
 import com.a42r.mdrender.data.repository.PushHistoryRepository
 import com.a42r.mdrender.localsend.ConflictStrategy
 import java.io.File
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,10 +24,14 @@ class CloudPushDownloader @Inject constructor(
     private val manager: CloudPushManager,
     private val client: PushClient,
     private val config: PushServerConfig,
+    private val crypto: PushCrypto,
     private val fileRepository: FileRepository,
     private val folderRepository: FolderRepository,
     private val pushHistory: PushHistoryRepository,
 ) {
+
+    /** The unwrapped content key, cached for the session (never persisted). */
+    private var cek: ByteArray? = null
 
     /**
      * Download, import, and ack every outstanding file for [pushId], calling
@@ -59,6 +64,15 @@ class CloudPushDownloader @Inject constructor(
             val ok = runCatching {
                 client.downloadFile(config, fileId, task.file.retrievalKey, temp)
                     .getOrThrow()
+                // Server-enforced encryption (design §7b): the bytes are opaque
+                // ciphertext; decrypt in place with the content key before import.
+                if (config.encryptionMode == "on") {
+                    val key = cek ?: refreshCek()
+                        ?: throw IOException("no content key for an encrypted push")
+                    val plain = crypto.decryptFile(temp.readBytes(), key)
+                        ?: throw IOException("encrypted file did not authenticate")
+                    temp.writeBytes(plain)
+                }
                 // importFileFromTemp consumes and deletes the temp file, so the
                 // size has to be read first or every history row would say 0.
                 val size = temp.length()
@@ -85,6 +99,15 @@ class CloudPushDownloader @Inject constructor(
 
     private fun statusOf(fileId: String): CloudPushManager.Status? =
         manager.state.value.firstOrNull { it.fileId == fileId }?.status
+
+    /**
+     * Fetch the sealed content key from the server and unwrap it. The server
+     * holds only the sealed blob, so it cannot do this itself (design §7c).
+     */
+    private suspend fun refreshCek(): ByteArray? {
+        val sealed = client.fetchSealedCek(config).getOrNull() ?: return null
+        return crypto.decryptSealedCek(sealed)?.also { cek = it }
+    }
 
     /**
      * Import [temp] under the conflict strategy the sender chose, behaving the
