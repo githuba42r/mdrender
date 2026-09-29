@@ -37,9 +37,9 @@ from server.app.store import (check_device, create_client, delete_device,
                               get_device_by_secret,
                               get_or_create_server_keypair, list_account_devices,
                               list_clients, list_devices, revoke_client,
-                              session_secret_from_pem, touch_last_seen,
-                              update_device_name, update_device_push_key,
-                              update_device_token)
+                              session_secret_from_pem, set_device_content_pubkey,
+                              touch_last_seen, update_device_name,
+                              update_device_push_key, update_device_token)
 
 SESSION_COOKIE = "mdrender_session"
 
@@ -537,10 +537,16 @@ def create_app(config):
                 return jsonify({"error": "public_key required"}), 400
             encryption.set_device_public_key(g.db, device_id, public_key)
             return jsonify({"ok": True})
-        public_key = encryption.get_device_public_key(g.db, device_id)
-        if public_key is None:
+        # Return the app's content key together with the pairing-key proof and the
+        # device's pairing public key, so the client can verify the chain before
+        # sealing the CEK (design §7c). The server holds no decryption material.
+        device = get_device_by_secret(g.db, device_id)
+        if device is None or not device["content_pubkey"]:
             return jsonify({"error": "not found"}), 404
-        return jsonify({"device_id": device_id, "public_key": public_key})
+        return jsonify({"device_id": device_id,
+                        "content_pubkey": device["content_pubkey"],
+                        "content_proof": device["content_proof"],
+                        "device_public_key": device["public_key"]})
 
     @app.route("/api/account/devices/<device_id>/sealed-cek", methods=["PUT"])
     def account_device_sealed_cek(device_id):
@@ -1188,6 +1194,13 @@ def create_app(config):
             )
             if device_auth is None:
                 return jsonify({"error": "registration failed"}), 400
+            # The app's content decryption public key (design §7a), when the app
+            # uses server-enforced encryption. The server stores only the public
+            # key; the client seals the CEK to it later.
+            if data.get("content_pubkey"):
+                set_device_content_pubkey(g.db, data["device_secret"],
+                                          data["content_pubkey"],
+                                          data.get("content_proof"))
             # The device needs this key to verify the manifest signature, and it
             # only ever learns it from here, so hand it over in the same response
             # that completes pairing. The request arrived over the TLS connection
@@ -1290,6 +1303,23 @@ def create_app(config):
             return jsonify({"error": "re-register"}), 404
         touch_last_seen(g.db, secret)
         return jsonify({"ok": True})
+
+    @app.route("/api/device/content-key", methods=["POST"])
+    def device_content_key():
+        """Return the client-sealed content key for this device (design §7a).
+
+        The app fetches it once and unwraps it with its Keystore private key; the
+        server never sees the CEK.
+        """
+        data = request.get_json(silent=True) or {}
+        secret = data.get("device_secret")
+        auth = data.get("device_auth")
+        if not secret or not auth or not check_device(g.db, secret, auth):
+            return jsonify({"error": "re-register"}), 404
+        row = encryption.get_sealed_cek(g.db, secret)
+        if row is None or not row["sealed_cek"]:
+            return jsonify({"error": "no content key"}), 404
+        return jsonify({"sealed_cek": row["sealed_cek"], "alg": row["alg"]})
 
     @app.route("/api/push/<push_id>/status", methods=["GET"])
     def push_status(push_id):

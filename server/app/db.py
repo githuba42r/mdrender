@@ -254,10 +254,7 @@ class Database:
                 "account_id": "TEXT",
                 "approved_at": "INTEGER",
                 "content_pubkey": "TEXT",
-            },
-            "push_files": {
-                "enc": "TEXT",
-                "nonce": "TEXT",
+                "content_proof": "TEXT",
             },
             "pushes": {
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",

@@ -25,11 +25,23 @@ def test_content_key_endpoints(config, db_path):
     app = _app(config)
     c = _client(app)
     assert c.put("/api/account/keys", json={"public_key": "ACCTPUB"}).status_code == 200
-    assert c.put("/api/account/devices/dev-1/content-pubkey",
-                 json={"public_key": "APPPUB"}).status_code == 200
+
+    # A paired device carries its content key, the pairing-key proof, and its
+    # pairing public key, so the client can verify the chain (design §7c).
+    with app.config["_db"].connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO devices (device_secret, device_auth, device_name,"
+            " fcm_token, public_key, push_key, registered_at, last_seen,"
+            " content_pubkey, content_proof) VALUES"
+            " ('dev-1','auth','Dev','fcm','DEVPUB','PUSH',1,1,'APPPUB','PROOF')")
+        conn.commit()
 
     got = c.get("/api/account/devices/dev-1/content-pubkey")
-    assert got.get_json()["public_key"] == "APPPUB"
+    assert got.status_code == 200
+    body = got.get_json()
+    assert body["content_pubkey"] == "APPPUB"
+    assert body["content_proof"] == "PROOF"
+    assert body["device_public_key"] == "DEVPUB"
 
     assert c.put("/api/account/devices/dev-1/sealed-cek",
                  json={"sealed_cek": "SEALED"}).status_code == 200

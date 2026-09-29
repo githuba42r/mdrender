@@ -85,6 +85,24 @@ def update_device_name(conn, device_secret, device_auth, new_name) -> bool:
         return False  # name already taken by another device
 
 
+def set_device_content_pubkey(conn, device_secret, public_key_b64, proof_b64=None) -> None:
+    """Record the app's content decryption public key and its pairing-key proof.
+
+    `proof_b64` is the app's signature over the content key (design §7c); the
+    server stores it so the client can verify the app really owns the key. The
+    server never holds anything that can decrypt content.
+    """
+    conn.execute("UPDATE devices SET content_pubkey = ?, content_proof = ?"
+                 " WHERE device_secret = ?", (public_key_b64, proof_b64, device_secret))
+    conn.commit()
+
+
+def get_device_content_pubkey(conn, device_secret):
+    row = conn.execute("SELECT content_pubkey FROM devices WHERE device_secret = ?",
+                       (device_secret,)).fetchone()
+    return row["content_pubkey"] if row else None
+
+
 def update_device_push_key(conn, device_secret, device_auth, new_push_key_b64) -> bool:
     """Replace a device's doorbell key.
 

@@ -1,12 +1,13 @@
 # server/tests/test_encryption_policy.py
 """Server-enforced encryption policy (design §7b)."""
 import base64
+import hashlib
 import io
 import json
 import os
 import unittest.mock as mock
 
-from server.app import accounts, crypto, encryption, federation
+from server.app import accounts, crypto, encryption, federation, pairing, store
 from server.app.app import create_app
 
 
@@ -45,6 +46,41 @@ def test_required_encryption_rejects_plaintext_upload(config, db_path):
                           "alg": "aes-256-gcm", "nonce": "N"},
                     content_type="multipart/form-data")
     assert sealed.status_code == 200
+
+
+def _register_device_with_content(app, content_pubkey="APPPUB"):
+    with app.config["_db"].connect() as conn:
+        token = pairing.create_pairing_token(conn, 15)
+    priv, pub = crypto.generate_rsa_keypair()
+    pub_b64 = base64.b64encode(crypto.public_to_spki_der(pub)).decode()
+    push_key = base64.b64encode(os.urandom(32)).decode()
+    secret, fcm = "dev-secret", "fcm"
+    digest = hashlib.sha256(f"{secret}Dev{fcm}{pub_b64}{push_key}".encode()).digest()
+    sig = base64.b64encode(crypto.sign(priv, digest)).decode()
+    resp = app.test_client().post("/api/register-device", json={
+        "device_secret": secret, "device_name": "Dev", "fcm_token": fcm,
+        "public_key": pub_b64, "push_key": push_key, "pairing_token": token,
+        "sig": sig, "content_pubkey": content_pubkey})
+    assert resp.status_code == 200, resp.data
+    return secret, resp.get_json()["device_auth"]
+
+
+def test_device_content_key_endpoint(config, db_path):
+    config.ENCRYPTION_MODE = "on"
+    app = _app(config)
+    secret, auth = _register_device_with_content(app)
+    with app.config["_db"].connect() as conn:
+        assert store.get_device_content_pubkey(conn, secret) == "APPPUB"
+
+    c = app.test_client()
+    # No sealed CEK yet.
+    assert c.post("/api/device/content-key",
+                  json={"device_secret": secret, "device_auth": auth}).status_code == 404
+    with app.config["_db"].connect() as conn:
+        encryption.set_sealed_cek(conn, secret, "SEALED")
+    ok = c.post("/api/device/content-key",
+                json={"device_secret": secret, "device_auth": auth})
+    assert ok.status_code == 200 and ok.get_json()["sealed_cek"] == "SEALED"
 
 
 def _enrol_slave(app):

@@ -295,6 +295,29 @@ at rest on the push server (awaiting collection) is unreadable to them, and
 therefore that they are not responsible for it. The setting is never chosen by
 the client.
 
+### 7c. Trust anchor and the no-server-access invariant
+
+The server (or its admin) must **never** be able to obtain a content key, and
+must **never** be able to substitute one during negotiation:
+
+- The server stores only **public** material: the app's content public key and
+  an **opaque sealed CEK**. It never stores, derives, or logs a private content
+  key, the CEK, or the device secret in any form that yields content. Key
+  material never appears in application logs.
+- The app's content public key is **signed by the app's pairing key** (the
+  sign-only key whose public key was registered at pairing):
+  `content_proof = sign(pairing_priv, "content:" + content_pubkey)`. The client
+  verifies this proof before sealing the CEK, so a **substituted content key is
+  rejected** even though the server relayed it.
+- Because the server is also the key directory, it could in principle swap the
+  app's pairing key and its proof together. To defeat that, the operator
+  **confirms the app's key out of band** — the app shows a short fingerprint and
+  the push client pins it (SSH-style, `known_hosts`-like). After the pin, the
+  server is cryptographically unable to read pending content.
+- The **device secret**/`device_auth` is a *credential*, not a content key: it is
+  transmitted only over TLS, compared with a constant-time check, and never used
+  to derive content keys. Hashing it at rest is preferred.
+
 ## 8. Master administration of slave servers
 
 - **List** slaves (hostname, server_id, status, last seen, counts).
