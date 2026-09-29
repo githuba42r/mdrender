@@ -11,13 +11,17 @@ import {
   getAuth,
   GoogleAuthProvider,
   GithubAuthProvider,
+  EmailAuthProvider,
   RecaptchaVerifier,
   sendSignInLinkToEmail,
+  sendEmailVerification,
   isSignInWithEmailLink,
   signInWithEmailLink,
   signInWithPhoneNumber,
   signInWithPopup,
   signInWithEmailAndPassword,
+  linkWithPopup,
+  linkWithCredential,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 const app = initializeApp(window.__FIREBASE__);
@@ -74,10 +78,30 @@ async function exchange(user) {
   }
 }
 
+// Every account needs a verified email, but a phone-only Firebase user has
+// none. Rather than exchange, ask them to attach one first (see below).
+async function afterSignIn(user) {
+  if (user && !user.email) {
+    showEmailLinkPanel();
+    return;
+  }
+  await exchange(user);
+}
+
+function showEmailLinkPanel() {
+  const idp = document.getElementById("auth-identifier-panel");
+  const pwp = document.getElementById("auth-password-panel");
+  const elp = document.getElementById("auth-email-link-panel");
+  if (idp) idp.hidden = true;
+  if (pwp) pwp.hidden = true;
+  if (elp) elp.hidden = false;
+  show("auth-message", "Add an email to finish creating your account.");
+}
+
 async function popup(provider) {
   try {
     const result = await signInWithPopup(auth, provider);
-    await exchange(result.user);
+    await afterSignIn(result.user);
   } catch (e) {
     show("auth-error", friendly(e));
   }
@@ -108,7 +132,7 @@ async function sendPhoneCode(phone) {
     const code = window.prompt("Enter the SMS code we just sent:");
     if (code) {
       const result = await confirmation.confirm(code);
-      await exchange(result.user);
+      await afterSignIn(result.user);
     }
   } catch (e) {
     show("auth-error", friendly(e));
@@ -138,7 +162,7 @@ window.mdrenderPassword = async () => {
   }
   try {
     const result = await signInWithEmailAndPassword(auth, email, password);
-    await exchange(result.user);
+    await afterSignIn(result.user);
   } catch (e) {
     show("auth-error", friendly(e));
   }
@@ -158,6 +182,44 @@ window.mdrenderTogglePassword = () => {
   }
 };
 
+async function linkProvider(provider) {
+  if (!auth.currentUser) {
+    show("auth-error", "Sign in again to add an email.");
+    return;
+  }
+  try {
+    const result = await linkWithPopup(auth.currentUser, provider);
+    await exchange(result.user);
+  } catch (e) {
+    show("auth-error", friendly(e));
+  }
+}
+
+window.mdrenderAttachGoogle = () => linkProvider(new GoogleAuthProvider());
+window.mdrenderAttachGithub = () => linkProvider(new GithubAuthProvider());
+
+window.mdrenderAttachEmail = async () => {
+  const user = auth.currentUser;
+  const email = val("attach-email");
+  const password = document.getElementById("attach-password")?.value || "";
+  if (!user) {
+    show("auth-error", "Sign in again to add an email.");
+    return;
+  }
+  if (!email || password.length < 6) {
+    show("auth-error", "Enter an email and a password of 6+ characters.");
+    return;
+  }
+  try {
+    const result = await linkWithCredential(
+      user, EmailAuthProvider.credential(email, password));
+    await sendEmailVerification(result.user);
+    show("auth-message", "Email attached. Check your inbox to verify it, then sign in again.");
+  } catch (e) {
+    show("auth-error", friendly(e));
+  }
+};
+
 // Complete a magic-link sign-in if we arrived via one.
 if (isSignInWithEmailLink(auth, window.location.href)) {
   let email = localStorage.getItem(EMAIL_KEY);
@@ -166,7 +228,7 @@ if (isSignInWithEmailLink(auth, window.location.href)) {
     signInWithEmailLink(auth, email, window.location.href)
       .then((result) => {
         localStorage.removeItem(EMAIL_KEY);
-        return exchange(result.user);
+        return afterSignIn(result.user);
       })
       .catch((e) => show("auth-error", friendly(e)));
   }

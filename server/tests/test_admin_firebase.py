@@ -129,10 +129,13 @@ def test_signup_offers_link_only_but_login_has_password(config, db_path):
     assert b"Send create account link" in signup.data
     assert b"auth-password-panel" not in signup.data
     assert b"Sign in with a password instead" not in signup.data
+    # The attach-email panel is available for phone-only sign-ins.
+    assert b"auth-email-link-panel" in signup.data
 
     login = app.test_client().get("/login")
     assert b"Send sign-in link" in login.data
     assert b"auth-password-panel" in login.data
+    assert b"auth-email-link-panel" in login.data
 
 
 def test_unlink_removes_the_binding(config, db_path, monkeypatch):
