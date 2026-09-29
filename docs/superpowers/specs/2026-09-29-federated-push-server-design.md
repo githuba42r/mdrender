@@ -218,35 +218,42 @@ the holder of a device's `push_key` can produce an effective doorbell.
 **Goal:** a client's files are encrypted **before upload**, so no server — slave
 or master — can read them, and the operator is not responsible for the content.
 
+The key is shared **only** between the push client and the app. The server
+relays **public keys and an opaque sealed blob** — it never sees the private
+key or the content key.
+
 ### Key material
-- The **client machine** holds a long-term **content keypair** (`Cpriv`/`Cpub`).
-  `Cpriv` is stored locally with 0600, **never uploaded**; only `Cpub` is
-  registered with the server when the client registers.
-- Each device holds a random **Content Encryption Key (CEK)** (32 bytes) in its
-  Keystore. Files are encrypted with AES-256-GCM under the CEK.
-- The CEK is never sent to a server; only a **wrapped** copy is.
+- The **push client originates the key**. It creates a **content keypair**
+  (`Cpriv`/`Cpub`); `Cpriv` is stored on the client (0600) and is **never
+  uploaded**.
+- A random symmetric **Content Encryption Key (CEK)** encrypts files
+  (AES-256-GCM per file, random nonce). The CEK is what client and app share.
+- The **app** holds a **content decryption keypair** in its Keystore and
+  registers its **content public key** with the server. This is a *new* key:
+  the app's existing pairing key is **sign-only** (`2863d0d`) and cannot
+  decrypt, so the app must add a decryption-capable content key.
 
 ### Key exchange at device registration
-1. Device registration hands the device the client's `Cpub` (from the account).
-2. The device generates a fresh CEK, wraps it to `Cpub`
-   (`wrapped_CEK = wrap(Cpub, CEK)`), sends only `wrapped_CEK` to the server, and
-   keeps `CEK` in its Keystore.
-3. The server stores `wrapped_CEK` as an **opaque blob** — it cannot unwrap it,
-   having no `Cpriv`.
+1. On pairing, the app generates its content decryption keypair and registers
+   the **content public key** with the server.
+2. The client fetches the app's content public key and **seals the CEK to it**
+   (`sealed_cek = wrap(app_content_pub, CEK)`), uploading the sealed blob.
+3. The server stores `sealed_cek` as an **opaque blob** — it cannot unwrap it,
+   having neither the app's private key nor the CEK. Only the app can open it.
 
 ### Push / fetch
-1. The client fetches `wrapped_CEK` for the target device, unwraps with `Cpriv`
-   to recover `CEK`, encrypts each file (AES-256-GCM, per-file nonce), and
-   uploads ciphertext + nonce.
+1. The client encrypts each file with the CEK and uploads ciphertext + nonce
+   (optionally signing with `Cpriv` so the app can verify the client origin).
 2. The server stores **ciphertext only**.
-3. The device decrypts with its local `CEK`.
+3. The app fetches `sealed_cek` once, unwraps it with its Keystore key, and
+   decrypts downloads with the CEK.
 
 ### Rotation
-- **Changing the client keypair** (`Cpriv`/`Cpub`) makes every existing
-  `wrapped_CEK` undecryptable, so each device must **re-register** to re-wrap
-  its CEK to the new `Cpub` — the consequence noted in the requirements.
-- Devices may rotate their CEK (producing a new wrap) without re-pairing.
-- Key history is tracked so retired wraps are rejected.
+- **Changing the client content key** (a new CEK) requires re-sealing to every
+  app's content public key, so each app must **re-fetch** it — the
+  re-registration the requirements note.
+- The app may also rotate its content keypair at re-pairing, after which the
+  client re-seals.
 
 ### Properties and trade-offs
 - The server (master or slave) sees only ciphertext and opaque wraps, so it
@@ -351,7 +358,8 @@ Build the foundation now; wire real providers later.
 | `client_devices` | device_id, client_id, server_id, fcm_token, name |
 | `client_files` | pending files: client_id, size, created, stored_path, `encryption` (alg, nonce), status |
 | `client_keys` | client content public key `Cpub`: client_id, pubkey, created, retired_at |
-| `device_content_keys` | per-device content key: device_id, `wrapped_cek`, alg, created, retired_at |
+| `device_content_keys` | per-device sealed CEK: device_id, `sealed_cek` (opaque, client-sealed to the app), alg, created, retired_at |
+| `devices` (existing) | gains `content_pubkey` — the app's content decryption public key |
 | `client_quotas` | per-client overrides (max bytes/count, max age) |
 | `email_domain_rules` | allow/deny list for signup domains |
 | `billing_ledger` | charges/credits, reason, period, provider ref |
@@ -386,10 +394,11 @@ mint an MDRender session); local login always remains available.
 slave): signup by email, device pairing, upload to pending
 (`POST /api/client/upload`), list/quota, collect/ack.
 
-**Content key exchange (§7a):** `PUT /api/client/keys` (register/rotate `Cpub`);
-device registration returns the client's `Cpub` and accepts `wrapped_cek`;
-`GET /api/client/devices/{id}/cek` returns the opaque wrap; uploads carry the
-`nonce` alongside ciphertext.
+**Content key exchange (§7a):** device registration publishes the app's
+**content public key**; `GET /api/client/devices/{id}/content-pubkey` returns it
+to the client, which `PUT`s the **sealed CEK**; the app fetches
+`GET /api/device/{id}/sealed-cek`; uploads carry the `nonce` alongside
+ciphertext. `Cpriv` and the CEK never reach the server.
 
 **Master admin:** list/revoke/deactivate/delete/ban slaves;
 list/block/ban clients and email domains; **network bans (ip, cidr, asn,
@@ -497,9 +506,12 @@ Each phase lands independently with tests; the app is untouched.
 - **D11 (open)** Email deliverability for magic-link/verification follows the
   chosen provider (D3); decide the fallback SMTP/SES path and signup abuse
   controls (rate limits, CAPTCHA, verified-email requirement).
-- **D13 (open)** Content-encryption details (§7a): algorithm (RSA-OAEP vs
-  X25519+HKDF), whether file names/metadata are also encrypted, CEK scope
-  (per-device vs per-client vs per-push), and streaming AEAD for large files.
+- **D13 (open)** Content-encryption details (§7a): the client-originated CEK is
+  **sealed to the app's content public key** (algorithm: RSA-OAEP vs X25519 +
+  HKDF / ECIES); the app needs a **new decryption-capable Keystore key** (its
+  pairing key is sign-only); decide whether file names/metadata are also
+  encrypted, CEK scope (per-device vs per-client), and streaming AEAD for large
+  files.
 - **D14 (open)** Liveness/queue tuning (§5a): probe interval and timeout, number
   of failures before a slave is marked down, heartbeat cadence, signed-request
   time window and nonce retention, and the outbox retention/backoff policy.
