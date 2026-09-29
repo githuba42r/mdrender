@@ -189,6 +189,8 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   interval TEXT NOT NULL DEFAULT 'month',
   included_bytes INTEGER NOT NULL DEFAULT 0,
   included_messages INTEGER NOT NULL DEFAULT 0,
+  storage_cents_per_mb INTEGER NOT NULL DEFAULT 0,
+  message_cents_per_1000 INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
@@ -266,6 +268,10 @@ class Database:
             },
             "pairing_tokens": {
                 "account_id": "TEXT",
+            },
+            "billing_plans": {
+                "storage_cents_per_mb": "INTEGER NOT NULL DEFAULT 0",
+                "message_cents_per_1000": "INTEGER NOT NULL DEFAULT 0",
             },
         }
         for table, columns in wanted.items():

@@ -8,7 +8,7 @@
 """
 import time
 
-from server.app import federation, federation_client, storage
+from server.app import billing, federation, federation_client, storage
 from server.app.deployment import detect_role, get_or_create_identity
 
 
@@ -27,6 +27,11 @@ def tick(config, db) -> None:
             storage.purge_expired(conn, config)  # age/quota hygiene
         except Exception:  # noqa: BLE001
             pass
+        if bool(getattr(config, "BILLING_ENFORCEMENT", False)):
+            try:
+                billing.bill_storage(conn, config)
+            except Exception:  # noqa: BLE001
+                pass
         identity = get_or_create_identity(conn)
         role = detect_role(config, bool(getattr(config, "FCM_SERVER_KEY", "")))
         if role == "slave":

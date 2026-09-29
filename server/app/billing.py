@@ -6,6 +6,7 @@ own plan (override) else its group's plan. A default group holds accounts with
 no explicit group. Cycles are anniversary-based (D12). A manual provider adds
 credits; real gateways plug in behind the same ledger.
 """
+import math
 import time
 import uuid
 
@@ -16,14 +17,17 @@ SCOPE_ACCOUNT = "account"
 # ---- Plans ------------------------------------------------------------------
 
 def create_plan(conn, name, scope, *, price_cents=0, currency="AUD",
-                interval="month", included_bytes=0, included_messages=0) -> str:
+                interval="month", included_bytes=0, included_messages=0,
+                storage_cents_per_mb=0, message_cents_per_1000=0) -> str:
     plan_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO billing_plans (plan_id, name, scope, price_cents, currency,"
-        " interval, included_bytes, included_messages, active, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        " interval, included_bytes, included_messages, storage_cents_per_mb,"
+        " message_cents_per_1000, active, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
         (plan_id, name, scope, price_cents, currency, interval,
-         included_bytes, included_messages, int(time.time())))
+         included_bytes, included_messages, storage_cents_per_mb,
+         message_cents_per_1000, int(time.time())))
     conn.commit()
     return plan_id
 
@@ -136,3 +140,38 @@ def entitled(conn, account_type, account_id) -> bool:
     if effective_plan(conn, account_type, account_id) is not None:
         return True
     return balance(conn, account_type, account_id) > 0
+
+
+def bill_storage(conn, config, *, now=None, min_interval_hours=24) -> list[str]:
+    """Charge accounts for pending bytes older than the bill threshold.
+
+    Charges at the account's effective-plan rate ($ per MB, rounded up),
+    anniversary-neutral. Idempotent within ``min_interval_hours`` per account.
+    Returns the account ids charged. Meant to run on a slow schedule.
+    """
+    now = int(now or time.time())
+    cutoff = now - getattr(config, "STORAGE_BILL_AFTER_HOURS", 1) * 3600
+    charged = []
+    account_ids = [r["account_id"] for r in conn.execute(
+        "SELECT DISTINCT account_id FROM account_files"
+        " WHERE status = 'pending' AND created_at < ?", (cutoff,))]
+    for account_id in account_ids:
+        plan = effective_plan(conn, SCOPE_ACCOUNT, account_id)
+        rate = plan["storage_cents_per_mb"] if plan else 0
+        if not rate:
+            continue
+        last = conn.execute(
+            "SELECT MAX(created_at) FROM billing_ledger WHERE account_type = ?"
+            " AND account_id = ? AND reason = 'storage'",
+            (SCOPE_ACCOUNT, account_id)).fetchone()[0]
+        if last and now - last < min_interval_hours * 3600:
+            continue
+        aged = conn.execute(
+            "SELECT COALESCE(SUM(size), 0) FROM account_files WHERE account_id = ?"
+            " AND status = 'pending' AND created_at < ?", (account_id, cutoff)).fetchone()[0]
+        if aged <= 0:
+            continue
+        mb = math.ceil(aged / (1024 * 1024))
+        debit(conn, SCOPE_ACCOUNT, account_id, rate * mb, reason="storage")
+        charged.append(account_id)
+    return charged

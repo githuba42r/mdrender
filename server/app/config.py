@@ -33,6 +33,7 @@ DEFAULTS = {
     "ACCOUNT_MAX_BYTES": 104857600,   # 100 MB
     "ACCOUNT_MAX_FILES": 1000,
     "ACCOUNT_MAX_AGE_HOURS": 168,     # 7 days
+    "STORAGE_BILL_AFTER_HOURS": 1,    # bill storage once pending longer than this
     "BAN_ENFORCEMENT": True,
     "BILLING_ENFORCEMENT": False,
     # Identity provider for account logins: "local" (default) or a hosted IdP
@@ -54,7 +55,7 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "ACCESS_TOKEN_TTL_SECONDS", "PUSH_FILE_TTL_HOURS",
                  "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
-                 "ACCOUNT_MAX_AGE_HOURS"):
+                 "ACCOUNT_MAX_AGE_HOURS", "STORAGE_BILL_AFTER_HOURS"):
             env[k] = int(env[k])
     for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT"):
         env[flag] = str(env.get(flag, DEFAULTS.get(flag, False))).lower() in (
