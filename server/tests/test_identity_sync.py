@@ -76,6 +76,18 @@ def test_identity_change_blocks_when_firebase_rejects(config, db_path, monkeypat
         assert accounts.get_account(conn, account_id)["email"] == "user@example.com"
 
 
+def test_profile_rejects_a_non_e164_phone(config, db_path, monkeypatch):
+    app = _app(config)
+    c, _ = _account(app, uid="uid-1")
+    monkeypatch.setattr(identity_admin, "available", lambda config: True)
+    called = []
+    monkeypatch.setattr(identity_admin, "update_user",
+                        lambda config, uid, **f: (called.append(f), ({}, None))[1])
+    resp = c.post("/account/profile", data={
+        "name": "", "email": "user@example.com", "phone": "0447546890"})
+    assert resp.status_code == 400 and not called
+
+
 def test_name_only_change_is_best_effort(config, db_path, monkeypatch):
     app = _app(config)
     c, account_id = _account(app, uid="uid-1")

@@ -5,6 +5,7 @@ import datetime
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import time
@@ -670,6 +671,9 @@ def create_app(config):
                 or get_admin_by_email(g.db, email) is not None
                 or get_admin_by_firebase_email(g.db, email) is not None):
             error = "That email is already in use."
+        if error is None and phone and not re.match(r"^\+\d{6,15}$", phone):
+            # Firebase requires E.164; reject early rather than fail the write-through.
+            error = "Enter the phone in international format, e.g. +61400000000."
         if error is None and phone and phone != (account["phone"] or "") and (
                 accounts.get_account_by_phone(g.db, phone) is not None
                 or get_admin_by_firebase_phone(g.db, phone) is not None):
