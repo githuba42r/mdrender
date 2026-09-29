@@ -112,6 +112,24 @@ CREATE TABLE IF NOT EXISTS federated_outbox (
   next_retry_at INTEGER,
   acked_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS accounts (
+  account_id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT,
+  host TEXT NOT NULL DEFAULT 'master',
+  status TEXT NOT NULL DEFAULT 'active',
+  balance INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_devices (
+  server_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  fcm_token TEXT NOT NULL,
+  name TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (server_id, account_id, device_id)
+);
 """
 
 

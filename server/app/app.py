@@ -18,7 +18,7 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import (crypto, federation, fcm as fcm_mod, pairing,
+from server.app import (accounts, crypto, federation, fcm as fcm_mod, pairing,
                         push_store, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
@@ -321,6 +321,24 @@ def create_app(config):
             return redirect("/setup")
         return render_template("login.html", next=request.args.get("next", ""))
 
+    @app.route("/signup", methods=["GET", "POST"])
+    def signup():
+        """Public account (tenant) signup by email (design §9)."""
+        if request.method == "GET":
+            return render_template("signup.html")
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password", "")
+        valid_email = "@" in email and "." in email.rsplit("@", 1)[-1]
+        if not valid_email or len(password) < 8:
+            return render_template(
+                "signup.html",
+                error="Enter a valid email and a password of 8+ characters."), 400
+        if accounts.get_account_by_email(g.db, email) is not None:
+            return render_template("signup.html",
+                                   error="That email is already registered."), 400
+        accounts.create_account(g.db, email, password)
+        return render_template("signup.html", done=True)
+
     @app.route("/login", methods=["POST"])
     def login():
         username = (request.form.get("username") or "").strip()
@@ -609,6 +627,28 @@ def create_app(config):
             return jsonify({"error": "unauthorized"}), 401
         return jsonify({"server_id": row["server_id"], "hostname": row["hostname"],
                         "status": row["status"]})
+
+    @app.route("/api/federation/accounts/<account_id>/devices/<device_id>",
+               methods=["PUT", "DELETE"])
+    def federation_device(account_id, device_id):
+        """No-PII device sync from a slave: routing tuple only (design §6)."""
+        row = federation.check_bearer(g.db, _federation_token())
+        if row is None:
+            return jsonify({"error": "unauthorized"}), 401
+        body = request.get_data() or b""
+        if not federation.verify_request(g.db, row, request.method, request.path,
+                                         body, request.headers):
+            return jsonify({"error": "bad signature"}), 401
+        if request.method == "PUT":
+            data = request.get_json(silent=True) or {}
+            accounts.upsert_device(
+                g.db, account_id=account_id, device_id=device_id,
+                server_id=row["server_id"], fcm_token=data.get("fcm_token", ""),
+                name=None)
+        else:
+            accounts.delete_device(g.db, account_id=account_id, device_id=device_id,
+                                   server_id=row["server_id"])
+        return jsonify({"ok": True})
 
     def _federation_sign_challenge(status=None):
         """Slave side: sign a master challenge to prove key possession + liveness."""
