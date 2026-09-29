@@ -97,12 +97,15 @@ Two supported modes per host, behind one **`IdentityProvider` interface**
    Firebase, the operator can **bring their own Firebase account/project** and
    the server documents the setup; Auth0 / AWS Cognito are alternatives.
 
-**Decision (D3):** support both — local user DB by default, plus a hosted IdP
-(social + magic-link) behind the interface. Run a short spike comparing
-**Auth0**, **AWS Cognito**, and **Firebase Auth** (reuses the FCM project) on
-price, passwordless fit, and email deliverability. **Deliverable:** an
-**IdP setup guide** covering the operator's own Firebase account (project,
-providers, API keys, token verification).
+**Decision (D3/D11):** use **Firebase Authentication** for account login —
+email + **magic link** (passwordless), social providers, and email
+verification — since the project already owns a Firebase project for FCM.
+**Firebase Auth handles account email delivery and magic links** (and
+verification), so no separate SMTP is needed for accounts. A **local user DB**
+remains the always-available default/fallback (offline, bring-your-own), and
+Auth0 / Cognito remain alternatives behind the interface. **Deliverable:** an
+**IdP setup guide** for the operator's own Firebase account (project, providers,
+API keys, token verification).
 
 - **Accounts** get social + passwordless when an IdP is configured, else local.
 - **Admins/operators** stay on **local accounts or enterprise SSO with MFA** —
@@ -166,6 +169,10 @@ admin notices, revocations) go to a per-slave **outbox** while the slave is
 **down**, delivered (signed, retry/backoff) when it returns, with a retention
 TTL. Slave→master sends (doorbells, device sync) are retried by the slave's
 existing retry worker if the master is briefly unavailable.
+
+All tunables in this section (probe interval/timeout, down threshold, heartbeat
+cadence, nonce window, outbox TTL/backoff) are **server settings from
+environment config** with sane defaults (D14).
 
 ## 6. Devices and accounts
 
@@ -242,11 +249,14 @@ key or the content key.
    Only the app can open it.
 
 ### Push / fetch
-1. The client encrypts each file with the CEK and uploads ciphertext + nonce
+1. The client encrypts each file with the CEK — **including a mangled/encrypted
+   filename inside the payload** — and uploads the ciphertext + nonce
    (optionally signing with `Cpriv` so the app can verify origin).
-2. The server stores **ciphertext only**.
+2. The server stores **only an opaque binary blob** (no filename, no metadata) —
+   just a random id, the bytes, and the nonce. The manifest carries opaque ids.
 3. The app fetches `sealed_cek` once, unwraps it with its Keystore key, and
-   decrypts downloads with the CEK.
+   decrypts downloads (recovering the real filename from the payload) with the
+   CEK.
 
 ### Rotation
 - **Changing the client content key** requires re-sealing to every app's
@@ -260,7 +270,8 @@ key or the content key.
 - The doorbell `push_key` (§7) is separate and unchanged.
 - Encryption is per account and may be opted out (plaintext); the server records
   the mode.
-- Filename/metadata encryption is open (D13).
+- **Filenames/metadata are encrypted in the payload** and not stored (D13);
+  storage is an opaque binary blob.
 
 ## 8. Master administration of slave servers
 
@@ -299,7 +310,8 @@ admin UI (linked) and are configurable per operator.
 - Each account has a **pending collection**: uploaded files live in per-account
   storage on its **host** until collected. Tenants are isolated by **per-account
   directories** (D7). With client-side encryption on (§7a), the server stores
-  **ciphertext + nonce**, never plaintext.
+  **ciphertext + nonce as an opaque blob**, never plaintext and **never a real
+  filename** (opaque ids only).
 - An admin configures, per account (with global defaults):
   - **max pending bytes / file count** (quota), and
   - **max age of pending files** before automatic **purge**.
@@ -320,6 +332,9 @@ Build the foundation now; wire real providers later.
 - **Metering (D5):** example rates — **$5 per MB per month** once a file is
   **pending > 1 hour**, and **$0.50 per 1000 messages** (doorbells). Rates and
   thresholds are per-plan configuration.
+- **Billing cycles are anniversary-based (D12):** each account's period runs
+  from **its own start date**, not a shared calendar month; plan changes prorate
+  to that account's dates.
 - **Plans** are first-class and there can be **many**, one per account scope
   (`slave` = flat, `account` = metered), each with a price, currency, interval,
   included allowances, and overage rates.
@@ -355,7 +370,7 @@ Build the foundation now; wire real providers later.
 | `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| account`; reason, created_by, expires |
 | `accounts` | email, password hash (nullable), `host` (master \| federated server_id), status (active/blocked/banned), balance — the tenant/customer |
 | `account_devices` | routing only, **no PII**: `account_id` (opaque), `device_id`, `server_id`, `fcm_token`, name(optional local) |
-| `account_files` | pending files: account_id, size, created, stored_path, `encryption` (alg, nonce), status |
+| `account_files` | pending **opaque blobs**: account_id, size (ciphertext), created, `stored_path` (random id), `alg` + `nonce`, status — **no filename/metadata** |
 | `account_keys` | account content public key `Cpub`: account_id, pubkey, created, retired_at |
 | `device_content_keys` | per-device sealed CEK: device_id, `sealed_cek` (opaque), alg, created, retired_at |
 | `devices` (existing) | gains `content_pubkey`, `account_id` |
@@ -485,15 +500,17 @@ Each phase lands independently with tests.
   proxied; IPv4+IPv6; attribution + monthly refresh.
 - **D10 (resolved)** The Android app change for content encryption is
   **required** but **built after** the server infrastructure (Phase J).
-- **D11 (open)** Email deliverability for magic-link/verification (follows D3);
-  fallback SMTP/SES; signup abuse controls (rate limits, CAPTCHA, verification).
-- **D12 (open)** Plan resolution: proration/effective-date on changes, whether
-  the default group's plan is free, shared vs separate plan spaces.
-- **D13 (open)** Content-encryption details: sealing algorithm (RSA-OAEP vs
-  X25519+HKDF/ECIES), whether filenames/metadata are encrypted, CEK scope, and
-  streaming AEAD for large files.
-- **D14 (open)** Liveness/queue tuning: probe interval/timeout, down threshold,
-  heartbeat cadence, nonce window, outbox TTL/backoff.
+- **D11 (resolved)** Account email, **magic-link delivery**, and verification
+  are handled by **Firebase Auth** (D3); no separate SMTP for accounts. Signup
+  abuse controls remain (rate limits, optional CAPTCHA, verified-email required).
+- **D12 (resolved)** Billing cycles are **anniversary-based** per account; plan
+  changes prorate to the account's own dates.
+- **D13 (resolved)** **Filenames are mangled/encrypted into the payload** and the
+  server stores **only an opaque binary string** (no name, no metadata). The
+  sealing algorithm (RSA-OAEP vs ECIES) is a small implementation detail.
+- **D14 (resolved)** All liveness/queue tunables (probe interval, timeouts, down
+  threshold, heartbeat cadence, nonce window, outbox TTL/backoff) are **server
+  settings from environment config** with sane defaults.
 
 ## 17. Non-goals (this effort)
 
