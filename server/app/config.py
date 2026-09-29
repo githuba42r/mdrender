@@ -40,7 +40,7 @@ DEFAULTS = {
     # such as "firebase". Admins always use local username/password.
     "IDENTITY_PROVIDER": "local",
     "FIREBASE_PROJECT_ID": "",
-    # Server-enforced content-encryption policy: off | optional | required.
+    # Server-enforced content encryption: on (clients must encrypt) | off.
     "ENCRYPTION_MODE": "off",
     # DB-IP Lite MMDB paths for local ASN/country lookups (D9).
     "GEOIP_ASN_DB": "",

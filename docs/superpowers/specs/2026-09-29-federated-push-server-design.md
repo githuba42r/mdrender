@@ -274,10 +274,12 @@ key or the content key.
 ### 7b. Server-enforced encryption policy
 
 Encryption is a **server setting, not a client choice**. The operator configures
-`ENCRYPTION_MODE` (admin-set; default `off`): `off` · `optional` · `required`.
+`ENCRYPTION_MODE` (admin-set; default `off`): **`on`** or **`off`**. There is no
+"optional" — the admin decides whether connected clients must encrypt everything
+they push, precisely so the operator can never be responsible for pushed content.
 
-When it is **`required`**, the client and app are **forced to negotiate**
-encryption before anything is delivered:
+When it is **`on`**, the client and app are **forced to negotiate** encryption
+before anything is delivered:
 
 - The server **advertises the policy** (`GET /api/server/policy`, and in the
   pairing handshake) so both sides know encryption is mandatory.
@@ -290,8 +292,8 @@ encryption before anything is delivered:
 
 This is a deliberate operator control: it lets the admin guarantee that content
 at rest on the push server (awaiting collection) is unreadable to them, and
-therefore that they are not responsible for it. `off`/`optional` exist for
-deployments that choose otherwise; the mode is never chosen by the client.
+therefore that they are not responsible for it. The setting is never chosen by
+the client.
 
 ## 8. Master administration of slave servers
 
@@ -527,10 +529,10 @@ Each phase lands independently with tests.
   changes prorate to the account's own dates.
 - **D13 (resolved)** **Filenames are mangled/encrypted into the payload** and the
   server stores **only an opaque binary string** (no name, no metadata).
-  **Encryption is a server setting (`ENCRYPTION_MODE` = off/optional/required),
-  enforced server-side (§7b)** — when required, clients and apps are forced to
-  negotiate; the client never decides. The sealing algorithm (RSA-OAEP vs ECIES)
-  is a small implementation detail.
+  **Encryption is a server setting (`ENCRYPTION_MODE` = on/off), enforced
+  server-side (§7b)** — when on, clients and apps are forced to negotiate; the
+  client never decides. The sealing algorithm (RSA-OAEP vs ECIES) is a small
+  implementation detail.
 - **D14 (resolved)** All liveness/queue tunables (probe interval, timeouts, down
   threshold, heartbeat cadence, nonce window, outbox TTL/backoff) are **server
   settings from environment config** with sane defaults.

@@ -253,6 +253,11 @@ class Database:
                 "push_key": "TEXT NOT NULL DEFAULT ''",
                 "account_id": "TEXT",
                 "approved_at": "INTEGER",
+                "content_pubkey": "TEXT",
+            },
+            "push_files": {
+                "enc": "TEXT",
+                "nonce": "TEXT",
             },
             "pushes": {
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",

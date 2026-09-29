@@ -26,13 +26,13 @@ def _account_client(app):
 
 
 def test_server_policy_reports_mode(config, db_path):
-    config.ENCRYPTION_MODE = "required"
+    config.ENCRYPTION_MODE = "on"
     app = _app(config)
-    assert app.test_client().get("/api/server/policy").get_json() == {"encryption": "required"}
+    assert app.test_client().get("/api/server/policy").get_json() == {"encryption": "on"}
 
 
 def test_required_encryption_rejects_plaintext_upload(config, db_path):
-    config.ENCRYPTION_MODE = "required"
+    config.ENCRYPTION_MODE = "on"
     app = _app(config)
     c = _account_client(app)
 
@@ -61,7 +61,7 @@ def _enrol_slave(app):
 
 
 def test_required_encryption_gates_the_doorbell(config, db_path):
-    config.ENCRYPTION_MODE = "required"
+    config.ENCRYPTION_MODE = "on"
     app = _app(config)
 
     class FakeFcm:
