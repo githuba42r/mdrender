@@ -118,8 +118,9 @@ Admin UI + API to:
 - **List** slave servers (hostname, server_id, owner, status, last seen, counts).
 - **Revoke / delete / deactivate** a slave (deactivate = suspend without
   deleting; revoke = invalidate credentials; delete = remove).
-- **Ban** a slave by **IP address, hostname, or domain name**; bans block
-  enrolment and all federation calls from the banned source.
+- **Ban** a slave by **IP address, IP block range (CIDR), AS number, hostname,
+  or domain name**; bans block enrolment and all federation calls from the
+  banned source. The same ban vocabulary applies globally (§14).
 - A slave's admin UI lists **its own clients and devices**.
 
 ## 9. Client (tenant) accounts
@@ -130,6 +131,9 @@ Admin UI + API to:
 - **Banned email domains**: a configurable blocklist of free/consumer and
   temporary/disposable email domains is rejected at signup (operator-editable,
   with an allowlist override for exceptions).
+- **Banned network sources**: signup is refused for source IPs matching an IP
+  ban, an IP block range (CIDR), or an AS number — enforced at signup and on
+  every subsequent request, not just registration (§14).
 - Client ↔ devices ↔ pending files are scoped per client.
 
 ## 10. Per-client storage and quotas
@@ -166,7 +170,7 @@ Build the foundation now; wire real providers later.
 | `admins` | username, password hash, role, created, disabled/blocked/banned |
 | `server_identity` | `server_id` (uuid), federation keypair, hostname, role |
 | `federated_servers` | master's record of slaves: server_id, hostname, pubkey, secret hash, status, plan, period, last_seen |
-| `federated_bans` | bans by ip / hostname / domain (scope: server) |
+| `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| client`; reason, created_by, expires |
 | `clients` | email, password/auid, status (active/blocked/banned), balance |
 | `client_devices` | device_id, client_id, server_id, fcm_token, name |
 | `client_files` | pending files: client_id, size, created, stored_path, status |
@@ -194,14 +198,24 @@ remain; the client/tenant layer wraps them.
 (`POST /api/client/upload`), list/quota, collect/ack.
 
 **Master admin:** list/revoke/deactivate/delete/ban slaves;
-list/block/ban clients and email domains; quotas; billing/ledger; plans.
+list/block/ban clients and email domains; **network bans (ip, cidr, asn,
+hostname, domain)**; quotas; billing/ledger; plans.
+
+**Ban management (shared vocabulary):** `GET/POST/DELETE /api/admin/bans` with a
+`kind` of `ip | cidr | asn | hostname | domain`, a `scope`
+(`global | server | client`), and optional expiry.
 
 ## 14. Security and trust model
 
 - Reuse the E2E doorbell + signed-manifest invariants (§7); the master stays
   content-blind.
 - Server-to-server: Bearer + request signature; per-slave keypair.
-- Bans enforced at the edge of every federation and client endpoint.
+- Bans enforced at the edge of **every** endpoint — signup, federation, client,
+  and admin — not just registration. Matching is by exact IP, **CIDR block
+  range**, **AS number**, hostname, or domain.
+- The client's source IP is read from the proxy-aware forwarded header (the
+  master sits behind Cloudflare); the AS number is resolved from a local
+  IP→ASN database rather than an external call.
 - First-run admin setup closes permanently after the first admin exists.
 - Rate-limit login, signup, upload, and doorbell endpoints per identity/IP.
 - No secrets in URLs; no card data stored.
@@ -242,6 +256,10 @@ Each phase lands independently with tests; the app is untouched.
 - **D7** Multi-tenant data isolation model (per-client encryption or directory
   scoping).
 - **D8** Whether a slave may also be a standalone (own FCM) for some tenants.
+- **D9** ASN/CIDR source and matching: a bundled IP→ASN database
+  (e.g. MaxMind GeoLite2 ASN, self-updated) vs an external lookup; how to trust
+  the forwarded client IP through Cloudflare; IPv4 vs IPv6 CIDR handling; and
+  whether ASN bans also cover hosting/VPN ranges.
 
 ## 17. Non-goals (this effort)
 
