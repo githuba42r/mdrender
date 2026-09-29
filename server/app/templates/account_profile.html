@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Account info &middot; My account{% endblock %}
+{% block content %}
+<h1>Account info</h1>
+<p class="lede">Your name, contact details and password.</p>
+{% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
+<form method="POST" action="/account/profile">
+  <label for="name">Name</label>
+  <div class="field"><input type="text" id="name" name="name" value="{{ account.name or '' }}"></div>
+  <label for="email">Email</label>
+  <div class="field"><input type="text" id="email" name="email" autocomplete="email" value="{{ account.email or '' }}" required></div>
+  <label for="phone">Phone</label>
+  <div class="field"><input type="text" id="phone" name="phone" autocomplete="tel" value="{{ account.phone or '' }}" placeholder="+61 400 000 000"></div>
+  <label for="password">New password (leave blank to keep)</label>
+  <div class="field"><input type="password" id="password" name="password" autocomplete="new-password"></div>
+  <button type="submit" class="btn-primary">Save changes</button>
+</form>
+{% endblock %}

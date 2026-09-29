@@ -184,6 +184,14 @@ def create_app(config):
             return None
         return redirect("/account/login", 303)
 
+    def require_account_form(default):
+        """Gate an account form POST, bouncing a stale session to account login."""
+        principal = _principal()
+        if principal is not None and principal["type"] == "account":
+            return None
+        nxt = urllib.parse.quote(default, safe="/")
+        return redirect(f"/account/login?next={nxt}", 303)
+
     def _return_to(default):
         """Where a POST sends the browser next, read from a hidden `next` field.
 
@@ -378,12 +386,21 @@ def create_app(config):
 
     @app.context_processor
     def _inject_auth_state():
-        """Let every template hide the admin menu unless a session is live.
+        """Let every template hide the menus unless a session is live.
 
         Without this the nav renders on the login page too, which both leaks
         the page list to an anonymous visitor and offers links that 401.
         """
-        return {"logged_in": _is_admin()}
+        principal = _principal()
+        account_logged_in = principal is not None and principal["type"] == "account"
+        account_name = None
+        if account_logged_in:
+            account = accounts.get_account(g.db, principal["id"])
+            if account is not None:
+                account_name = account["name"] or account["email"]
+        return {"logged_in": _is_admin(),
+                "account_logged_in": account_logged_in,
+                "account_name": account_name}
 
     @app.route("/")
     def index():
@@ -566,17 +583,136 @@ def create_app(config):
                                qr_svg=img.to_string().decode(),
                                server_url=config.PUSH_PUBLIC_URL)
 
+    @app.route("/account/devices", methods=["GET"])
+    def account_devices():
+        """The account's paired devices, with approve/remove."""
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        account_id = _principal()["id"]
+        return render_template(
+            "account_devices.html",
+            devices=[dict(r) for r in list_account_devices(g.db, account_id)])
+
     @app.route("/account/devices/<device_secret>/approve", methods=["POST"])
     def account_device_approve(device_secret):
-        auth_error = require_account_session()
+        auth_error = require_account_form("/account/devices")
         if auth_error:
             return auth_error
         device = get_device_by_secret(g.db, device_secret)
         if device is None or device["account_id"] != _principal()["id"]:
-            return redirect("/account", 303)
+            return redirect("/account/devices", 303)
         pairing.approve_device(g.db, device_secret)
         _publish_device(dict(device))
-        return redirect("/account", 303)
+        return redirect("/account/devices", 303)
+
+    @app.route("/account/devices/<device_secret>/revoke", methods=["POST"])
+    def account_device_revoke(device_secret):
+        auth_error = require_account_form("/account/devices")
+        if auth_error:
+            return auth_error
+        device = get_device_by_secret(g.db, device_secret)
+        if device is None or device["account_id"] != _principal()["id"]:
+            return redirect("/account/devices", 303)
+        delete_device(g.db, device_secret)
+        return redirect("/account/devices", 303)
+
+    @app.route("/account/clients", methods=["GET"])
+    def account_clients():
+        """The account's CLI clients, with revoke."""
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        account_id = _principal()["id"]
+        return render_template(
+            "account_clients.html",
+            clients=[dict(r) for r in list_clients(g.db, account_id)],
+            server_url=config.PUSH_PUBLIC_URL)
+
+    @app.route("/account/clients/<client_id>/revoke", methods=["POST"])
+    def account_client_revoke(client_id):
+        auth_error = require_account_form("/account/clients")
+        if auth_error:
+            return auth_error
+        client = get_client(g.db, client_id)
+        if client is None or client["account_id"] != _principal()["id"]:
+            return redirect("/account/clients", 303)
+        revoke_client(g.db, client_id)
+        revoke_access_tokens(client_id)
+        return redirect("/account/clients", 303)
+
+    @app.route("/account/profile", methods=["GET"])
+    def account_profile():
+        """Account info: name, email, phone and password."""
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        account = accounts.get_account(g.db, _principal()["id"])
+        return render_template("account_profile.html", account=account)
+
+    @app.route("/account/profile", methods=["POST"])
+    def account_profile_update():
+        auth_error = require_account_form("/account/profile")
+        if auth_error:
+            return auth_error
+        account_id = _principal()["id"]
+        account = accounts.get_account(g.db, account_id)
+        name = (request.form.get("name") or "").strip()
+        email = (request.form.get("email") or "").strip().lower()
+        phone = (request.form.get("phone") or "").strip()
+        password = request.form.get("password", "")
+        error = None
+        if not email or "@" not in email:
+            error = "Enter a valid email."
+        elif email != (account["email"] or "") and (
+                accounts.get_account_by_email(g.db, email) is not None
+                or get_admin_by_email(g.db, email) is not None
+                or get_admin_by_firebase_email(g.db, email) is not None):
+            error = "That email is already in use."
+        if error is None and phone and phone != (account["phone"] or "") and (
+                accounts.get_account_by_phone(g.db, phone) is not None
+                or get_admin_by_firebase_phone(g.db, phone) is not None):
+            error = "That phone number is already in use."
+        if error is None and password and len(password) < 8:
+            error = "Choose a password of 8+ characters."
+        if error:
+            return render_template("account_profile.html", account=account,
+                                   error=error), 400
+        accounts.update_account(
+            g.db, account_id, name=name, email=email, phone=phone,
+            password=password if password else None)
+        return redirect("/account/profile", 303)
+
+    @app.route("/account/pushes", methods=["GET"])
+    def account_pushes():
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        return render_template(
+            "account_pushes.html",
+            pushes=push_store.list_pushes(g.db, _principal()["id"]))
+
+    @app.route("/account/pending", methods=["GET"])
+    def account_pending():
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        return render_template(
+            "account_pending.html",
+            pushes=push_store.list_pending_pushes(g.db, _principal()["id"]))
+
+    @app.route("/account/pending/<push_id>/delete", methods=["POST"])
+    def account_pending_delete(push_id):
+        auth_error = require_account_form("/account/pending")
+        if auth_error:
+            return auth_error
+        push = push_store.get_push_by_id(g.db, push_id)
+        if push is None or push["account_id"] != _principal()["id"]:
+            return redirect("/account/pending", 303)
+        push_store.delete_push(g.db, push_id)
+        shutil.rmtree(os.path.join(config.PUSH_STORAGE_DIR, push_id),
+                      ignore_errors=True)
+        return redirect(_return_to("/account/pending"), 303)
 
     def require_account_api():
         principal = _principal()

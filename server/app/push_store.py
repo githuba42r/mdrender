@@ -123,14 +123,17 @@ def pushes_by_account(conn):
     return [dict(r) for r in rows]
 
 
-def list_pushes(conn):
-    """Pushes for the admin list, with everything the row displays.
+def list_pushes(conn, account_id=None):
+    """Pushes for the list, with everything the row displays.
 
     `status` is derived from the per-file statuses rather than read from
     `pushes.status`: that column has a 'pending' default and nothing ever
     updated it, so it reported "pending" for every push forever. Deriving here
-    keeps the page honest without needing a write on every ack.
+    keeps the page honest without needing a write on every ack. With
+    `account_id`, only that account's pushes are returned (the account portal).
     """
+    where = "" if account_id is None else " WHERE p.account_id = ?"
+    params = () if account_id is None else (account_id,)
     rows = [
         dict(r) for r in conn.execute(
             "SELECT p.push_id, p.target_device, p.date, p.target_folder, p.conflict,"
@@ -140,7 +143,8 @@ def list_pushes(conn):
             " COALESCE(SUM(CASE WHEN f.status = 'exhausted' THEN 1 ELSE 0 END), 0) AS exhausted_count,"
             " COALESCE(GROUP_CONCAT(f.file_name, ', '), '') AS file_names"
             " FROM pushes p LEFT JOIN push_files f ON f.push_id = p.push_id"
-            " GROUP BY p.push_id ORDER BY p.date DESC"
+            + where +
+            " GROUP BY p.push_id ORDER BY p.date DESC", params
         ).fetchall()
     ]
     for r in rows:
@@ -160,18 +164,24 @@ def _rollup_status(file_count: int, pending: int, exhausted: int) -> str:
     return "acked"
 
 
-def list_pending_pushes(conn):
+def list_pending_pushes(conn, account_id=None):
     """Outstanding files, grouped by the push they came in on.
 
-    The admin acts on whole pushes — remove, re-push — so the grouping rule
+    The operator acts on whole pushes — remove, re-push — so the grouping rule
     lives here rather than being re-derived in the template. Groups follow the
-    query order, so the newest push is first.
+    query order, so the newest push is first. With `account_id`, only that
+    account's pending pushes are returned (the account portal).
     """
+    where = " WHERE f.status = 'pending'"
+    params = ()
+    if account_id is not None:
+        where += " AND p.account_id = ?"
+        params = (account_id,)
     rows = conn.execute(
         "SELECT f.*, p.target_device, p.target_folder, p.conflict, p.date AS push_date"
         " FROM push_files f JOIN pushes p ON p.push_id = f.push_id"
-        " WHERE f.status = 'pending'"
-        " ORDER BY p.date DESC, f.created_at"
+        + where +
+        " ORDER BY p.date DESC, f.created_at", params
     ).fetchall()
     grouped: dict[str, dict] = {}
     for r in rows:

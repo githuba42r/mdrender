@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_css }}">
   <script defer src="{{ url_for('static', filename='app.js') }}?v={{ asset_js }}"></script>
 </head>
-<body class="{{ '' if logged_in else 'no-nav' }}">
+<body class="{{ '' if (logged_in or account_logged_in) else 'no-nav' }}">
   {% if logged_in %}
   <aside class="side">
     <a class="brand" href="/pushes">
@@ -28,6 +28,24 @@
       <a href="/status" class="{{ 'active' if request.path.startswith('/status') else '' }}">Status</a>
     </nav>
     <form method="POST" action="/logout" class="logout">
+      <button type="submit">Log out</button>
+    </form>
+  </aside>
+  {% elif account_logged_in %}
+  <aside class="side">
+    <a class="brand" href="/account">
+      <img class="brand-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="34" height="34">
+      <span class="brand-text"><b>MDRender</b><span>{{ account_name or 'My account' }}</span></span>
+    </a>
+    <nav>
+      <a href="/account/pair" class="{{ 'active' if request.path.startswith('/account/pair') else '' }}">Pair device</a>
+      <a href="/account/devices" class="{{ 'active' if request.path.startswith('/account/devices') else '' }}">Devices</a>
+      <a href="/account/clients" class="{{ 'active' if request.path.startswith('/account/clients') else '' }}">Clients</a>
+      <a href="/account/profile" class="{{ 'active' if request.path.startswith('/account/profile') else '' }}">Account info</a>
+      <a href="/account/pushes" class="{{ 'active' if request.path.startswith('/account/pushes') else '' }}">Pushes</a>
+      <a href="/account/pending" class="{{ 'active' if request.path.startswith('/account/pending') else '' }}">Pending</a>
+    </nav>
+    <form method="POST" action="/account/logout" class="logout">
       <button type="submit">Log out</button>
     </form>
   </aside>

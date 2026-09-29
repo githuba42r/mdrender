@@ -35,12 +35,12 @@ def session_secret_from_pem(pem: str) -> str:
     return hashlib.sha256(pem.encode()).hexdigest()
 
 
-def create_client(conn, name: str, secret_hash: str) -> str:
+def create_client(conn, name: str, secret_hash: str, account_id=None) -> str:
     client_id = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO clients (client_id, client_secret_hash, name, scopes, created_at, revoked_at)"
-        " VALUES (?, ?, ?, 'push', ?, NULL)",
-        (client_id, secret_hash, name, int(time.time())),
+        "INSERT INTO clients (client_id, client_secret_hash, name, scopes, account_id,"
+        " created_at, revoked_at) VALUES (?, ?, ?, 'push', ?, ?, NULL)",
+        (client_id, secret_hash, name, account_id, int(time.time())),
     )
     conn.commit()
     return client_id
@@ -50,12 +50,21 @@ def get_client(conn, client_id):
     return conn.execute("SELECT * FROM clients WHERE client_id = ?", (client_id,)).fetchone()
 
 
-def list_clients(conn):
-    """Active clients only; a revoked client disappears from the admin list."""
+def list_clients(conn, account_id=None):
+    """Active clients only; a revoked client disappears from the list.
+
+    With `account_id`, only that account's clients are returned (the account
+    portal); without it, every client (the admin page).
+    """
+    if account_id is None:
+        return conn.execute(
+            "SELECT client_id, name, account_id, created_at, revoked_at FROM clients "
+            "WHERE revoked_at IS NULL ORDER BY created_at"
+        ).fetchall()
     return conn.execute(
-        "SELECT client_id, name, created_at, revoked_at FROM clients "
-        "WHERE revoked_at IS NULL ORDER BY created_at"
-    ).fetchall()
+        "SELECT client_id, name, account_id, created_at, revoked_at FROM clients "
+        "WHERE revoked_at IS NULL AND account_id = ? ORDER BY created_at",
+        (account_id,)).fetchall()
 
 
 def revoke_client(conn, client_id):

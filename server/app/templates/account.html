@@ -2,12 +2,15 @@
 {% block title %}My account &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>My account</h1>
-<p class="lede">{{ account.email }} &middot; hosted on <code>{{ account.host }}</code></p>
+<p class="lede">{{ account.name or account.email }}{% if account.name %} &middot; {{ account.email }}{% endif %}
+  {% if account.phone %}&middot; {{ account.phone }}{% endif %} &middot; hosted on <code>{{ account.host }}</code></p>
 <p class="lede">Pending storage: {{ usage.files }} file(s), {{ usage.bytes }} bytes
   (quota {{ quota.max_files }} files / {{ quota.max_bytes }} bytes, purge after {{ quota.max_age_hours }}h).</p>
+<p class="lede"><a href="/account/profile">Account info</a> &middot; <a href="/account/pushes">Pushes</a>
+  &middot; <a href="/account/pending">Pending</a> &middot; <a href="/account/clients">Clients</a></p>
 
 <h2>Devices</h2>
-<p class="lede"><a href="/account/pair">Pair a new device</a></p>
+<p class="lede"><a href="/account/pair">Pair a new device</a> &middot; <a href="/account/devices">Manage devices</a></p>
 {% if devices %}
 <div class="table-wrap">
 <table>

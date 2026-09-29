@@ -1,0 +1,123 @@
+# server/tests/test_account_portal_pages.py
+"""Account portal pages: devices, clients, profile, pushes, pending."""
+import os
+
+from server.app import accounts, push_store, store
+from server.app.app import create_app
+
+
+def _app(config):
+    config.PUSH_STORAGE_DIR = os.path.join(os.path.dirname(config.DB_PATH), "push")
+    config.PUSH_PUBLIC_URL = "https://push.example.com"
+    app = create_app(config)
+    app.config["TESTING"] = True
+    return app
+
+
+def _account(app, email="user@example.com"):
+    c = app.test_client()
+    c.post("/signup", data={"email": email, "password": "longenough1"})
+    c.post("/account/login", data={"email": email, "password": "longenough1"})
+    with app.config["_db"].connect() as conn:
+        return c, accounts.get_account_by_email(conn, email)["account_id"]
+
+
+def _seed_device(app, account_id, secret="dev-1", name="Clever Juniper", approved=1):
+    with app.config["_db"].connect() as conn:
+        conn.execute(
+            "INSERT INTO devices (device_secret, device_auth, device_name, fcm_token,"
+            " public_key, push_key, registered_at, last_seen, account_id, approved_at)"
+            " VALUES (?, 'auth', ?, 'tok', 'PUB', 'PUSH', 1, 1, ?, ?)",
+            (secret, name, account_id, approved))
+        conn.commit()
+
+
+def _seed_push(app, account_id, push_id="push-1"):
+    with app.config["_db"].connect() as conn:
+        push_store.create_push(conn, push_id, "dev-1", account_id=account_id)
+        push_store.add_file(conn, file_id=f"{push_id}-f1", push_id=push_id,
+                            file_name="a.pdf", file_path="", size=3, retrieval_key="rk",
+                            stored_path=None, created_at=1)
+
+
+def test_devices_page_and_revoke(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_device(app, account_id)
+    page = c.get("/account/devices")
+    assert page.status_code == 200 and b"Clever Juniper" in page.data
+
+    assert c.post("/account/devices/dev-1/revoke").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert conn.execute("SELECT 1 FROM devices WHERE device_secret='dev-1'").fetchone() is None
+
+
+def test_clients_page_and_revoke(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    with app.config["_db"].connect() as conn:
+        cid = store.create_client(conn, "laptop", "hash", account_id=account_id)
+    page = c.get("/account/clients")
+    assert page.status_code == 200 and b"laptop" in page.data
+
+    assert c.post(f"/account/clients/{cid}/revoke").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert store.get_client(conn, cid)["revoked_at"] is not None
+
+
+def test_profile_updates_name_email_phone(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    assert b"Account info" in c.get("/account/profile").data
+    resp = c.post("/account/profile", data={
+        "name": "Sam", "email": "sam@example.com", "phone": "+61400000000"})
+    assert resp.status_code == 303
+    with app.config["_db"].connect() as conn:
+        acc = accounts.get_account(conn, account_id)
+    assert acc["name"] == "Sam" and acc["email"] == "sam@example.com"
+    assert acc["phone"] == "+61400000000"
+
+
+def test_profile_rejects_an_admin_email(config, db_path):
+    from server.app import identity
+
+    app = _app(config)
+    c, _ = _account(app)
+    with app.config["_db"].connect() as conn:
+        identity.create_admin(conn, "boss", "longenough1", email="boss@example.com")
+    resp = c.post("/account/profile", data={
+        "name": "x", "email": "boss@example.com", "phone": ""})
+    assert resp.status_code == 400
+
+
+def test_pushes_and_pending_are_account_scoped(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_push(app, account_id)
+
+    # Another account's push is invisible.
+    c2, other_id = _account(app, "other@example.com")
+    _seed_push(app, other_id, push_id="other-push")
+
+    pushes = c.get("/account/pushes")
+    assert b"push-1" in pushes.data and b"other-push" not in pushes.data
+    pending = c.get("/account/pending")
+    assert b"push-1" in pending.data and b"other-push" not in pending.data
+
+    # A different account cannot delete someone else's push.
+    assert c2.post("/account/pending/push-1/delete").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert push_store.get_push_by_id(conn, "push-1") is not None
+
+    # The owner can.
+    assert c.post("/account/pending/push-1/delete").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert push_store.get_push_by_id(conn, "push-1") is None
+
+
+def test_portal_pages_are_gated(config, db_path):
+    app = _app(config)
+    for path in ("/account/devices", "/account/clients", "/account/profile",
+                 "/account/pushes", "/account/pending"):
+        resp = app.test_client().get(path)
+        assert resp.status_code == 303 and resp.headers["Location"] == "/account/login"

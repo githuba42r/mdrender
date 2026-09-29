@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Clients &middot; My account{% endblock %}
+{% block content %}
+<h1>CLI clients</h1>
+<p class="lede">Command-line clients authorised to push to your account. Revoking one stops its tokens immediately.</p>
+{% if clients %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Client ID</th><th>Created</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for c in clients %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><code>{{ c.client_id }}</code></td>
+      <td>{{ c.created_at | dt }}</td>
+      <td>
+        <form method="POST" action="/account/clients/{{ c.client_id }}/revoke" class="inline"
+              data-confirm="Revoke client '{{ c.name }}'? Its tokens stop working immediately."
+              data-confirm-ok="Revoke">
+          <button type="submit" class="btn-danger">Revoke</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No CLI clients enrolled yet.</p>
+{% endif %}
+
+<h2>Register a new client</h2>
+<ol>
+  <li>
+    On the machine that will push, run:
+    <div class="copy-wrap">
+      <pre>tools/localsend-send/localsend-send.py --enrol --server {{ server_url }}</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
+  </li>
+  <li>
+    It prints a verification URL. Open it in this signed-in browser and complete
+    the registration. The tool then writes
+    <code>~/.config/mdrender/push-credentials.json</code>.
+  </li>
+</ol>
+{% endblock %}

@@ -13,25 +13,30 @@ from server.app.auth import hash_secret, verify_secret
 ACTIVE, BLOCKED, BANNED = "active", "blocked", "banned"
 
 
-def create_account(conn, email, password=None, *, host="master", name=None) -> str:
+def create_account(conn, email, password=None, *, host="master", name=None,
+                   phone=None) -> str:
     account_id = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO accounts (account_id, email, name, password_hash, host, status,"
-        " balance, created_at) VALUES (?, ?, ?, ?, ?, 'active', 0, ?)",
-        (account_id, email.strip().lower(), name, hash_secret(password) if password else None,
-         host, int(time.time())))
+        "INSERT INTO accounts (account_id, email, name, phone, password_hash, host,"
+        " status, balance, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?)",
+        (account_id, email.strip().lower(), name, phone,
+         hash_secret(password) if password else None, host, int(time.time())))
     conn.commit()
     return account_id
 
 
-def update_account(conn, account_id, *, name=None, email=None, password=None) -> None:
-    """Edit a user/account's name, email, and (optionally) password."""
+def update_account(conn, account_id, *, name=None, email=None, phone=None,
+                   password=None) -> None:
+    """Edit a user/account's name, email, phone, and (optionally) password."""
     if name is not None:
         conn.execute("UPDATE accounts SET name = ? WHERE account_id = ?",
                      (name, account_id))
     if email is not None:
         conn.execute("UPDATE accounts SET email = ? WHERE account_id = ?",
                      (email.strip().lower(), account_id))
+    if phone is not None:
+        conn.execute("UPDATE accounts SET phone = ? WHERE account_id = ?",
+                     (phone.strip() or None, account_id))
     if password:
         conn.execute("UPDATE accounts SET password_hash = ? WHERE account_id = ?",
                      (hash_secret(password), account_id))
@@ -60,6 +65,13 @@ def get_account(conn, account_id):
 def get_account_by_email(conn, email):
     return conn.execute("SELECT * FROM accounts WHERE email = ?",
                         (email.strip().lower(),)).fetchone()
+
+
+def get_account_by_phone(conn, phone):
+    if not phone:
+        return None
+    return conn.execute("SELECT * FROM accounts WHERE phone = ?",
+                        (phone.strip(),)).fetchone()
 
 
 def list_accounts(conn):

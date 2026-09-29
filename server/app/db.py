@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS clients (
   client_secret_hash TEXT NOT NULL,
   name TEXT NOT NULL,
   scopes TEXT NOT NULL DEFAULT 'push',
+  account_id TEXT,
   created_at INTEGER NOT NULL,
   revoked_at INTEGER
 );
@@ -115,6 +116,7 @@ CREATE TABLE IF NOT EXISTS federated_outbox (
 CREATE TABLE IF NOT EXISTS accounts (
   account_id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
+  phone TEXT,
   password_hash TEXT,
   host TEXT NOT NULL DEFAULT 'master',
   status TEXT NOT NULL DEFAULT 'active',
@@ -295,6 +297,10 @@ class Database:
             "accounts": {
                 "messages_sent": "INTEGER NOT NULL DEFAULT 0",
                 "name": "TEXT",
+                "phone": "TEXT",
+            },
+            "clients": {
+                "account_id": "TEXT",
             },
         }
         for table, columns in wanted.items():

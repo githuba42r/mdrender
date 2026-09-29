@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Pending &middot; My account{% endblock %}
+{% block content %}
+<h1>Pending pushes</h1>
+<p class="lede">Pushes your device has not acknowledged yet.</p>
+{% if pushes %}
+{% for p in pushes %}
+<section class="push-group">
+  <h2>
+    <code>{{ p.push_id }}</code>
+    <span class="empty">to {{ p.target_device }}</span>
+  </h2>
+  <p>
+    Destination:
+    {% if p.target_folder %}
+      <code>{{ p.target_folder }}</code>
+    {% else %}
+      <span class="empty">(app default)</span>
+    {% endif %}
+    &middot; Conflict: {{ p.conflict }}
+    &middot; Queued: {{ p.date | dt }}
+    <form method="POST" action="/account/pending/{{ p.push_id }}/delete" class="inline"
+          data-confirm="Delete this entire push and all {{ p.files | length }} pending file(s)?"
+          data-confirm-ok="Delete">
+      <input type="hidden" name="next" value="/account/pending">
+      <button type="submit" class="btn-danger">Delete entire push</button>
+    </form>
+  </p>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>File</th><th>Path</th><th>Size</th><th>Created</th><th>Status</th><th>Retries</th></tr>
+    </thead>
+    <tbody>
+      {% for f in p.files %}
+      <tr>
+        <td>{{ f.file_name }}</td>
+        <td>{{ f.file_path }}</td>
+        <td>{{ f.size }}</td>
+        <td>{{ f.created_at | dt }}</td>
+        <td><span class="chip {{ f.status }}">{{ f.status }}</span></td>
+        <td>{{ f.retries }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endfor %}
+{% else %}
+<p class="empty">Nothing pending. Every accepted file has been pulled.</p>
+{% endif %}
+{% endblock %}

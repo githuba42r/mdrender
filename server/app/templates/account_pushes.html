@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Pushes &middot; My account{% endblock %}
+{% block content %}
+<h1>Pushes</h1>
+<p class="lede">Files you have pushed to your devices.</p>
+{% if pushes %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Push ID</th>
+      <th>Device</th>
+      <th>Destination folder</th>
+      <th>Conflict</th>
+      <th>Files</th>
+      <th>Date</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in pushes %}
+    <tr>
+      <td><code>{{ p.push_id }}</code></td>
+      <td>{{ p.target_device }}</td>
+      <td>
+        {% if p.target_folder %}
+          <code>{{ p.target_folder }}</code>
+        {% else %}
+          <span class="empty">(app default)</span>
+        {% endif %}
+      </td>
+      <td>{{ p.conflict }}</td>
+      <td>
+        {% if p.file_names %}
+          {{ p.file_names }}
+          <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
+        {% else %}
+          <span class="empty">none</span>
+        {% endif %}
+      </td>
+      <td>{{ p.date | dt }}</td>
+      <td><span class="chip {{ p.status }}">{{ p.status }}</span></td>
+      <td>
+        <form method="POST" action="/account/pending/{{ p.push_id }}/delete" class="inline"
+              data-confirm="Remove this push and any stored files?"
+              data-confirm-ok="Remove">
+          <input type="hidden" name="next" value="/account/pushes">
+          <button type="submit" class="btn-danger">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No pushes yet. Send a file to a paired device.</p>
+{% endif %}
+{% endblock %}
