@@ -34,6 +34,7 @@ DEFAULTS = {
     "ACCOUNT_MAX_FILES": 1000,
     "ACCOUNT_MAX_AGE_HOURS": 168,     # 7 days
     "BAN_ENFORCEMENT": True,
+    "BILLING_ENFORCEMENT": False,
     # Identity provider for account logins: "local" (default) or a hosted IdP
     # such as "firebase". Admins always use local username/password.
     "IDENTITY_PROVIDER": "local",
@@ -55,8 +56,9 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS"):
             env[k] = int(env[k])
-    env["BAN_ENFORCEMENT"] = str(env.get("BAN_ENFORCEMENT", True)).lower() in (
-        "1", "true", "yes", "on")
+    for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT"):
+        env[flag] = str(env.get(flag, DEFAULTS.get(flag, False))).lower() in (
+            "1", "true", "yes", "on")
     if overrides:
         env.update(overrides)
     return Config(**env)

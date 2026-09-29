@@ -52,6 +52,27 @@ def test_upload_enforces_quota(config, db_path):
     assert over.status_code == 413
 
 
+def test_billing_enforcement_blocks_upload_until_entitled(config, db_path):
+    from server.app import billing
+
+    config.BILLING_ENFORCEMENT = True
+    app = _app(config)
+    c = _account_client(app)
+
+    blocked = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
+                     content_type="multipart/form-data")
+    assert blocked.status_code == 402
+
+    with app.config["_db"].connect() as conn:
+        plan = billing.create_plan(conn, "Free", billing.SCOPE_ACCOUNT)
+        group = billing.ensure_default_group(conn)
+        billing.set_group_plan(conn, group, plan)
+
+    ok = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
+                content_type="multipart/form-data")
+    assert ok.status_code == 200
+
+
 def test_upload_requires_an_account_session(config, db_path):
     app = _app(config)
     assert app.test_client().post("/api/account/upload", data={

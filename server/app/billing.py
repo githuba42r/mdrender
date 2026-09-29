@@ -123,3 +123,16 @@ def balance(conn, account_type, account_id) -> int:
         "SELECT COALESCE(SUM(amount_cents), 0) FROM billing_ledger"
         " WHERE account_type = ? AND account_id = ?",
         (account_type, account_id)).fetchone()[0]
+
+
+def debit(conn, account_type, account_id, amount_cents, *, reason=None) -> int:
+    """Charge an account (metering); returns the new balance (cents)."""
+    return add_credit(conn, account_type, account_id, -abs(int(amount_cents)),
+                      reason=reason or "usage")
+
+
+def entitled(conn, account_type, account_id) -> bool:
+    """A billable account may operate if it has a plan or a positive balance."""
+    if effective_plan(conn, account_type, account_id) is not None:
+        return True
+    return balance(conn, account_type, account_id) > 0

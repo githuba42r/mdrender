@@ -478,6 +478,9 @@ def create_app(config):
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
+        if (bool(getattr(config, "BILLING_ENFORCEMENT", False))
+                and not billing.entitled(g.db, billing.SCOPE_ACCOUNT, account_id)):
+            return jsonify({"error": "payment required"}), 402
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files"}), 400
