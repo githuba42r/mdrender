@@ -24,6 +24,11 @@ DEFAULTS = {
     "FCM_SERVER_KEY": "",
     "PUSH_PUBLIC_URL": "",
     "LISTEN_ADDR": ":8080",
+    # Deployment role: "" = auto-detect from FCM availability, or force one of
+    # master | slave | standalone. MASTER_URL is the federation master to enrol
+    # with (baked-in default, overridable).
+    "ROLE": "",
+    "MASTER_URL": "",
 }
 
 

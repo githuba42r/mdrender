@@ -24,6 +24,8 @@ from server.app.auth import (LoginGate, create_session, delete_session,
                              make_session, revoke_access_tokens, session_is_valid,
                              validate_access_token, verify_secret, verify_session)
 from server.app.db import Database
+from server.app.deployment import (detect_role, get_or_create_identity,
+                                   probe_fcm)
 from server.app.identity import (count_admins, create_admin,
                                  get_identity_provider, list_admins)
 from server.app.store import (check_device, create_client, delete_device,
@@ -75,6 +77,7 @@ def create_app(config):
         # keeps a working login until the operator sets up a named admin.
         if count_admins(conn) == 0 and getattr(config, "SERVER_PASSWORD", ""):
             create_admin(conn, "admin", config.SERVER_PASSWORD)
+        server_identity = get_or_create_identity(conn)
 
     # The server keypair is stable per database; the session secret derives from it.
     config.session_secret = session_secret_from_pem(server_pem)
@@ -85,6 +88,9 @@ def create_app(config):
     app.config["_enrol_keys"] = {}          # enrolment_id -> {"key", "expires"}
     app.config["_login_gate"] = LoginGate(config)
     app.config["_identity"] = get_identity_provider(config)
+    app.config["_server_identity"] = server_identity
+    app.config["_fcm_available"] = probe_fcm(config)
+    app.config["_server_role"] = detect_role(config, app.config["_fcm_available"])
     app.config["_pairing_tokens"] = {}      # current pairing token (browser artefact)
     app.config["_test_pairing_token"] = None
     try:
@@ -431,6 +437,22 @@ def create_app(config):
         if len(username) >= 3 and len(password) >= 8:
             create_admin(g.db, username, password)
         return redirect("/admins", 303)
+
+    @app.route("/status", methods=["GET"])
+    def status():
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        ident = app.config["_server_identity"]
+        return render_template(
+            "status.html",
+            role=app.config["_server_role"],
+            server_id=ident["server_id"],
+            hostname=ident["hostname"],
+            fcm_configured=bool(getattr(config, "FCM_SERVER_KEY", "")),
+            fcm_available=app.config["_fcm_available"],
+            master_url=getattr(config, "MASTER_URL", ""),
+        )
 
     @app.route("/devices", methods=["GET"])
     def devices():

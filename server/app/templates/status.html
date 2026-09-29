@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Status &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Status</h1>
+<p class="lede">This server's deployment role and identity.</p>
+
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr><th>Role</th><td><span class="chip">{{ role }}</span></td></tr>
+    <tr><th>FCM configured</th><td>{{ "yes" if fcm_configured else "no" }}</td></tr>
+    <tr>
+      <th>FCM available</th>
+      <td>
+        {% if fcm_available %}
+          <span class="chip acked">confirmed</span>
+        {% else %}
+          <span class="chip failed">unavailable</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr><th>Master URL</th><td>{% if master_url %}<code>{{ master_url }}</code>{% else %}<span class="empty">(not configured)</span>{% endif %}</td></tr>
+    <tr><th>Hostname</th><td>{{ hostname or "-" }}</td></tr>
+    <tr><th>Server ID</th><td><code>{{ server_id }}</code></td></tr>
+  </tbody>
+</table>
+</div>
+{% endblock %}

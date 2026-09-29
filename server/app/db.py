@@ -8,6 +8,14 @@ CREATE TABLE IF NOT EXISTS server_keys (
   private_key_pem TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS server_identity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  server_id TEXT NOT NULL,
+  private_key_pem TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  hostname TEXT,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS pairing_tokens (
   token TEXT PRIMARY KEY,
   expires_at INTEGER NOT NULL,
