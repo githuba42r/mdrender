@@ -72,6 +72,12 @@ def delete_device(conn, *, account_id, device_id, server_id) -> None:
     conn.commit()
 
 
+def get_device(conn, *, account_id, device_id, server_id):
+    return conn.execute(
+        "SELECT * FROM account_devices WHERE server_id = ? AND account_id = ?"
+        " AND device_id = ?", (server_id, account_id, device_id)).fetchone()
+
+
 def list_devices(conn, account_id, server_id):
     return conn.execute(
         "SELECT device_id, fcm_token, name, updated_at FROM account_devices"

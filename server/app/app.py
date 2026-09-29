@@ -650,6 +650,42 @@ def create_app(config):
                                    server_id=row["server_id"])
         return jsonify({"ok": True})
 
+    @app.route("/api/federation/doorbell", methods=["POST"])
+    def federation_doorbell():
+        """Relay a sealed doorbell to a slave-hosted account's device (design §7B).
+
+        The master cannot read the trigger (no push_key); it only resolves the
+        device's FCM token and sends. Ownership is enforced: a slave may only
+        ring devices registered under its own server_id + account.
+        """
+        row = federation.check_bearer(g.db, _federation_token())
+        if row is None:
+            return jsonify({"error": "unauthorized"}), 401
+        if row["status"] != "active":
+            return jsonify({"error": "slave not active"}), 403
+        body = request.get_data() or b""
+        if not federation.verify_request(g.db, row, request.method, request.path,
+                                         body, request.headers):
+            return jsonify({"error": "bad signature"}), 401
+        data = json.loads(body or b"{}")
+        account_id = data.get("account_id")
+        device_id = data.get("device_id")
+        sealed = data.get("sealed") or {}
+        if not account_id or not device_id or not sealed.get("c") or not sealed.get("i"):
+            return jsonify({"error": "account_id, device_id and sealed {c,i} required"}), 400
+        device = accounts.get_device(g.db, account_id=account_id, device_id=device_id,
+                                     server_id=row["server_id"])
+        if device is None:
+            return jsonify({"error": "device not found for this slave"}), 403
+        fcm = app.config["_fcm"]
+        if fcm is None or not device["fcm_token"]:
+            return jsonify({"error": "fcm unavailable"}), 503
+        try:
+            fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
+        except Exception:  # noqa: BLE001 - report, the slave's retry worker will retry
+            return jsonify({"error": "fcm send failed"}), 502
+        return jsonify({"ok": True})
+
     def _federation_sign_challenge(status=None):
         """Slave side: sign a master challenge to prove key possession + liveness."""
         data = request.get_json(silent=True) or {}

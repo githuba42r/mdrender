@@ -1,6 +1,7 @@
 # server/tests/test_accounts.py
 """Accounts and the no-PII device routing registry (Phase D)."""
 import base64
+import json
 import os
 import unittest.mock as mock
 
@@ -89,3 +90,39 @@ def test_master_device_sync_accepts_signed_no_pii_updates(app_):
     assert c.delete(path, headers=headers).status_code == 200
     with app_.config["_db"].connect() as conn:
         assert accounts.list_devices(conn, "acct-1", "srv-1") == []
+
+
+class _FakeFcm:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, data, token):
+        self.sent.append((data, token))
+
+
+def test_master_relays_a_doorbell_to_the_owning_device(app_):
+    priv_pem, token = _enrol_slave(app_)
+    fake = _FakeFcm()
+    app_.config["_fcm"] = fake
+    with app_.config["_db"].connect() as conn:
+        accounts.upsert_device(conn, account_id="acct-1", device_id="dev-1",
+                               server_id="srv-1", fcm_token="tok-1")
+
+    c = app_.test_client()
+    body = json.dumps({"account_id": "acct-1", "device_id": "dev-1",
+                       "sealed": {"c": "CIPHER", "i": "IV"}}).encode()
+    headers = federation.sign_request(priv_pem, "POST", "/api/federation/doorbell", body)
+    headers["Authorization"] = f"Bearer {token}"
+    resp = c.post("/api/federation/doorbell", data=body,
+                  content_type="application/json", headers=headers)
+    assert resp.status_code == 200, resp.data
+    assert fake.sent == [({"p": "CIPHER", "i": "IV"}, "tok-1")]
+
+    # A device that isn't registered for this slave/account is refused.
+    body = json.dumps({"account_id": "acct-2", "device_id": "dev-9",
+                       "sealed": {"c": "C", "i": "I"}}).encode()
+    headers = federation.sign_request(priv_pem, "POST", "/api/federation/doorbell", body)
+    headers["Authorization"] = f"Bearer {token}"
+    assert c.post("/api/federation/doorbell", data=body,
+                  content_type="application/json",
+                  headers=headers).status_code == 403
