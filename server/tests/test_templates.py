@@ -93,6 +93,8 @@ def test_browser_pages_render(config, db_path):
     assert devices.status_code == 200
     assert b"<table" in devices.data
     assert b"Test Dev" in devices.data
+    # The remove confirmation names the device it will remove.
+    assert b"Remove device 'Test Dev'?" in devices.data
 
     # The remove form lands back on /devices via a 303 redirect
     removed = client.post(f"/devices/{secret}/delete")
@@ -302,6 +304,8 @@ def test_clients_page_lists_enrolled_clients_and_shows_instructions(config, db_p
     body = client.get("/clients").data
     assert b"cli-laptop" in body
     assert cid.encode() in body
+    # The revoke confirmation names the client it will revoke.
+    assert b"Revoke client 'cli-laptop'?" in body
 
     # Registration and pushing instructions, with this server's URL.
     assert b"--enrol --server" in body

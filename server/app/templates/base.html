@@ -3,37 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <title>{% block title %}Cloud Push Server{% endblock %}</title>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 2rem; color: #222; }
-    nav a { margin-right: 1rem; }
-    nav .logout { display: inline; margin-left: 1rem; }
-    form.inline { display: inline-block; margin-right: 0.4rem; }
-    section.push-group { margin-top: 1.5rem; }
-    section.push-group h2 { font-size: 1rem; margin-bottom: 0.3rem; }
-    table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
-    code, pre { background: #f4f4f4; padding: 0.2rem 0.4rem; border-radius: 3px; }
-    .empty { color: #666; font-style: italic; }
-  </style>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head>
-<body>
-  <header>
-    {% if logged_in %}
+<body class="{{ '' if logged_in else 'no-nav' }}">
+  {% if logged_in %}
+  <aside class="side">
+    <a class="brand" href="/pushes">
+      <img class="brand-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="34" height="34">
+      <span class="brand-text"><b>MDRender</b><span>Cloud Push</span></span>
+    </a>
     <nav>
-      <a href="/pair">Pair</a>
-      <a href="/devices">Devices</a>
-      <a href="/clients">Clients</a>
-      <a href="/pushes">Pushes</a>
-      <a href="/pending">Pending</a>
-      <form method="POST" action="/logout" class="logout">
-        <button type="submit">Log out</button>
-      </form>
+      <a href="/pair" class="{{ 'active' if request.path.startswith('/pair') else '' }}">Pair</a>
+      <a href="/devices" class="{{ 'active' if request.path.startswith('/devices') else '' }}">Devices</a>
+      <a href="/clients" class="{{ 'active' if request.path.startswith('/clients') else '' }}">Clients</a>
+      <a href="/pushes" class="{{ 'active' if request.path.startswith('/pushes') else '' }}">Pushes</a>
+      <a href="/pending" class="{{ 'active' if request.path.startswith('/pending') else '' }}">Pending</a>
     </nav>
-    {% endif %}
-  </header>
+    <form method="POST" action="/logout" class="logout">
+      <button type="submit">Log out</button>
+    </form>
+  </aside>
+  {% endif %}
   <main>
     {% block content %}{% endblock %}
   </main>
+
+  <dialog id="confirm-dialog" class="confirm">
+    <form method="dialog">
+      <h2>Please confirm</h2>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button value="cancel">Cancel</button>
+        <button id="confirm-ok" value="confirm" class="btn-danger">Confirm</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

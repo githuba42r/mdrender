@@ -1,12 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Login &middot; Cloud Push Server{% endblock %}
 {% block content %}
-<h1>Cloud Push Server</h1>
-<p>Enter the server password to continue.</p>
-<form method="POST" action="/login">
-  <input type="hidden" name="next" value="{{ next }}">
-  <label for="password">Password</label>
-  <input type="password" id="password" name="password" autofocus required>
-  <button type="submit">Log in</button>
-</form>
+<div class="login-card">
+  <div class="login-head">
+    <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
+    <h1>Cloud Push Server</h1>
+  </div>
+  <p class="lede">Enter the server password to continue.</p>
+  <form method="POST" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="password">Password</label>
+    <div class="field">
+      <input type="password" id="password" name="password" autofocus required>
+    </div>
+    <button type="submit" class="btn-primary">Log in</button>
+  </form>
+</div>
 {% endblock %}

@@ -2,7 +2,9 @@
 {% block title %}Devices &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Devices</h1>
+<p class="lede">Phones paired to this server. Removing one makes it re-pair before it can receive pushes again.</p>
 {% if devices %}
+<div class="table-wrap">
 <table>
   <thead>
     <tr><th>Name</th><th>Registered</th><th>Last seen</th><th></th></tr>
@@ -14,15 +16,18 @@
       <td>{{ d.registered_at | dt }}</td>
       <td>{{ d.last_seen | dt }}</td>
       <td>
-        <form method="POST" action="/devices/{{ d.device_secret }}/delete">
-          <button type="submit">Remove</button>
+        <form method="POST" action="/devices/{{ d.device_secret }}/delete" class="inline"
+              data-confirm="Remove device '{{ d.device_name }}'? It must re-pair before it can receive pushes again."
+              data-confirm-ok="Remove">
+          <button type="submit" class="btn-danger">Remove</button>
         </form>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty">No devices registered yet.</p>
+<p class="empty">No devices registered yet. Pair one from the Pair page.</p>
 {% endif %}
 {% endblock %}

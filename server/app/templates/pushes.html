@@ -2,7 +2,9 @@
 {% block title %}Pushes &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Pushes</h1>
+<p class="lede">Every push this server has accepted, and whether the device has pulled its files.</p>
 {% if pushes %}
+<div class="table-wrap">
 <table>
   <thead>
     <tr>
@@ -38,21 +40,23 @@
         {% endif %}
       </td>
       <td>{{ p.date | dt }}</td>
-      <td>{{ p.status }}</td>
+      <td><span class="chip {{ p.status }}">{{ p.status }}</span></td>
       <td>
         <form method="POST" action="/api/push/{{ p.push_id }}/retry" class="inline">
           <button type="submit">Re-push pending</button>
         </form>
         <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
-              onsubmit="return confirm('Remove this push and any stored files?');">
-          <button type="submit">Remove</button>
+              data-confirm="Remove this push and any stored files?"
+              data-confirm-ok="Remove">
+          <button type="submit" class="btn-danger">Remove</button>
         </form>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty">No pushes yet.</p>
+<p class="empty">No pushes yet. Send a file to a paired device.</p>
 {% endif %}
 {% endblock %}

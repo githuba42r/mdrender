@@ -2,8 +2,9 @@
 {% block title %}Clients &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>CLI clients</h1>
-<p>This is a list of command line clients that are authorized to push to MDRender.</p>
+<p class="lede">This is a list of command line clients that are authorized to push to MDRender.</p>
 {% if clients %}
+<div class="table-wrap">
 <table>
   <thead>
     <tr><th>Name</th><th>Client ID</th><th>Created</th><th></th></tr>
@@ -15,15 +16,17 @@
       <td><code>{{ c.client_id }}</code></td>
       <td>{{ c.created_at | dt }}</td>
       <td>
-        <form method="POST" action="/clients/{{ c.client_id }}/revoke"
-              onsubmit="return confirm('Revoke this client? Its tokens stop working.');">
-          <button type="submit">Revoke</button>
+        <form method="POST" action="/clients/{{ c.client_id }}/revoke" class="inline"
+              data-confirm="Revoke client '{{ c.name }}'? Its tokens stop working immediately."
+              data-confirm-ok="Revoke">
+          <button type="submit" class="btn-danger">Revoke</button>
         </form>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No clients enrolled yet.</p>
 {% endif %}
@@ -32,7 +35,10 @@
 <ol>
   <li>
     On the machine that will push, run:
-    <pre>tools/localsend-send/localsend-send.py --enrol --server {{ server_url }}</pre>
+    <div class="copy-wrap">
+      <pre>tools/localsend-send/localsend-send.py --enrol --server {{ server_url }}</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
   </li>
   <li>
     It prints a verification URL. Open it in this signed-in browser and either
@@ -42,9 +48,15 @@
   </li>
   <li>
     Push files to a paired device by name:
-    <pre>tools/localsend-send/localsend-send.py --name "&lt;device-name&gt;" file.pdf</pre>
+    <div class="copy-wrap">
+      <pre>tools/localsend-send/localsend-send.py --name "&lt;device-name&gt;" file.pdf</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
     The curl wrapper works the same way:
-    <pre>tools/push-to-phone.sh --target "&lt;device-name&gt;" file.pdf</pre>
+    <div class="copy-wrap">
+      <pre>tools/push-to-phone.sh --target "&lt;device-name&gt;" file.pdf</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
   </li>
 </ol>
 {% endblock %}

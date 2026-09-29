@@ -2,12 +2,13 @@
 {% block title %}Pending files &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Pending files</h1>
+<p class="lede">Pushes whose files the device has not acknowledged yet.</p>
 {% if pushes %}
 {% for p in pushes %}
 <section class="push-group">
   <h2>
     <code>{{ p.push_id }}</code>
-    <span class="empty">&rarr; {{ p.target_device }}</span>
+    <span class="empty">to {{ p.target_device }}</span>
   </h2>
   <p>
     Destination:
@@ -19,11 +20,13 @@
     &middot; Conflict: {{ p.conflict }}
     &middot; Queued: {{ p.date | dt }}
     <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
-          onsubmit="return confirm('Delete this entire push and all {{ p.files | length }} pending file(s)?');">
+          data-confirm="Delete this entire push and all {{ p.files | length }} pending file(s)?"
+          data-confirm-ok="Delete">
       <input type="hidden" name="next" value="/pending">
-      <button type="submit">Delete entire push</button>
+      <button type="submit" class="btn-danger">Delete entire push</button>
     </form>
   </p>
+  <div class="table-wrap">
   <table>
     <thead>
       <tr><th>File</th><th>Path</th><th>Size</th><th>Created</th><th>Status</th><th>Retries</th></tr>
@@ -35,15 +38,16 @@
         <td>{{ f.file_path }}</td>
         <td>{{ f.size }}</td>
         <td>{{ f.created_at | dt }}</td>
-        <td>{{ f.status }}</td>
+        <td><span class="chip {{ f.status }}">{{ f.status }}</span></td>
         <td>{{ f.retries }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 {% endfor %}
 {% else %}
-<p class="empty">No pending files.</p>
+<p class="empty">Nothing pending. Every accepted file has been pulled.</p>
 {% endif %}
 {% endblock %}

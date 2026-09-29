@@ -2,8 +2,8 @@
 {% block title %}Pair a device &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Pair a new device</h1>
+<p class="lede">Scan the code with the MDRender app (Cloud Push, then pair). The code carries the server URL and a single-use token.</p>
 <p>Server URL: <code>{{ server_url }}</code></p>
 <p>Pairing token expires: <code>{{ expires }}</code></p>
-<p>Scan this QR code with the app to pair a device:</p>
-<div>{{ qr_svg | safe }}</div>
+<div class="qr">{{ qr_svg | safe }}</div>
 {% endblock %}

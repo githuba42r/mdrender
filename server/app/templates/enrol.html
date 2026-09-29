@@ -4,20 +4,21 @@
 <h1>Enrol a tool</h1>
 {% if code %}
   {% if approved %}
-  <p>This enrolment is already complete. Return to the terminal.</p>
+  <p class="lede">This enrolment is already complete. Return to the terminal.</p>
   {% else %}
   <h2>In a browser</h2>
-  <p>Click <strong>Complete registration</strong>. The command waiting in the
-     terminal will collect its credentials automatically.</p>
+  <p>Click <strong>Complete registration</strong>. The command waiting in the terminal will collect its credentials automatically.</p>
   <form method="POST" action="/enrol/{{ eid }}/approve">
-    <button type="submit">Complete registration</button>
+    <button type="submit" class="btn-primary">Complete registration</button>
   </form>
 
   <h2>Headless / remote</h2>
   <p>Read this one-time code to the waiting command and type it there:</p>
-  <pre>{{ code }}</pre>
-  <p class="empty">Expires {{ code_expires | dt }} &mdash; it is short-lived by
-     design. If it expires before you type it, get a fresh one:</p>
+  <div class="code-display" id="enrol-code" data-copy title="Click to copy">{{ code }}</div>
+  <div class="code-actions">
+    <button type="button" class="copy-btn" data-copy-from="#enrol-code" aria-label="Copy enrolment code">Copy code</button>
+  </div>
+  <p class="empty">Expires {{ code_expires | dt }}. It is short-lived by design; if it expires before you type it, get a fresh one.</p>
   <form method="POST" action="/enrol/{{ eid }}/new-code">
     <button type="submit">New code</button>
   </form>

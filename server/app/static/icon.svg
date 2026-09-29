@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108" role="img" aria-label="MDRender">
+  <title>MDRender</title>
+  <defs>
+    <linearGradient id="mdrender-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E1E32"/>
+      <stop offset="1" stop-color="#141420"/>
+    </linearGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="url(#mdrender-bg)"/>
+  <path fill="#E94560"
+        d="M36,30 L72,30 Q76,30 76,34 L76,56 C76,70 66,79 54,83 C42,79 32,70 32,56 L32,34 Q32,30 36,30 Z"/>
+  <path fill="none" stroke="#FDEFE8" stroke-width="4.6" stroke-linejoin="round" stroke-linecap="round"
+        d="M39,61 L39,45 L47,53 L55,45 L55,61"/>
+  <path fill="none" stroke="#FDEFE8" stroke-width="4.6" stroke-linejoin="round" stroke-linecap="round"
+        d="M64,45 L64,59 M59.5,54.5 L64,59 L68.5,54.5"/>
+</svg>
