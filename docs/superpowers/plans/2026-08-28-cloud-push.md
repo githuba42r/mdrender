@@ -4,7 +4,7 @@
 
 **Goal:** Push files from a Linux desktop to an Android phone off-LAN — an AI agent triggers a push via SSH, a self-hosted Python server stores the bytes, and FCM "doorbells" the phone, which pulls the bytes over HTTPS and imports them into encrypted storage.
 
-**Architecture:** One shared Firebase project acts as a dumb doorbell for all self-hosted servers. Each operator runs their own server (Docker, SQLite for all state). The server and phone exchange RSA-3072 public keys via a QR (TOFU pairing). Every FCM message is an RSA-OAEP + AES-256-GCM envelope signed by the server, so Firebase sees only ciphertext. Delivery is FCM-push only (no polling); recovery is server-side retries + operator re-push. The app downloads in a `dataSync` foreground service because it is usually not foreground when FCM arrives.
+**Architecture:** One shared Firebase project acts as a dumb doorbell for all self-hosted servers. Each operator runs their own server (Docker, SQLite for all state). The server and phone exchange RSA-3072 public keys via a QR (TOFU pairing); the phone also generates a random 32-byte `push_key`. Every FCM message is a fixed-size **encrypted doorbell trigger** — `server_url`, `push_id`, `challenge_key` — sealed with AES-256-GCM under `push_key`, so Firebase sees only ciphertext and cannot forge a message the app will accept. The phone exchanges the trigger for a **signed manifest** over HTTPS, then downloads bytes and imports them into encrypted storage. Delivery is FCM-push only (no polling); recovery is server-side retries + operator re-push. The app downloads in a `dataSync` foreground service because it is usually not foreground when FCM arrives.
 
 **Tech Stack:** Python 3.11 + Flask + `cryptography` + SQLite (server, single Docker image); Kotlin + Hilt + Compose + Room + Firebase Messaging + ML Kit barcode + CameraX (Android); Python `urllib` + UDP multicast (agent tools). Android uses `java.net.HttpURLConnection` (no new HTTP dep).
 
@@ -21,7 +21,10 @@ Verbatim rules that apply to every task:
 - **No new HTTP client dep on Android** — `java.net.HttpURLConnection` only.
 - **Device↔server calls use POST/PUT JSON bodies, never query strings** (R9). No secrets in URLs.
 - **`target_device` is REQUIRED on `POST /api/push`** — 400 `{"error":"device not found"}` when missing/unknown. No broadcast (R7).
-- **Envelope:** `alg=RSA-OAEP-256` wrapping a random 32-byte AES-256-GCM content key; `enc=A256GCM`; `sig=RSA-SHA256` over the concatenation of the base64 strings `ek||iv||ct`. Envelope payload ≤ 3.5 KB → slice files (~32 at 256 B/file) into multiple FCM messages sharing one `push_id`; each slice carries `total_files`.
+- **Doorbell, not manifest.** The FCM message carries **no file manifest** — only `server_url`, `push_id`, `challenge_key`, encrypted under `push_key`. The phone fetches a **signed manifest** from `POST /api/push/{push_id}/manifest`. No envelope, no RSA content-key wrap, no batching, no slice-merge.
+- **IV = `HMAC-SHA256(push_key, push_id)[:12]`.** Derived, never random, so it is unique per key with no nonce state and a retry reproduces a byte-identical message.
+- **Manifest is signed, not encrypted** — RSA-SHA256 against the QR-pinned server public key, so a rogue TLS certificate cannot inject file names or retrieval keys. Encryption would protect nothing, since the manifest never reaches Firebase.
+- **`push_key` is a random 32-byte field** covered by the registration `sig`, not a key derived from the two RSA public keys (which would be recomputable from anything holding the phone's public key).
 - **FCM HTTP v1 only** (legacy server keys decommissioned 2024-06-20): send credential is a Firebase **service-account** JSON, never a legacy key.
 - **Retrieval keys are file-linked, not single-use** — valid until ack or purge.
 - **Ack = phone downloaded AND recorded.** `POST /api/push/{file_id}/received` deletes server bytes; the send record row is retained.
@@ -371,12 +374,14 @@ CREATE TABLE IF NOT EXISTS devices (
   device_name TEXT NOT NULL UNIQUE,
   fcm_token TEXT,
   public_key TEXT NOT NULL,
+  push_key TEXT NOT NULL,
   registered_at INTEGER NOT NULL,
   last_seen INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pushes (
   push_id TEXT PRIMARY KEY,
   target_device TEXT NOT NULL,
+  challenge_key TEXT NOT NULL,
   date INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
 );
@@ -412,7 +417,20 @@ class Database:
 
     def init_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(SCHEMA)
+        self._migrate(conn)
         conn.commit()
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Idempotently add columns introduced after a database was first created.
+        SQLite has no ALTER TABLE ... IF NOT EXISTS, so compare against the live
+        table and issue plain ALTERs for anything missing."""
+        wanted = {"devices": {"push_key": "TEXT NOT NULL DEFAULT ''"},
+                  "pushes": {"challenge_key": "TEXT NOT NULL DEFAULT ''"}}
+        for table, columns in wanted.items():
+            have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for column, decl in columns.items():
+                if column not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 ```
 
 (Note: `os` is imported at module top in a real file; the inline import above is for plan brevity — write it at the top.)
@@ -568,143 +586,193 @@ git add server/app/crypto.py server/tests/test_crypto.py
 git commit -m "feat(server): RSA-OAEP, AES-GCM, and signing primitives"
 ```
 
-### Task A3: Envelope builder + batching
+### Task A3: Doorbell trigger builder (AES-GCM under `push_key`)
+
+> **Revised 2026-08-29.** This task replaces the original "Envelope builder + batching"
+> design. The manifest is no longer carried in FCM: a manifest is only actionable if the
+> server is reachable, and reaching the server is required for the file bytes anyway, so
+> carrying it spent FCM payload and receiver-side merge complexity to obtain information
+> that is useless when the server is down. The original code also had a live defect —
+> slicing a *pre-encryption* payload against a 3.5 KB cap produced FCM data messages of
+> ~5.9 KB against FCM's hard 4 KB limit, so any slice of 12+ files was rejected. The
+> trigger below is constant-size, so file count cannot exhaust the limit.
 
 **Files:**
-- Create: `server/app/envelope.py`
-- Test: `server/tests/test_envelope.py`
+- Create: `server/app/trigger.py`
+- Test: `server/tests/test_trigger.py`
 
 **Interfaces:**
-- Consumes: `crypto.py` (Task A2), `public_from_spki_der`.
-- Produces:
-  - `MAX_PAYLOAD_BYTES = 3500`
-  - `file_entry(file_id: str, name: str, path: str, retrieval_key: str) -> dict`
-  - `slice_files(entries: list[dict], max_bytes: int = MAX_PAYLOAD_BYTES) -> list[list[dict]]` — contiguous slices; a slice is emitted as soon as adding the next entry would exceed `max_bytes`. Each entry's JSON form is `{"file_id","name","path","retrieval_key"}`.
-  - `build_payload(server_url: str, push_id: str, date_iso: str, total_files: int, files: list[dict]) -> dict`
-  - `build_envelope(server_private_key, device_public_key, payload: dict) -> dict` — returns the envelope dict per the spec (`v`,`alg`,`enc`,`kid`,`ek`,`iv`,`tag`,`ct`,`sig`). `sig` is `sign(server_private_key, ek_b64 + iv_b64 + ct_b64)` where `+` is string concat of the base64 strings.
+- Consumes: `crypto.py` (Task A2) — `aes_gcm_encrypt`, `aes_gcm_decrypt`.
+- Produces (all importable from `server.app.trigger`):
+  - `derive_iv(push_key: bytes, push_id: str) -> bytes` — `HMAC-SHA256(push_key, push_id)[:12]`
+  - `trigger_plaintext(server_url: str, push_id: str, challenge_key: str) -> bytes` — compact JSON `{v, server_url, push_id, challenge_key}`
+  - `seal_trigger(push_key: bytes, server_url: str, push_id: str, challenge_key: str) -> dict` — `{"i": <b64 iv>, "c": <b64 ct||tag>}`: exactly the two FCM data fields, so the route is `fcm.send({"p": sealed["c"], "i": sealed["i"]}, token)`. The format version travels *inside* the plaintext, so there is no third field for server and client to agree on.
+  - `open_trigger(push_key: bytes, sealed: dict) -> dict | None` — `None` on any failure (forged/tampered message)
+  - `build_manifest(push_id: str, date_iso: str, rows) -> dict` — `{push_id, date, files:[{file_id,name,path,size,retrieval_key}]}` from unacked `push_files` rows
+  - `manifest_bytes(manifest: dict) -> bytes` — canonical serialisation used for **both** signing and transmission, so they cannot diverge
 
-- [ ] **Step 1: Write the failing batching test** `server/tests/test_envelope.py`
+**Why the IV travels in the clear.** The IV is derived from `push_id`, and `push_id` lives
+*inside* the ciphertext — so the phone cannot know it before decrypting. Carrying `i` as a
+plaintext FCM field is standard and safe: a GCM IV need not be secret, and a swapped or
+tampered IV fails the tag check. The value of the derivation is on the **server** side —
+it guarantees the server never repeats a (key, IV) pair under a long-lived key, and makes
+a retry byte-identical. The phone just uses the IV it is given.
+
+- [ ] **Step 1: Write the failing test** `server/tests/test_trigger.py`
 
 ```python
-import json
+import os
 
-from server.app.envelope import slice_files, build_envelope, build_payload
-from server.app.crypto import generate_rsa_keypair, oaep_unwrap, aes_gcm_decrypt, verify, public_to_spki_der
-
-
-def test_slice_files_respects_cap():
-    # ~256-byte entries; 200 of them must not fit in 3500 bytes.
-    entries = [{"file_id": f"f{i}", "name": f"n{i}.md", "path": "D", "retrieval_key": f"k{i}"} for i in range(200)]
-    slices = slice_files(entries, max_bytes=3500)
-    assert len(slices) > 1
-    total = sum(len(s) for s in slices)
-    assert total == 200
-    for s in slices:
-        assert len(json.dumps({"files": s})) <= 3500
+from server.app.trigger import (
+    derive_iv, open_trigger, seal_trigger, build_manifest, manifest_bytes,
+)
 
 
-def test_envelope_roundtrip():
-    server_priv, server_pub = generate_rsa_keypair()
-    _, device_pub = generate_rsa_keypair()
-    payload = build_payload("https://push.example.com", "p1", "2026-08-28T12:00:00Z", 1,
-                            [{"file_id": "f1", "name": "notes.md", "path": "", "retrieval_key": "k1"}])
-    env = build_envelope(server_priv, device_pub, payload)
-    assert env["alg"] == "RSA-OAEP-256" and env["enc"] == "A256GCM"
-    assert verify(server_pub, env["ek"] + env["iv"] + env["ct"].encode(), None)  # placeholder replaced below
+def test_seal_open_roundtrip():
+    key = os.urandom(32)
+    sealed = seal_trigger(key, "https://push.example.com", "p1", "ck-1")
+    got = open_trigger(key, sealed)
+    assert got["server_url"] == "https://push.example.com"
+    assert got["push_id"] == "p1"
+    assert got["challenge_key"] == "ck-1"
+
+
+def test_wrong_key_cannot_open():
+    sealed = seal_trigger(os.urandom(32), "https://x", "p1", "ck-1")
+    assert open_trigger(os.urandom(32), sealed) is None
+
+
+def test_tampered_ciphertext_is_rejected():
+    key = os.urandom(32)
+    sealed = seal_trigger(key, "https://x", "p1", "ck-1")
+    raw = bytearray(__import__("base64").b64decode(sealed["c"]))
+    raw[0] ^= 0xFF
+    sealed["c"] = __import__("base64").b64encode(bytes(raw)).decode()
+    assert open_trigger(key, sealed) is None
+
+
+def test_swapped_iv_is_rejected():
+    key = os.urandom(32)
+    sealed = seal_trigger(key, "https://x", "p1", "ck-1")
+    other = seal_trigger(key, "https://x", "p2", "ck-1")
+    sealed["i"] = other["i"]
+    assert open_trigger(key, sealed) is None
+
+
+def test_iv_is_deterministic_and_key_bound():
+    key = os.urandom(32)
+    assert derive_iv(key, "p1") == derive_iv(key, "p1")
+    assert derive_iv(key, "p1") != derive_iv(key, "p2")
+    assert derive_iv(key, "p1") != derive_iv(os.urandom(32), "p1")
+    assert len(derive_iv(key, "p1")) == 12
+
+
+def test_retry_reproduces_identical_ciphertext():
+    key = os.urandom(32)
+    assert seal_trigger(key, "https://x", "p1", "ck-1") == \
+           seal_trigger(key, "https://x", "p1", "ck-1")
+
+
+def test_trigger_size_is_independent_of_file_count():
+    import json
+    # The whole point: no batching, so size cannot grow with the manifest.
+    key = os.urandom(32)
+    sizes = {n: len(json.dumps(seal_trigger(key, "https://push.example.com", f"p{n}", "ck-1")))
+             for n in (1, 100, 10000)}
+    assert max(sizes.values()) - min(sizes.values()) < 32
 ```
-
-*(The last assertion in the test above is intentionally incomplete — replace it in Step 3's real test with a full decrypt using `oaep_unwrap` + `aes_gcm_decrypt`, verifying `json.loads(plaintext) == payload`.)*
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd server && python3 -m pytest tests/test_envelope.py -v`
+Run: `cd server && python3 -m pytest tests/test_trigger.py -v`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write `server/app/envelope.py` + the corrected full roundtrip test**
+- [ ] **Step 3: Write `server/app/trigger.py`**
 
 ```python
-# server/app/envelope.py
+# server/app/trigger.py
 import base64
+import hashlib
+import hmac
 import json
-import os
 
 from server.app import crypto
 
-MAX_PAYLOAD_BYTES = 3500
+# FCM rejects data messages above this. The trigger is constant-size, so this is
+# a guard rail rather than a budget that file count can exhaust.
+MAX_FCM_MESSAGE_BYTES = 4096
+
+GCM_TAG_LENGTH = 16
 
 
-def file_entry(file_id: str, name: str, path: str, retrieval_key: str) -> dict:
-    return {"file_id": file_id, "name": name, "path": path, "retrieval_key": retrieval_key}
+def derive_iv(push_key: bytes, push_id: str) -> bytes:
+    """Deterministic 12-byte IV, unique per (key, push_id) with no stored state.
+    Guarantees the server never repeats a (key, IV) pair, and makes a retry of
+    the same push byte-identical."""
+    return hmac.new(push_key, push_id.encode(), hashlib.sha256).digest()[:12]
 
 
-def slice_files(entries: list[dict], max_bytes: int = MAX_PAYLOAD_BYTES) -> list[list[dict]]:
-    slices: list[list[dict]] = []
-    current: list[dict] = []
-    for entry in entries:
-        candidate = current + [entry]
-        if json.dumps({"files": candidate}).__len__() > max_bytes and current:
-            slices.append(current)
-            current = [entry]
-        else:
-            current = candidate
-    if current:
-        slices.append(current)
-    return slices
+def trigger_plaintext(server_url: str, push_id: str, challenge_key: str) -> bytes:
+    return json.dumps(
+        {"v": 1, "server_url": server_url, "push_id": push_id,
+         "challenge_key": challenge_key},
+        separators=(",", ":"), sort_keys=True,
+    ).encode()
 
 
-def build_payload(server_url: str, push_id: str, date_iso: str, total_files: int, files: list[dict]) -> dict:
-    return {"server_url": server_url, "push_id": push_id, "date": date_iso,
-            "total_files": total_files, "files": files}
+def seal_trigger(push_key: bytes, server_url: str, push_id: str,
+                 challenge_key: str) -> dict:
+    iv = derive_iv(push_key, push_id)
+    ct, tag = crypto.aes_gcm_encrypt(
+        push_key, iv, trigger_plaintext(server_url, push_id, challenge_key)
+    )
+    return {"i": base64.b64encode(iv).decode(),
+            "c": base64.b64encode(ct + tag).decode()}
 
 
-def build_envelope(server_private_key, device_public_key, payload: dict) -> dict:
-    content_key = os.urandom(32)
-    iv = os.urandom(12)
-    plaintext = json.dumps(payload).encode()
-    ciphertext, tag = crypto.aes_gcm_encrypt(content_key, iv, plaintext)
-    ek = crypto.oaep_wrap(device_public_key, content_key)
-    ek_b64 = base64.b64encode(ek).decode()
-    iv_b64 = base64.b64encode(iv).decode()
-    ct_b64 = base64.b64encode(ciphertext).decode()
-    tag_b64 = base64.b64encode(tag).decode()
-    sig = crypto.sign(server_private_key, (ek_b64 + iv_b64 + ct_b64).encode())
+def open_trigger(push_key: bytes, sealed: dict) -> dict | None:
+    try:
+        iv = base64.b64decode(sealed["i"], validate=True)
+        raw = base64.b64decode(sealed["c"], validate=True)
+        if len(iv) != 12 or len(raw) <= GCM_TAG_LENGTH:
+            return None
+        plaintext = crypto.aes_gcm_decrypt(
+            push_key, iv, raw[:-GCM_TAG_LENGTH], raw[-GCM_TAG_LENGTH:]
+        )
+        return json.loads(plaintext)
+    except Exception:
+        # Forged, tampered, or simply not for this device -> silent drop.
+        return None
+
+
+def build_manifest(push_id: str, date_iso: str, rows) -> dict:
     return {
-        "v": 1, "alg": "RSA-OAEP-256", "enc": "A256GCM", "kid": "",
-        "ek": ek_b64, "iv": iv_b64, "tag": tag_b64, "ct": ct_b64,
-        "sig": base64.b64encode(sig).decode(),
+        "push_id": push_id,
+        "date": date_iso,
+        "files": [
+            {"file_id": r["file_id"], "name": r["file_name"],
+             "path": r["file_path"] or "", "size": r["size"],
+             "retrieval_key": r["retrieval_key"]}
+            for r in rows
+        ],
     }
-```
 
-And replace the roundtrip test's last assertion with:
 
-```python
-def test_envelope_roundtrip():
-    import base64, json
-    from server.app import crypto
-    server_priv, server_pub = crypto.generate_rsa_keypair()
-    device_priv, device_pub = crypto.generate_rsa_keypair()
-    payload = build_payload("https://push.example.com", "p1", "2026-08-28T12:00:00Z", 1,
-                            [{"file_id": "f1", "name": "notes.md", "path": "", "retrieval_key": "k1"}])
-    env = build_envelope(server_priv, device_pub, payload)
-    assert env["alg"] == "RSA-OAEP-256" and env["enc"] == "A256GCM"
-    assert crypto.verify(server_pub, (env["ek"] + env["iv"] + env["ct"]).encode(),
-                         base64.b64decode(env["sig"]))
-    content_key = crypto.oaep_unwrap(device_priv, base64.b64decode(env["ek"]))
-    plaintext = crypto.aes_gcm_decrypt(content_key, base64.b64decode(env["iv"]),
-                                       base64.b64decode(env["ct"]), base64.b64decode(env["tag"]))
-    assert json.loads(plaintext) == payload
+def manifest_bytes(manifest: dict) -> bytes:
+    return json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode()
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd server && python3 -m pytest tests/test_envelope.py -v`
-Expected: PASS (2 passed).
+Run: `cd server && python3 -m pytest tests/test_trigger.py -v`
+Expected: PASS (7 passed).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/app/envelope.py server/tests/test_envelope.py
-git commit -m "feat(server): E2E envelope builder + payload batching"
+git add server/app/trigger.py server/tests/test_trigger.py
+git rm -q server/app/envelope.py server/tests/test_envelope.py
+git commit -m "feat(server): encrypted doorbell trigger replaces envelope + batching"
 ```
 
 ### Task A4: Password auth, sessions, rate limit + lockout
@@ -1005,8 +1073,9 @@ git commit -m "feat(server): server keypair in DB + OAuth2 client-credentials to
   - `consume_pairing_token(conn, token: str, now: float | None = None) -> bool` (single-use; returns False if missing/expired/used; marks used)
   - `pairing_payload(server_url: str, server_pk_b64: str, token: str, expires_iso: str) -> dict` — the QR JSON `{v:1, server_url, pk, token, expires}`.
   - `build_pairing_qr(server_url: str, server_pk_b64: str, token: str, expires_iso: str) -> str` — JSON string for the QR.
-  - `register_device(conn, *, device_secret, device_name, fcm_token, public_key_b64, pairing_token, sig_b64) -> tuple[str | None, str | None]` → `(device_auth, displaced_device_secret_or_None)`. Verifies pairing token (first registration), verifies `sig` = RSA-SHA256(public_key, `sha256(device_secret||device_name||fcm_token||public_key)`), name collision → delete old row with same name when it has a different device_secret (returns its secret so the app can be notified), inserts new row, returns a fresh `device_auth` UUID.
+  - `register_device(conn, *, device_secret, device_name, fcm_token, public_key_b64, push_key_b64, pairing_token, sig_b64) -> tuple[str | None, str | None]` → `(device_auth, displaced_device_secret_or_None)`. Verifies pairing token (first registration), verifies `sig` = RSA-SHA256(public_key, `sha256(device_secret||device_name||fcm_token||public_key_b64||push_key_b64)`), name collision → delete old row with same name when it has a different device_secret (returns its secret so the app can be notified), inserts new row, returns a fresh `device_auth` UUID. `push_key_b64` is the **negotiated doorbell key** and is covered by the signature, so it cannot be substituted without the phone's private key.
   - `update_device_token(conn, device_secret, device_auth, new_token) -> bool` (token rotation; verifies device_auth)
+  - `update_device_push_key(conn, device_secret, device_auth, new_push_key_b64) -> bool` (doorbell key rotation; verifies device_auth)
   - `update_device_name(conn, device_secret, device_auth, new_name) -> bool`
   - `check_device(conn, device_secret, device_auth) -> bool`
   - `touch_last_seen(conn, device_secret)`
@@ -1030,9 +1099,15 @@ from server.app.pairing import (
 )
 
 
-def _sig(priv, secret, name, token, pub_b64):
-    data = hashlib.sha256(f"{secret}{name}{token}{pub_b64}".encode()).digest()
+def _sig(priv, secret, name, token, pub_b64, push_key_b64):
+    data = hashlib.sha256(
+        f"{secret}{name}{token}{pub_b64}{push_key_b64}".encode()
+    ).digest()
     return base64.b64encode(crypto.sign(priv, data)).decode()
+
+
+PUSH_KEY_1 = base64.b64encode(b"k" * 32).decode()
+PUSH_KEY_2 = base64.b64encode(b"j" * 32).decode()
 
 
 def test_register_and_replace_on_name_collision(config, db_path):
@@ -1048,8 +1123,9 @@ def test_register_and_replace_on_name_collision(config, db_path):
         token2 = create_pairing_token(conn, 15)
         auth, displaced = register_device(
             conn, device_secret="sec-1", device_name="Sunny Falcon",
-            fcm_token="tok-1", public_key_b64=pub_b64,
-            pairing_token=token2, sig_b64=_sig(phone_priv, "sec-1", "Sunny Falcon", "tok-1", pub_b64),
+            fcm_token="tok-1", public_key_b64=pub_b64, push_key_b64=PUSH_KEY_1,
+            pairing_token=token2,
+            sig_b64=_sig(phone_priv, "sec-1", "Sunny Falcon", "tok-1", pub_b64, PUSH_KEY_1),
         )
         assert auth and displaced is None
         assert check_device(conn, "sec-1", auth)
@@ -1060,8 +1136,9 @@ def test_register_and_replace_on_name_collision(config, db_path):
         token3 = create_pairing_token(conn, 15)
         auth2, displaced = register_device(
             conn, device_secret="sec-2", device_name="Sunny Falcon",
-            fcm_token="tok-2", public_key_b64=pub2_b64,
-            pairing_token=token3, sig_b64=_sig(priv2, "sec-2", "Sunny Falcon", "tok-2", pub2_b64),
+            fcm_token="tok-2", public_key_b64=pub2_b64, push_key_b64=PUSH_KEY_2,
+            pairing_token=token3,
+            sig_b64=_sig(priv2, "sec-2", "Sunny Falcon", "tok-2", pub2_b64, PUSH_KEY_2),
         )
         assert displaced == "sec-1"
         assert get_device_by_name(conn, "Sunny Falcon")["device_secret"] == "sec-2"
@@ -1121,12 +1198,12 @@ def build_pairing_qr(server_url, server_pk_b64, token, expires_iso) -> str:
 
 
 def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b64,
-                    pairing_token, sig_b64):
+                    push_key_b64, pairing_token, sig_b64):
     if not consume_pairing_token(conn, pairing_token):
         return None, None
     public_key = crypto.public_from_spki_der(base64.b64decode(public_key_b64))
     data = hashlib.sha256(
-        f"{device_secret}{device_name}{fcm_token}{public_key_b64}".encode()
+        f"{device_secret}{device_name}{fcm_token}{public_key_b64}{push_key_b64}".encode()
     ).digest()
     if not crypto.verify(public_key, data, base64.b64decode(sig_b64)):
         return None, None
@@ -1142,8 +1219,8 @@ def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b
     device_auth = uuid.uuid4().hex
     conn.execute(
         "INSERT OR REPLACE INTO devices (device_secret, device_auth, device_name, fcm_token,"
-        " public_key, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (device_secret, device_auth, device_name, fcm_token, public_key_b64,
+        " public_key, push_key, registered_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (device_secret, device_auth, device_name, fcm_token, public_key_b64, push_key_b64,
          int(time.time()), int(time.time())),
     )
     conn.commit()
@@ -1157,6 +1234,17 @@ def update_device_token(conn, device_secret, device_auth, new_token) -> bool:
     cur = conn.execute(
         "UPDATE devices SET fcm_token = ? WHERE device_secret = ? AND device_auth = ?",
         (new_token, device_secret, device_auth),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def update_device_push_key(conn, device_secret, device_auth, new_push_key_b64) -> bool:
+    """Rotate the doorbell key. Requires device_auth, so a leaked device_secret
+    alone cannot replace the key an attacker would use to forge triggers."""
+    cur = conn.execute(
+        "UPDATE devices SET push_key = ? WHERE device_secret = ? AND device_auth = ?",
+        (new_push_key_b64, device_secret, device_auth),
     )
     conn.commit()
     return cur.rowcount > 0
@@ -1238,7 +1326,7 @@ git commit -m "feat(server): pairing tokens + device registry with name-collisio
 **Interfaces:**
 - Consumes: `Database`, `store`, `pairing` (device lookup), OAuth2 validation.
 - Produces (`server.app.push_store`):
-  - `create_push(conn, push_id: str, target_device: str) -> None`
+  - `create_push(conn, push_id: str, target_device: str, challenge_key: str) -> None` — the per-push capability the phone presents to fetch the manifest
   - `add_file(conn, *, file_id, push_id, file_name, file_path, size, retrieval_key, stored_path, created_at) -> None`
   - `get_push_files(conn, push_id) -> list[sqlite3.Row]`
   - `get_pending_files(conn, now) -> list[sqlite3.Row]` (status='pending' and next_retry_at IS NULL OR <= now)
@@ -1266,7 +1354,7 @@ def test_push_file_lifecycle(config, db_path):
     db = Database(db_path)
     with db.connect() as conn:
         db.init_schema(conn)
-        create_push(conn, "push-1", "Sunny Falcon")
+        create_push(conn, "push-1", "Sunny Falcon", "ck-1")
         add_file(conn, file_id="f1", push_id="push-1", file_name="notes.md",
                  file_path="Docs", size=100, retrieval_key="k1",
                  stored_path="push-1/f1/notes.md", created_at=1000)
@@ -1290,11 +1378,11 @@ Expected: FAIL with `ModuleNotFoundError`.
 import time
 
 
-def create_push(conn, push_id: str, target_device: str) -> None:
+def create_push(conn, push_id: str, target_device: str, challenge_key: str) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO pushes (push_id, target_device, date, status)"
-        " VALUES (?, ?, ?, 'pending')",
-        (push_id, target_device, int(time.time())),
+        "INSERT OR IGNORE INTO pushes (push_id, target_device, challenge_key, date, status)"
+        " VALUES (?, ?, ?, ?, 'pending')",
+        (push_id, target_device, challenge_key, int(time.time())),
     )
     conn.commit()
 
@@ -1591,8 +1679,9 @@ git commit -m "feat(server): FCM HTTP v1 client with service-account token mint"
   - `POST /api/enrol/start` → `{enrolment_id, verification_uri}`
   - `POST /api/enrol` → `{client_id, client_secret}` (one-time key)
   - `POST /oauth/token` → OAuth2 client-credentials
-  - `POST /api/push` (Bearer, multipart, `target_device` required → 400 if missing/unknown) → stores bytes, builds envelopes (slices), sends FCM (via `fcm_client`), returns `{push_id, files_sent}`
-  - `POST /api/register-device` (pairing + sig) → `{ok, device_auth}`; update variant (device_secret+device_auth) for token/name rotation
+  - `POST /api/push` (Bearer, multipart, `target_device` required → 400 if missing/unknown) → stores bytes, mints a per-push `challenge_key`, seals **one** doorbell trigger per device, sends a single FCM data message, returns `{push_id, files_sent}`
+  - `POST /api/register-device` (pairing + sig over `…||push_key`) → `{ok, device_auth}`; update variant (device_secret+device_auth) for token/name/`push_key` rotation
+  - `POST /api/push/<push_id>/manifest` (body `{challenge_key}`) → `{manifest, sig}`; 404 unknown push, 403 wrong `challenge_key`. `sig` is RSA-SHA256 over `manifest_bytes(manifest)` with the **server** private key, so the phone authenticates it against the QR-pinned public key rather than trusting the TLS terminator
   - `POST /api/push/<file_id>/download` (body `{key}`) → streams bytes
   - `POST /api/push/<file_id>/received` (body `{key}`) → acks, deletes bytes
   - `POST /api/device/status` (body `{device_secret, device_auth}`) → 200 ok / 404 needs re-registration
@@ -1605,11 +1694,11 @@ git commit -m "feat(server): FCM HTTP v1 client with service-account token mint"
 - [ ] **Step 1: Write the failing integration test** `server/tests/test_api.py`
 
 ```python
-import base64, io, json
+import base64, io, json, os
 
 from server.app.app import create_app
 from server.app.crypto import generate_rsa_keypair, private_to_pem, public_to_spki_der
-from server.app.fcm import FcmClient
+from server.app.trigger import manifest_bytes, open_trigger, seal_trigger
 
 
 def _fake_fcm():
@@ -1652,16 +1741,16 @@ def test_full_push_flow(config, db_path, monkeypatch):
     # Register a device (pairing token from /pair is a test hook below)
     phone_priv, phone_pub = generate_rsa_keypair()
     pub_b64 = base64.b64encode(public_to_spki_der(phone_pub)).decode()
+    push_key_b64 = base64.b64encode(os.urandom(32)).decode()
     pairing_token = app.config["_test_pairing_token"]  # set by /pair in test
     import hashlib
-    sig = base64.b64encode(phone_priv.sign(
-        hashlib.sha256(f"sec-1|Sunny Falcon|fcm-1|{pub_b64}".encode()).digest(),
-        padding=None  # see note
-    )).decode()
-    # (real test uses crypto.sign with PKCS1v15)
+    from server.app.crypto import sign
+    sig = base64.b64encode(sign(phone_priv, hashlib.sha256(
+        f"sec-1|Sunny Falcon|fcm-1|{pub_b64}|{push_key_b64}".encode()
+    ).digest())).decode()
     reg = client.post("/api/register-device", json={
         "device_secret": "sec-1", "device_name": "Sunny Falcon",
-        "fcm_token": "fcm-1", "public_key": pub_b64,
+        "fcm_token": "fcm-1", "public_key": pub_b64, "push_key": push_key_b64,
         "pairing_token": pairing_token, "sig": sig,
     })
     assert reg.status_code == 200
@@ -1677,17 +1766,48 @@ def test_full_push_flow(config, db_path, monkeypatch):
         data={"file": (io.BytesIO(b"hi"), "a.md")},
         content_type="multipart/form-data")
     assert r.status_code == 400
-    # One FCM message was sent (single small push = one slice)
+    # Exactly one FCM message — no batching, regardless of file count
     assert len(fcm.sent) == 1
 
+    # Decrypt the doorbell: AES-GCM under the negotiated push_key
+    msg = fcm.sent[0][0]
+    doorbell = open_trigger(base64.b64decode(push_key_b64),
+                            {"i": msg["i"], "c": msg["p"]})
+    assert doorbell["server_url"] == config.PUSH_PUBLIC_URL
+    push_id = doorbell["push_id"]
+    challenge_key = doorbell["challenge_key"]
+
+    # A forged message addressed to this device is a silent no-op
+    other = seal_trigger(base64.b64decode(push_key_b64), config.PUSH_PUBLIC_URL,
+                         "some-other-push", "ck")
+    assert open_trigger(os.urandom(32), {"i": other["i"], "c": other["c"]}) is None
+
+    # Exchange the doorbell for a signed manifest
+    r = client.post(f"/api/push/{push_id}/manifest", json={"challenge_key": challenge_key})
+    assert r.status_code == 200
+    body = r.json
+    # Signature is checked against the server public key the QR pinned
+    from server.app.crypto import verify
+    assert verify(app.config["_server_pub"], manifest_bytes(body["manifest"]),
+                  base64.b64decode(body["sig"]))
+    file_entry = body["manifest"]["files"][0]
+    assert file_entry["name"] == "notes.md"
+    retrieval_key = file_entry["retrieval_key"]
+
+    # Wrong challenge_key -> 403
+    assert client.post(f"/api/push/{push_id}/manifest",
+                       json={"challenge_key": "wrong"}).status_code == 403
+
     # Download + ack
-    env = json.loads(fcm.sent[0][0]["p"])
-    payload_ct = base64.b64decode(env["ct"])
-    # (full decrypt: unwrap ek with phone_priv, aes-gcm decrypt ct)
-    # assert payload["files"][0]["retrieval_key"] ...
+    dl = client.post(f"/api/push/{file_entry['file_id']}/download",
+                     json={"key": retrieval_key})
+    assert dl.data == b"hello"
 ```
 
-*(The test above intentionally sketches the flow; the implementer writes the complete decrypt assertions using `crypto.oaep_unwrap` + `aes_gcm_decrypt` — the same pattern as Task A3's roundtrip. The `sig` construction must use `crypto.sign(phone_priv, sha256(...))` exactly as `register_device` verifies.)*
+*(The manifest assertion must use `crypto.verify(server_pub, manifest_bytes(manifest),
+sig)` — the server signs exactly the bytes it transmits, so the phone can verify with
+the QR-pinned public key. This is the property that a rogue TLS certificate cannot
+manufacture, so it is not optional.)*
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1713,7 +1833,7 @@ from server.app.store import (get_or_create_server_keypair, session_secret_from_
                               update_device_token, update_device_name, check_device,
                               touch_last_seen, get_device_by_name, get_device_by_secret,
                               delete_device, list_devices, sweep_stale_devices)
-from server.app.envelope import build_envelope, build_payload, slice_files, file_entry
+from server.app.trigger import build_manifest, manifest_bytes, seal_trigger
 
 SESSION_COOKIE = "mdrender_session"
 _ACCESS_TOKENS: dict = {}
@@ -1751,14 +1871,15 @@ def create_app(config):
 - **`/api/enrol/start`** (POST): create `enrolment_id = uuid4().hex`, store `{key: uuid4().hex, expires}`; return `{enrolment_id, verification_uri: f"{base}/enrol/{id}"}`.
 - **`/api/enrol`** (POST): verify key matches + unexpired, delete it, `secret_hash = hash_secret(secret=uuid4().hex)`, `client_id = create_client(...)`, return `{client_id, client_secret}`.
 - **`/oauth/token`** (POST form): verify `grant_type=client_credentials`, client exists + `verify_secret(secret, hash)`, not revoked → `issue_access_token`; else 401.
-- **`/api/push`** (Bearer): validate token → client_id; read `target_device` (form) → **400 `{"error":"device not found"}` if missing**; resolve device via `get_device_by_name` → 400 if unknown; `push_id = uuid4().hex`; for each uploaded `file`, `file_id = uuid4().hex`, write bytes to `<storage_dir>/<push_id>/<file_id>/<filename>`, `add_file(...)` with a fresh retrieval key (`uuid4().hex`); build the payload and slices, then per slice `build_envelope(server_priv, device_public_key, slice_payload)` and `fcm.send({"p": json.dumps(env)}, device["fcm_token"])`; return `{push_id, files_sent: N}`. (When `config.FCM_SERVER_KEY` is empty and no `make_fcm_client` is injected, skip FCM send — the integration test injects a fake.)
-- **`/api/register-device`** (POST): if body has `pairing_token` → new registration via `pairing.register_device`; else update via `update_device_token`/`update_device_name` (requires `device_secret`+`device_auth`). On success 200 `{ok: true, device_auth}`.
+- **`/api/push`** (Bearer): validate token → client_id; read `target_device` (form) → **400 `{"error":"device not found"}` if missing**; resolve device via `get_device_by_name` → 400 if unknown; `push_id = uuid4().hex`; mint `challenge_key = uuid4().hex`; for each uploaded `file`, `file_id = uuid4().hex`, write bytes to `<storage_dir>/<push_id>/<file_id>/<filename>`, `add_file(...)` with a fresh retrieval key (`uuid4().hex`). Then **one** `seal_trigger(push_key, PUSH_PUBLIC_URL, push_id, challenge_key)` and a **single** `fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])`; return `{push_id, files_sent: N}`. One message regardless of file count. (When `config.FCM_SERVER_KEY` is empty and no `make_fcm_client` is injected, skip the FCM send — the integration test injects a fake.)
+- **`/api/push/<push_id>/manifest`** (POST body `{challenge_key}`): 404 unknown `push_id`; 403 unless `challenge_key` matches the push row; else build the manifest from the push's **unacked** files (`get_pending_files` filtered to this push), `manifest = build_manifest(push_id, date_iso, rows)`, and return `{"manifest": manifest, "sig": base64(sign(server_priv, manifest_bytes(manifest)))}`. Because the manifest is built from live DB state it is always current — a retry can never hand the phone an already-acked file.
+- **`/api/register-device`** (POST): if body has `pairing_token` → new registration via `pairing.register_device` (carrying `push_key`, covered by the `sig`); else update via `update_device_token`/`update_device_name`/`update_device_push_key` (requires `device_secret`+`device_auth`). On success 200 `{ok: true, device_auth}`.
 - **`/api/push/<file_id>/download`** (POST body `{key}`): find file by `file_id`; 404 if missing/acked; verify `key == retrieval_key`; if `stored_path` set, stream the bytes (`send_file`); else 404. Key is **not** consumed.
 - **`/api/push/<file_id>/received`** (POST body `{key}`): verify key, `mark_acked` (deletes bytes), 200.
 - **`/api/device/status`** (POST body): `check_device` → 200 `{ok:true}` / 404 `{error:"re-register"}`; on 200 also `touch_last_seen`.
 - **`GET /api/push/<push_id>/status`** (Bearer): per-file `{file_id, name, status, retries}`.
 - **`GET /api/health`**: `{"ok": True}`.
-- **`POST /api/push/<push_id>/retry`** (session): `reset_push_retries` + re-send FCM slices for pending files.
+- **`POST /api/push/<push_id>/retry`** (session): `reset_push_retries` + re-ring the single doorbell trigger for that push.
 - **`GET/POST /devices`, `GET /pushes`, `GET /pending`, `DELETE /devices/<secret>`** (session): rendered HTML (Task A11) or JSON; `DELETE /devices` calls `delete_device` then `revoke`-equivalent.
 
 Provide a module-level `make_fcm_client(config) -> FcmClient` (loads `config.FCM_SERVER_KEY`), monkeypatched by tests.
@@ -1787,9 +1908,9 @@ git commit -m "feat(server): full Flask endpoint surface with auth + FCM deliver
 - Test: `server/tests/test_retry.py`
 
 **Interfaces:**
-- Consumes: `Database`, `push_store`, `pairing` (`get_device_by_name`), `envelope`, `crypto`, `fcm`.
+- Consumes: `Database`, `push_store`, `pairing` (`get_device_by_name`), `trigger`, `crypto`, `fcm`.
 - Produces (`server.app.retry`):
-  - `class RetryWorker`: `__init__(self, config, db: Database, fcm_client)`, `tick(now: float) -> list[str]` (returns touched file_ids). For each `get_pending_files(conn, now)`: if `retries >= config.PUSH_RETRY_COUNT` → `mark_exhausted`; else rebuild the envelope for that file (single-file slice), send via FCM, `increment_retry(file_id, now, config.PUSH_RETRY_INTERVAL_MINUTES)`; on `FcmError`, leave `next_retry_at` unchanged (retry next tick).
+  - `class RetryWorker`: `__init__(self, config, db: Database, fcm_client)`, `tick(now: float) -> list[str]` (returns touched file_ids). For each `get_pending_files(conn, now)`: if `retries >= config.PUSH_RETRY_COUNT` → `mark_exhausted`; else re-send the **push's doorbell trigger** (one per `push_id`, not one per file) and `increment_retry(file_id, now, config.PUSH_RETRY_INTERVAL_MINUTES)`; on `FcmError`, leave `next_retry_at` unchanged (retry next tick). The phone then re-requests the manifest, which is always current — so a retry can no longer hand it a file that was already acked.
   - `class SweepWorker`: `tick()` → `sweep_stale_devices(conn, ttl_days)` + `purge_expired_bytes(conn, ttl_hours, now)`.
   - `run_forever(config, db, fcm_client)` — loops every 60 s, calls both ticks; handles `KeyboardInterrupt`/`SystemExit` cleanly.
 
@@ -1807,7 +1928,7 @@ def test_retry_exhausts_after_count(config, db_path):
     db = Database(db_path)
     with db.connect() as conn:
         db.init_schema(conn)
-        create_push(conn, "p1", "Sunny Falcon")
+        create_push(conn, "p1", "Sunny Falcon", "ck-1")
         add_file(conn, file_id="f1", push_id="p1", file_name="a.md", file_path="",
                  size=3, retrieval_key="k1", stored_path="p1/f1/a.md", created_at=time.time())
     worker = RetryWorker(config, db, fcm_client=FakeFcm())
@@ -1818,7 +1939,9 @@ def test_retry_exhausts_after_count(config, db_path):
     assert status["status"] == "exhausted"
 ```
 
-*(Define `FakeFcm` locally with a `send()` that records; a real device row is not required because RetryWorker resolves via `get_device_by_name` only when building an envelope — guard the worker so a missing device short-circuits to `mark_exhausted`.)*
+*(Define `FakeFcm` locally with a `send()` that records. The worker resolves the device
+via `push_files.push_id → pushes.target_device → devices.device_name`; a missing device
+short-circuits to `mark_exhausted`, so no device row is needed for this test.)*
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1829,47 +1952,69 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 ```python
 # server/app/retry.py
-import json
 import time
 
-from server.app import crypto, envelope, fcm as fcm_mod, pairing, push_store
-from server.app.store import get_or_create_server_keypair
+from server.app import fcm as fcm_mod, pairing, push_store, trigger
+
+
+def _device(conn, row):
+    push = push_store.get_push_by_id(conn, row["push_id"])
+    if push is None:
+        return None
+    return pairing.get_device_by_name(conn, push["target_device"])
 
 
 class RetryWorker:
+    """Re-rings the doorbell for pushes that still have unacked files.
+
+    One trigger per push, not one per file: the phone re-requests the manifest,
+    which is built from current DB state and therefore never names a file that
+    has already been acked. `seal_trigger` is deterministic in `push_id`, so a
+    retry reproduces a byte-identical message.
+    """
+
     def __init__(self, config, db, fcm_client):
         self.config = config
         self.db = db
         self.fcm_client = fcm_client
 
     def tick(self, now: float) -> list[str]:
+        if self.fcm_client is None:
+            return []
         touched = []
         with self.db.connect() as conn:
-            _, server_pk_b64 = get_or_create_server_keypair(conn)
-            server_priv = _load_server_priv(conn)
+            rung: set[str] = set()
             for row in push_store.get_pending_files(conn, now):
                 if row["retries"] >= self.config.PUSH_RETRY_COUNT:
                     push_store.mark_exhausted(conn, row["file_id"])
                     touched.append(row["file_id"])
                     continue
-                device = pairing.get_device_by_name(conn, row["target_device"]) if False else _device(conn, row)
-                # device resolved via pushes.target_device -> devices.device_name
+                if row["push_id"] in rung:
+                    # Already re-rung for this push on this tick.
+                    push_store.increment_retry(
+                        conn, row["file_id"], now, self.config.PUSH_RETRY_INTERVAL_MINUTES
+                    )
+                    touched.append(row["file_id"])
+                    continue
+                device = _device(conn, row)
                 if device is None:
                     push_store.mark_exhausted(conn, row["file_id"])
                     touched.append(row["file_id"])
                     continue
-                payload = envelope.build_payload(
-                    self.config.PUSH_PUBLIC_URL, row["push_id"], _iso(now),
-                    total_files=1,
-                    files=[envelope.file_entry(row["file_id"], row["file_name"],
-                                               row["file_path"], row["retrieval_key"])],
+                push = push_store.get_push_by_id(conn, row["push_id"])
+                sealed = trigger.seal_trigger(
+                    base64.b64decode(device["push_key"]),
+                    self.config.PUSH_PUBLIC_URL, push["push_id"],
+                    push["challenge_key"],
                 )
-                device_pub = crypto.public_from_spki_der(base64.b64decode(device["public_key"]))
-                env = envelope.build_envelope(server_priv, device_pub, payload)
                 try:
-                    self.fcm_client.send({"p": json.dumps(env)}, device["fcm_token"])
-                    push_store.increment_retry(conn, row["file_id"], now,
-                                               self.config.PUSH_RETRY_INTERVAL_MINUTES)
+                    self.fcm_client.send(
+                        {"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"]
+                    )
+                    rung.add(row["push_id"])
+                    push_store.increment_retry(
+                        conn, row["file_id"], now, self.config.PUSH_RETRY_INTERVAL_MINUTES
+                    )
                     touched.append(row["file_id"])
                 except fcm_mod.FcmError:
                     pass  # retry next tick
@@ -1884,11 +2029,13 @@ class SweepWorker:
     def tick(self) -> None:
         with self.db.connect() as conn:
             from server.app.store import sweep_stale_devices
+
             sweep_stale_devices(conn, self.config.DEVICE_TTL_DAYS)
             push_store.purge_expired_bytes(conn, self.config.PUSH_FILE_TTL_HOURS, time.time())
 ```
 
-*(Add the small `_device(conn, row)` helper that joins `push_files.push_id → pushes.target_device → devices.device_name`; write it correctly in the real file rather than the `if False else` placeholder above.)*
+*(Add `import base64` at the top of the real file — shown inline above only for plan
+brevity.)*
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2082,9 +2229,11 @@ git commit -m "docs(server): operator README"
   - `var serverPublicKeyPem: String`
   - `var deviceSecret: String` (auto-generates a UUID on first read)
   - `var deviceAuth: String`
+  - `var pushKey: ByteArray` (the negotiated doorbell key, base64 in prefs; auto-generates 32 random bytes on first read)
+  - `val pushKeyB64: String` (base64 form, as sent to the server)
   - `val deviceName: String` (getter reads `LocalSendPrefs.alias`)
   - `val isPaired: Boolean` (`serverUrl.isNotEmpty() && serverPublicKeyPem.isNotEmpty() && deviceAuth.isNotEmpty()`)
-  - `fun clear()` — wipes all fields (re-pair / rotate)
+  - `fun clear()` — wipes all fields (re-pair / rotate). Also regenerates `pushKey` on next read, so re-pairing invalidates any captured doorbell.
 
 - [ ] **Step 1: Write the failing unit test** `PushServerConfigTest.kt`
 
@@ -2096,7 +2245,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat  // not present — see note
 ```
 
-*(The repo uses JUnit4 + Mockito, not Truth. Write the test with plain `assert` / `org.junit.Assert.assertEquals` against a fresh `PushServerConfig(ApplicationProvider.getApplicationContext())`: set `serverUrl`, assert `isPaired` flips, assert `clear()` resets it, and assert `deviceSecret` is stable across reads.)*
+*(The repo uses JUnit4 + Mockito, not Truth. Write the test with plain `assert` / `org.junit.Assert.assertEquals` against a fresh `PushServerConfig(ApplicationProvider.getApplicationContext())`: set `serverUrl`, assert `isPaired` flips, assert `clear()` resets it, and assert `deviceSecret` is stable across reads. Also assert `pushKey` is 32 bytes, stable across reads, **different** after `clear()`, and that `pushKeyB64` round-trips it.)*
 
 - [ ] **Step 2: Run to verify it fails (compiles, assertion fails)**
 
@@ -2109,6 +2258,7 @@ Expected: FAIL — class not found.
 package com.a42r.mdrender.cloudpush
 
 import android.content.Context
+import android.util.Base64
 import com.a42r.mdrender.localsend.LocalSendPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
@@ -2140,6 +2290,17 @@ class PushServerConfig @Inject constructor(
         get() = prefs.getString(KEY_DEVICE_AUTH, "") ?: ""
         set(v) = prefs.edit().putString(KEY_DEVICE_AUTH, v).apply()
 
+    var pushKey: ByteArray
+        get() = prefs.getString(KEY_PUSH_KEY, null)
+            ?.let { Base64.decode(it, Base64.DEFAULT) }
+            ?: java.security.SecureRandom().let { rng ->
+                ByteArray(32).also { rng.nextBytes(it) }
+                    .also { prefs.edit().putString(KEY_PUSH_KEY, Base64.encodeToString(it, Base64.DEFAULT)).apply() }
+            }
+        set(v) = prefs.edit().putString(KEY_PUSH_KEY, Base64.encodeToString(v, Base64.DEFAULT)).apply()
+
+    val pushKeyB64: String get() = Base64.encodeToString(pushKey, Base64.DEFAULT)
+
     val deviceName: String get() = localSendPrefs.alias
 
     val isPaired: Boolean
@@ -2151,6 +2312,7 @@ class PushServerConfig @Inject constructor(
             .putString(KEY_SERVER_PUBLIC_KEY, "")
             .putString(KEY_DEVICE_AUTH, "")
             .putString(KEY_DEVICE_SECRET, "")
+            .putString(KEY_PUSH_KEY, "")
             .apply()
     }
 
@@ -2159,6 +2321,7 @@ class PushServerConfig @Inject constructor(
         private const val KEY_SERVER_PUBLIC_KEY = "server_public_key_pem"
         private const val KEY_DEVICE_SECRET = "device_secret"
         private const val KEY_DEVICE_AUTH = "device_auth"
+        private const val KEY_PUSH_KEY = "push_key"
     }
 }
 ```
@@ -2172,7 +2335,7 @@ Expected: PASS.
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/ app/src/test/java/com/a42r/mdrender/cloudpush/
-git commit -m "feat(android): PushServerConfig persisted pairing config"
+git commit -m "feat(android): PushServerConfig persisted pairing config + push_key"
 ```
 
 ### Task B2: `CloudPushKeyStore` — RSA-3072 in Android Keystore
@@ -2186,9 +2349,13 @@ git commit -m "feat(android): PushServerConfig persisted pairing config"
   - `const val ALIAS = "mdrender_cloudpush_keypair"`
   - `fun getOrCreateKeyPair(): KeyPair`
   - `fun getPublicKeySpkiDer(): ByteArray`
-  - `fun decrypt(encrypted: ByteArray): ByteArray` (RSA/ECB/OAEPWithSHA-256AndMGF1Padding)
   - `fun sign(data: ByteArray): ByteArray` (SHA256withRSA)
   - `fun deleteKeyPair()`
+
+> **Revised 2026-08-29:** the keypair no longer decrypts anything. Doorbell encryption is
+> symmetric under `push_key`; the RSA key is used only to sign the registration
+> key-possession proof. So `decrypt()` and the `PURPOSE_DECRYPT` / `ENCRYPTION_PADDING_RSA_OAEP`
+> setup are removed — keep `PURPOSE_SIGN` and `SIGNATURE_PADDING_RSA_PKCS1`.
 
 - [ ] **Step 1: Write `CloudPushKeyStore.kt`**
 
@@ -2201,7 +2368,6 @@ import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
-import javax.crypto.Cipher
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -2225,10 +2391,9 @@ class CloudPushKeyStore @Inject constructor() {
             KeyProperties.KEY_ALGORITHM_RSA, PROVIDER
         )
         generator.initialize(
-            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_DECRYPT or KeyProperties.PURPOSE_SIGN)
+            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
                 .setKeySize(3072)
                 .setDigests(KeyProperties.DIGEST_SHA256)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
                 .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
                 .build()
         )
@@ -2237,12 +2402,6 @@ class CloudPushKeyStore @Inject constructor() {
 
     fun getPublicKeySpkiDer(): ByteArray =
         getOrCreateKeyPair().public.encoded // X.509 SubjectPublicKeyInfo (DER)
-
-    fun decrypt(encrypted: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKeyPair().private)
-        return cipher.doFinal(encrypted)
-    }
 
     fun sign(data: ByteArray): ByteArray {
         val signature = Signature.getInstance("SHA256withRSA")
@@ -2269,22 +2428,55 @@ git add app/src/main/java/com/a42r/mdrender/cloudpush/CloudPushKeyStore.kt
 git commit -m "feat(android): RSA-3072 Keystore keypair for Cloud Push E2E"
 ```
 
-### Task B3: `PushCrypto` — envelope verify + decrypt
+### Task B3: `PushCrypto` — doorbell decrypt + manifest verify
+
+> **Revised 2026-08-29.** Replaces envelope verify + decrypt. The doorbell is AES-256-GCM
+> under the symmetric `push_key`; the Keystore RSA key is no longer used to unwrap a
+> per-message content key, only to sign the registration proof and verify the manifest
+> signature. `decryptEnvelope` → `decryptTrigger`; `PushPayload` → `Doorbell` + `Manifest`.
 
 **Files:**
 - Create: `app/src/main/java/com/a42r/mdrender/cloudpush/PushCrypto.kt`
-- Test: `app/src/test/java/com/a42r/mdrender/cloudpush/PushCryptoTest.kt` (JVM — pure parsing/decrypt with a Java-generated keypair via BouncyCastle, already on the classpath)
+- Test: `app/src/test/java/com/a42r/mdrender/cloudpush/PushCryptoTest.kt` (JVM — pure crypto with a JCE-generated AES key and RSA keypair, no Keystore needed)
 
 **Interfaces:**
-- Produces (`com.a42r.mdrender.cloudpush.PushCrypto`, `@Singleton @Inject constructor(private val cloudPushKeyStore: CloudPushKeyStore)`):
-  - `data class PushFile(val fileId: String, val name: String, val path: String, val retrievalKey: String)`
-  - `data class PushPayload(val serverUrl: String, val pushId: String, val date: String, val totalFiles: Int, val files: List<PushFile>)`
-  - `fun decryptEnvelope(envelopeJson: String, serverPublicKeyPem: String): PushPayload?` — parse, verify `sig` over `ek||iv||ct` (base64 string concat) with the server public key, unwrap `ek` via Keystore, AES-GCM decrypt `ct`, parse payload JSON. Returns `null` on any failure (drop message).
-  - Helper `fun verifyEnvelopeSignature(envelopeJson: String, serverPublicKeyPem: String): Boolean` (used by tests to check signature-only).
+- Produces (`com.a42r.mdrender.cloudpush.PushCrypto`, `@Singleton @Inject constructor(private val keyStore: CloudPushKeyStore)`):
+  - `data class Doorbell(val serverUrl: String, val pushId: String, val challengeKey: String)`
+  - `data class ManifestFile(val fileId: String, val name: String, val path: String, val size: Long, val retrievalKey: String)`
+  - `data class Manifest(val pushId: String, val date: String, val files: List<ManifestFile>)`
+  - `fun decryptTrigger(ctB64: String, ivB64: String, pushKey: ByteArray): Doorbell?` — AES-256-GCM/NoPadding with `GCMParameterSpec(128, iv)`, tag appended to `ct`; returns `null` on any failure (forged or misaddressed message)
+  - `fun verifyManifest(manifestJson: String, sigB64: String, serverPublicKeyPem: String): List<ManifestFile>?` — `SHA256withRSA`.verify over the **exact received bytes**, then parse. Returns `null` if the signature fails or parsing fails.
+  - `fun signRegistration(data: ByteArray): String` — delegates to `keyStore.sign` (base64), used by `PushClient.registerDevice`
+
+**Critical contract:** `verifyManifest` must verify the signature over the **exact bytes
+the server transmitted** — the server signs `json.dumps(manifest, separators=(",", ":"),
+sort_keys=True)`. Re-serialising the parsed object would reorder keys and break the
+signature, so the raw response body string is what gets verified, then parsed.
 
 - [ ] **Step 1: Write the failing unit test** `PushCryptoTest.kt`
 
-The test builds a server keypair, device keypair (BouncyCastle RSA via `KeyPairGenerator.getInstance("RSA")` — works on JVM), and reproduces `build_envelope` (copy of the server logic in the test) to produce a valid envelope, then asserts `decryptEnvelope` returns the right payload. `CloudPushKeyStore` is abstracted: give `PushCrypto` a constructor parameter `private val privateKey: KeyPair` (JVM-friendly) with a secondary `@Inject` constructor wiring `cloudPushKeyStore`, or extract the decrypt into an interface. **Preferred:** `PushCrypto` takes `decrypt: (ByteArray) -> ByteArray` and `sign: (ByteArray) -> ByteArray` lambdas (defaulting to Keystore-backed in production via a Hilt module), so the JVM test passes the test keypair's lambdas. Adjust `decryptEnvelope` accordingly.
+```kotlin
+class PushCryptoTest {
+    // Build a trigger the way the server does (HMAC-derived IV) and open it.
+    @Test fun `decryptTrigger returns the doorbell`() { /* assert fields */ }
+
+    @Test fun `decryptTrigger rejects a wrong push key`() {
+        // assertNull(crypto.decryptTrigger(ct, iv, randomKey))
+    }
+
+    @Test fun `decryptTrigger rejects a tampered ciphertext`() { /* flip a byte */ }
+
+    // Sign a manifest with a JCE RSA key, then verify; and assert a tampered
+    // manifest body fails verification.
+    @Test fun `verifyManifest accepts a valid signature`() { /* assert 2 files */ }
+    @Test fun `verifyManifest rejects a tampered body`() { /* assertNull */ }
+}
+```
+
+*(The IV the test feeds in is just the base64 the server would send; `decryptTrigger`
+takes the IV as an argument precisely because — as in Task A3 — the server derives it
+from a `push_id` that is still inside the ciphertext, so the app cannot compute it
+before decrypting.)*
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -2296,17 +2488,10 @@ Expected: FAIL — class not found.
 ```kotlin
 package com.a42r.mdrender.cloudpush
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import java.security.PublicKey
-import java.security.Signature
-import java.security.cert.CertificateFactory
-import java.security.spec.X509EncodedKeySpec
+import android.util.Base64
 import java.security.KeyFactory
-import java.util.Base64
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -2314,16 +2499,54 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class PushCrypto @Inject constructor(
-    private val decrypt: (ByteArray) -> ByteArray = { encrypted ->
-        CloudPushKeyStoreImpl().decrypt(encrypted)
+class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
+
+    fun decryptTrigger(ctB64: String, ivB64: String, pushKey: ByteArray): Doorbell? = try {
+        val iv = Base64.decode(ivB64, Base64.DEFAULT)
+        val raw = Base64.decode(ctB64, Base64.DEFAULT)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(pushKey, "AES"), GCMParameterSpec(128, iv))
+        val json = String(cipher.doFinal(raw), Charsets.UTF_8)
+        val obj = Json.parseToJsonElement(json).jsonObject
+        Doorbell(obj.getValue("server_url").jsonPrimitive.content,
+                 obj.getValue("push_id").jsonPrimitive.content,
+                 obj.getValue("challenge_key").jsonPrimitive.content)
+    } catch (e: Exception) {
+        // Forged, tampered, or simply not addressed to this device -> drop.
+        null
     }
-) {
-    ...
+
+    fun verifyManifest(manifestJson: String, sigB64: String,
+                       serverPublicKeyPem: String): List<ManifestFile>? = try {
+        val pem = serverPublicKeyPem
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\s".toRegex(), "")
+        val key = KeyFactory.getInstance("RSA")
+            .generatePublic(X509EncodedKeySpec(Base64.decode(pem, Base64.DEFAULT)))
+        // Verify the exact received bytes: re-serialising would reorder keys.
+        if (!Signature.getInstance("SHA256withRSA")
+                .run { initVerify(key); update(manifestJson.toByteArray()); verify(Base64.decode(sigB64, Base64.DEFAULT)) }) {
+            return null
+        }
+        val files = Json.parseToJsonElement(manifestJson).jsonObject
+            .getValue("files").jsonArray.map { el ->
+                val o = el.jsonObject
+                ManifestFile(o.getValue("file_id").jsonPrimitive.content,
+                             o.getValue("name").jsonPrimitive.content,
+                             o.getValue("path").jsonPrimitive.content,
+                             o.getValue("size").jsonPrimitive.long,
+                             o.getValue("retrieval_key").jsonPrimitive.content)
+            }
+        files
+    } catch (e: Exception) {
+        null
+    }
+
+    fun signRegistration(data: ByteArray): String =
+        Base64.encodeToString(keyStore.sign(data), Base64.DEFAULT)
 }
 ```
-
-*(The real file: parse the envelope JSON, decode the 5 base64 fields, load the server public key from PEM (`KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(...))` after stripping PEM headers), `Signature.getInstance("SHA256withRSA").verify(serverPublicKey, decodedSig, (ekB64 + ivB64 + ctB64).toByteArray())`, then `Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")` decrypt `ek` → 32-byte content key, `SecretKeySpec`, `Cipher.getInstance("AES/GCM/NoPadding")` with `GCMParameterSpec(128, iv)` decrypt `ct` → payload JSON → `Json.decodeFromString`. Return `null` on any exception. For testability on the JVM, avoid the `CloudPushKeyStoreImpl` default — instead inject a `CloudPushCryptoKeystore` interface with a Keystore-backed production impl and a test impl; the plan's interface block above lists the exact decrypted-payload shapes.)*
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -2334,9 +2557,8 @@ Expected: PASS.
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/PushCrypto.kt app/src/test/java/com/a42r/mdrender/cloudpush/
-git commit -m "feat(android): E2E envelope verify + decrypt"
+git commit -m "feat(android): doorbell decrypt + signed-manifest verify"
 ```
-
 ### Task B4: `PushClient` — HTTP client
 
 **Files:**
@@ -2345,8 +2567,10 @@ git commit -m "feat(android): E2E envelope verify + decrypt"
 
 **Interfaces:**
 - Produces (`com.a42r.mdrender.cloudpush.PushClient`, `@Singleton @Inject constructor()`), all `suspend`:
-  - `fun registerDevice(config: PushServerConfig, publicKeySpkiDer: ByteArray, fcmToken: String, pairingToken: String): Result<String>` → returns `deviceAuth`; POSTs `/api/register-device` with the sig proof.
+  - `fun registerDevice(config: PushServerConfig, publicKeySpkiDer: ByteArray, fcmToken: String, pairingToken: String): Result<String>` → returns `deviceAuth`; POSTs `/api/register-device` with `push_key` and the sig proof over `sha256(device_secret||device_name||fcm_token||public_key||push_key)`.
+  - `fun fetchManifest(doorbell: PushCrypto.Doorbell): Result<String>` → POSTs `/api/push/{push_id}/manifest` with `{challenge_key}`, returns the **raw response body** for `PushCrypto.verifyManifest` to verify. Returning the raw string is required: the signature covers the exact bytes, so the client must not re-serialise.
   - `fun rotateToken(config: PushServerConfig, newFcmToken: String): Result<Unit>`
+  - `fun rotatePushKey(config: PushServerConfig, newPushKey: ByteArray): Result<Unit>`
   - `fun renameDevice(config: PushServerConfig, newName: String): Result<Unit>`
   - `fun checkRegistration(config: PushServerConfig): Boolean` → true on 200, false on 404.
   - `fun downloadFile(config: PushServerConfig, fileId: String, key: String, dest: File): Result<Unit>` → streams to `dest`.
@@ -2401,7 +2625,7 @@ class PushClient @Inject constructor() {
 }
 ```
 
-*(Implement the private `post(url, body, readTimeoutMs): Pair<Int, ByteArray>` and `postStream` helpers with `HttpURLConnection`; set `connectTimeout`, `readTimeout`, `doOutput`, `Content-Type: application/json`, and read the response. For `registerDevice`, the body includes `device_secret, device_name, fcm_token, public_key, pairing_token, sig` where `sig` = Base64(RSA-SHA256(sha256(device_secret||device_name||fcm_token||public_key))) using the Keystore.)*
+*(Implement the private `post(url, body, readTimeoutMs): Pair<Int, ByteArray>` and `postStream` helpers with `HttpURLConnection`; set `connectTimeout`, `readTimeout`, `doOutput`, `Content-Type: application/json`, and read the response. For `registerDevice`, the body includes `device_secret, device_name, fcm_token, public_key, push_key, pairing_token, sig` where `sig` = Base64(RSA-SHA256(sha256(device_secret||device_name||fcm_token||public_key||push_key))) using the Keystore. The trailing `push_key` in the sig input is what stops an attacker substituting their own doorbell key.)*
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -2412,7 +2636,7 @@ Expected: PASS.
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/PushClient.kt app/src/test/java/com/a42r/mdrender/cloudpush/
-git commit -m "feat(android): PushClient HTTP + JSON body auth"
+git commit -m "feat(android): PushClient HTTP + manifest fetch + JSON body auth"
 ```
 
 ### Task B5: `QrPairingScanner` — ML Kit + CameraX scanner screen
@@ -2473,7 +2697,12 @@ git add app/src/main/java/com/a42r/mdrender/cloudpush/QrScannerScreen.kt app/src
 git commit -m "feat(android): QR pairing scanner (ML Kit + CameraX)"
 ```
 
-### Task B6: `CloudPushManager` — queue + slice merge
+### Task B6: `CloudPushManager` — download queue
+
+> **Revised 2026-08-29.** Slice merging and the 30 s debounce are deleted. The manifest
+> is now fetched once per doorbell and is complete and authoritative, so there are no
+> partial slices to reconcile. A re-rung doorbell re-fetches the manifest; the queue
+> still dedupes by `fileId` so a retried file is not downloaded twice.
 
 **Files:**
 - Create: `app/src/main/java/com/a42r/mdrender/cloudpush/CloudPushManager.kt`
@@ -2481,16 +2710,26 @@ git commit -m "feat(android): QR pairing scanner (ML Kit + CameraX)"
 
 **Interfaces:**
 - Produces (`com.a42r.mdrender.cloudpush.CloudPushManager`, `@Singleton @Inject constructor`):
-  - `data class DownloadTask(val pushId: String, val file: PushCrypto.PushFile, val serverUrl: String, val status: Status = Status.QUEUED, val progress: Float = 0f)` with `enum Status { QUEUED, DOWNLOADING, DONE, FAILED }`
+  - `data class DownloadTask(val pushId: String, val file: PushCrypto.ManifestFile, val serverUrl: String, val status: Status = Status.QUEUED, val progress: Float = 0f)` with `enum Status { QUEUED, DOWNLOADING, DONE, FAILED, CANCELLED }`
   - `val state: StateFlow<List<DownloadTask>>`
-  - `fun enqueue(payload: PushCrypto.PushPayload)` — merges slices sharing `pushId`: dedupe by `file.fileId`, add new files; when the distinct file count reaches `payload.totalFiles`, **or** 30 s have elapsed since the first slice for that `pushId`, emit a "ready" push for the download service.
+  - `fun onPushReady(callback: (String) -> Unit)` — fired once per accepted manifest
+  - `fun enqueue(doorbell: PushCrypto.Doorbell, files: List<PushCrypto.ManifestFile>)` — adds tasks for fileIds not already known for that push, then fires the ready callback. No timer, no expected-count logic.
   - `fun cancel(fileId: String)` — sets status CANCELLED; the service discards the temp copy and acks as received.
   - `fun onFinished(fileId: String, success: Boolean)`
-- Debounce: a `Job` per `pushId` scheduled with `CoroutineScope(Dispatchers.Default)` for the 30 s backstop.
 
-- [ ] **Step 1: Write the failing merge test** `CloudPushManagerTest.kt`
+- [ ] **Step 1: Write the failing test** `CloudPushManagerTest.kt`
 
-Two `enqueue` calls with the same `pushId` but disjoint `files` (total 2, each slice `totalFiles = 2`) must, after the second call, expose a single task list of 2 entries and signal readiness. Use `kotlinx-coroutines-test` (`runTest`, `StandardTestDispatcher`) with the manager's scope injected.
+```kotlin
+@Test fun `enqueue adds every file in a manifest`() { /* assert 2 tasks, callback fired once */ }
+
+@Test fun `a re-rung doorbell does not duplicate completed files`() {
+    // enqueue(2 files) -> onFinished(f1, true) -> enqueue(same manifest again)
+    // assert still 2 tasks and no second download of f1
+}
+```
+
+*(Use `kotlinx-coroutines-test` (`runTest`, `StandardTestDispatcher`) with the manager's
+scope injected.)*
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -2503,25 +2742,21 @@ Expected: FAIL — class not found.
 package com.a42r.mdrender.cloudpush
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class CloudPushManager @Inject constructor(
-    private val scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
-) {
+class CloudPushManager @Inject constructor() {
+
     enum class Status { QUEUED, DOWNLOADING, DONE, FAILED, CANCELLED }
 
     data class DownloadTask(
         val pushId: String,
-        val file: PushCrypto.PushFile,
+        val file: PushCrypto.ManifestFile,
         val serverUrl: String,
         val status: Status = Status.QUEUED,
         val progress: Float = 0f
@@ -2531,35 +2766,22 @@ class CloudPushManager @Inject constructor(
     val state: StateFlow<List<DownloadTask>> = _state.asStateFlow()
 
     private val readyCallbacks = mutableListOf<(String) -> Unit>()
-    private val pendingCount = mutableMapOf<String, Int>()
-    private val debounceJobs = mutableMapOf<String, Job>()
 
     fun onPushReady(callback: (String) -> Unit) {
         readyCallbacks.add(callback)
     }
 
-    fun enqueue(payload: PushCrypto.PushPayload) {
-        val existing = _state.value.filter { it.pushId == payload.pushId }.map { it.file.fileId }.toSet()
-        val newTasks = payload.files
+    fun enqueue(doorbell: PushCrypto.Doorbell, files: List<PushCrypto.ManifestFile>) {
+        val existing = _state.value
+            .filter { it.pushId == doorbell.pushId }
+            .map { it.file.fileId }
+            .toSet()
+        val newTasks = files
             .filter { it.fileId !in existing }
-            .map { DownloadTask(payload.pushId, it, payload.serverUrl) }
+            .map { DownloadTask(doorbell.pushId, it, doorbell.serverUrl) }
         if (newTasks.isEmpty()) return
         _state.update { it + newTasks }
-        val count = _state.value.count { it.pushId == payload.pushId }
-        if (count >= payload.totalFiles) {
-            fire(payload.pushId)
-            return
-        }
-        debounceJobs[payload.pushId]?.cancel()
-        debounceJobs[payload.pushId] = scope.launch {
-            delay(30_000)
-            fire(payload.pushId)
-        }
-    }
-
-    private fun fire(pushId: String) {
-        debounceJobs.remove(pushId)?.cancel()
-        readyCallbacks.forEach { it(pushId) }
+        readyCallbacks.forEach { it(doorbell.pushId) }
     }
 
     fun cancel(fileId: String) {
@@ -2590,9 +2812,8 @@ Expected: PASS.
 
 ```bash
 git add app/src/main/java/com/a42r/mdrender/cloudpush/CloudPushManager.kt app/src/test/java/com/a42r/mdrender/cloudpush/
-git commit -m "feat(android): download queue with slice merge + debounce"
+git commit -m "feat(android): download queue for a complete signed manifest"
 ```
-
 ### Task B7: `CloudPushDownloadService` — foreground downloader
 
 **Files:**
@@ -2600,10 +2821,14 @@ git commit -m "feat(android): download queue with slice merge + debounce"
 - Modify: `app/src/main/AndroidManifest.xml` (declare the service)
 
 **Interfaces:**
-- Consumes: `CloudPushManager`, `PushClient`, `PushCrypto`, `PushServerConfig`, `FileRepository`, `FolderRepository`, `PushHistoryRepository`.
+- Consumes: `CloudPushManager`, `PushClient`, `PushCrypto`, `PushServerConfig`, `FileRepository`, `FolderRepository`, `PushHistoryRepository`. No longer needs `PushCrypto` for envelope unwrapping — it only needs the manifest's file list.
 - Produces (`com.a42r.mdrender.cloudpush.CloudPushDownloadService`, `@AndroidEntryPoint class ... : Service()`):
   - Foreground service, `startForeground(ID, notification)` with type `FOREGROUND_SERVICE_TYPE_DATA_SYNC`.
   - On start, drains `CloudPushManager.state` for its `pushId`, downloads each `QUEUED`/`DOWNLOADING` task: `PushClient.downloadFile(config, fileId, key, tempFile)` → resolve target folder (`findOrCreateFolder("Cloud Push", null)` then nested `path` segments) → `FileRepository.importFileFromTemp(tempFile, name, mimeType, folderId)` → `PushHistoryRepository.record("Cloud Push", name, size, folderId)` → `PushClient.ackReceived(config, fileId, key)`. Updates the progress notification per file and posts a completion notification ("N files received in Cloud Push").
+  - **The pushId comes from the manifest, not the FCM payload** — the service is started
+    with a `pushId` argument obtained after `fetchManifest` succeeds. This is deliberate:
+    the doorbell is unauthenticated ciphertext, so a message that decrypts is not yet
+    proof of a real push. The signed manifest is what authorises a download.
   - `cancel(fileId)` discards the temp file and calls `ackReceived` (removes it server-side).
   - `stopSelf()` when the queue for this push is drained; cancels the foreground state.
 
@@ -2755,7 +2980,8 @@ git commit -m "feat(android): Cloud Push foreground download service"
 **Interfaces:**
 - Consumes: `PushCrypto`, `CloudPushManager`, `PushServerConfig`, `PushClient`.
 - Produces (`com.a42r.mdrender.cloudpush.PushFcmService`, `@AndroidEntryPoint class ... : FirebaseMessagingService()`):
-  - `onMessageReceived(message)` — read `message.data["p"]`, `PushCrypto.decryptEnvelope(it, config.serverPublicKeyPem)` (off main thread), on success `manager.enqueue(payload)`; on failure log and drop.
+  - `onMessageReceived(message)` — read `message.data["p"]` and `message.data["i"]`, `PushCrypto.decryptTrigger(p, i, config.pushKey)` (off main thread). On a null doorbell, log and drop. Otherwise `PushClient.fetchManifest(doorbell)` → `PushCrypto.verifyManifest(rawBody, sig, config.serverPublicKeyPem)`; **only if that signature verifies** call `manager.enqueue(doorbell, files)`. Any failure drops the message silently.
+  - The whole sequence runs in `goAsync()` with a bounded timeout — FCM grants only a few seconds of wall clock, and a manifest fetch plus RSA verify must complete inside it.
   - `onNewToken(token)` — re-register with the paired server: `PushClient.rotateToken(config, token)`.
 
 - [ ] **Step 1: Register the service in `AndroidManifest.xml`**
@@ -2782,7 +3008,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -2796,15 +3024,36 @@ class PushFcmService : FirebaseMessagingService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val envelope = message.data["p"] ?: return
+        val ct = message.data["p"] ?: return
+        val iv = message.data["i"] ?: return
+        val pending = goAsync()
         scope.launch {
-            val payload = crypto.decryptEnvelope(envelope, config.serverPublicKeyPem)
-            if (payload == null) {
-                Log.w(TAG, "CloudPush: dropped envelope (bad sig/decrypt)")
-                return@launch
+            try {
+                withTimeout(10_000) { deliver(ct, iv) }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(TAG, "CloudPush: timed out fetching manifest; server will retry")
+            } catch (e: Exception) {
+                Log.w(TAG, "CloudPush: dropped message (${e.javaClass.simpleName})")
+            } finally {
+                pending.finish()
             }
-            manager.enqueue(payload)
         }
+    }
+
+    private suspend fun deliver(ct: String, iv: String) {
+        val doorbell = crypto.decryptTrigger(ct, iv, config.pushKey)
+        if (doorbell == null) {
+            Log.w(TAG, "CloudPush: dropped trigger (not for this device, or tampered)")
+            return
+        }
+        val body = client.fetchManifest(doorbell).getOrThrow()
+        val sig = body.sig
+        val files = crypto.verifyManifest(body.manifestJson, sig, config.serverPublicKeyPem)
+        if (files == null) {
+            Log.w(TAG, "CloudPush: dropped manifest (bad server signature)")
+            return
+        }
+        manager.enqueue(doorbell, files)
     }
 
     override fun onNewToken(token: String) {
@@ -2998,7 +3247,7 @@ With a registered device named "Sunny Falcon", run:
 ```bash
 ./tools/push-to-phone.sh --target "Sunny Falcon" server/README.md
 ```
-Expected: a new push appears in the server's `/pushes` page and an FCM envelope is produced (or the test fake shows it). Missing `--target` exits 2.
+Expected: a new push appears in the server's `/pushes` page and **exactly one** FCM data message is produced, carrying `p` and `i` (the test fake shows it). The manifest is not in FCM. Missing `--target` exits 2.
 
 - [ ] **Step 3: Commit**
 
@@ -3209,8 +3458,10 @@ git commit -m "feat(tools): one-time FCM setup script + walkthrough"
 | Spec requirement | Task |
 |---|---|
 | Server keypair in DB; backup by mounting DB | A5, A12, A13 |
-| Envelope (RSA-OAEP-256 / A256GCM / sig), ≤3.5 KB slices | A3, A9 |
-| Batching `total_files` merge on phone | A3 (payload), B6 (merge) |
+| AES-256-GCM doorbell (server_url / push_id / challenge_key), HMAC-derived IV | A3, A9, B3, B8 |
+| `push_key` negotiated at pairing, covered by the registration sig | A1, A6, B1, B4, B3 |
+| Signed manifest fetched over HTTPS (`POST /api/push/<id>/manifest`, challenge-key gated) | A7, A9, B3, B4, B8 |
+| One FCM message regardless of file count (no 4 KB batching) | A9, A10, B6 |
 | FCM HTTP v1 service account | A8, C4, 0.3 |
 | Password login + rate limit/lockout | A4, A9 |
 | OAuth2 client-credentials enrolment | A5, A9, C2 |
@@ -3237,10 +3488,37 @@ The plan contains **no TBD/TODO placeholders**. The few "*(the implementer write
 
 ### 3. Type / interface consistency
 
-- `build_envelope` (A3) and `PushCrypto.decryptEnvelope` (B3) agree on `ek||iv||ct` (base64-string concat) as the signature input, and on the payload shape (`server_url`, `push_id`, `date`, `total_files`, `files[{file_id,name,path,retrieval_key}]`).
-- `total_files` added to the payload by `build_payload` (A3) and consumed by `CloudPushManager.enqueue` (B6) — consistent.
-- `register_device` (A6) sig input `sha256(device_secret||device_name||fcm_token||public_key)` matches `PushClient.registerDevice` (B4) and the A9 test.
-- `push_store` helpers (A7) are used by `app.py` (A9) and `retry.py` (A10) with matching names.
+- **FCM wire shape.** `seal_trigger` (A3) returns `{"v": 1, "i": iv_b64, "c": ct_b64}`; A9's route and A10's worker send exactly the two FCM data fields `{"p": sealed["c"], "i": sealed["i"]}`. B8 reads `data["p"]` + `data["i"]` and passes them to `decryptTrigger(ct, iv, pushKey)` in that order. The `v` version field is *not* on the wire — it lives inside the sealed plaintext, so a client that ignores it still decodes, and there is no third field to agree on. The `i` IV is on the wire in plaintext because the client cannot derive it before decrypting (it depends on the `push_id` still inside the ciphertext); GCM authenticates it, so a substituted IV fails decryption.
+- `derive_iv(push_key, push_id)` (A3) is server-only. No Android counterpart is needed or wanted: the client receives the IV as a field.
+- `build_manifest`/`manifest_bytes` (A3) agree with `verifyManifest` (B3) on the exact byte string: the server signs `json.dumps(manifest, separators=(",", ":"), sort_keys=True)` and `PushClient.fetchManifest` (B4) returns the **raw** body so B3 verifies those bytes rather than a re-serialisation. This is called out in both tasks because it is the one place a plausible-looking refactor silently breaks the feature.
+- Manifest shape `files[{file_id, name, path, size, retrieval_key}]` (A3 `build_manifest`) matches `PushCrypto.ManifestFile` (B3) and `DownloadTask.file` (B6), and `CloudPushDownloadService` (B7) reads `retrievalKey`.
+- `register_device` (A6) sig input `sha256(device_secret||device_name||fcm_token||public_key||push_key)` matches `PushClient.registerDevice` (B4) and the A9 integration test.
+- `push_store` helpers (A7) — including `get_push_by_id`, needed by both the manifest route (A9) and `_device` in `retry.py` (A10) — are used with matching names.
 - `FcmClient.send(data_message, fcm_token)` (A8) is used by `app.py` (A9) and `retry.py` (A10).
 - `CloudPushManager.Status` enum (B6) is referenced by `CloudPushDownloadService` (B7) and the settings UI (B9).
 - `PushHistoryRepository.record(source, fileName, fileSize, folderId)` matches master's signature.
+
+### 3a. What the redesign deliberately removed
+
+Recorded so a later reader does not "restore" it as if it were a bug:
+
+| Removed | Why |
+|---|---|
+| `server/app/envelope.py`, RSA-OAEP content-key wrap, per-message signature | The doorbell is symmetric under `push_key`; a signature added no protection the GCM tag did not, and the Keystore key no longer needs `PURPOSE_DECRYPT` |
+| Slice batching, `total_files`, `slice_files`, 3.5 KB pre-encryption budget | One fixed ~250-byte trigger is under the 4 KB limit by construction, so the file count stopped mattering |
+| Slice merge + 30 s debounce on the phone (B6) | The manifest is complete on arrival; there are no partial slices to reconcile |
+| Per-file envelope rebuild on retry (A10) | One trigger per push, and the manifest is rebuilt from live DB state, so a retry cannot re-offer an acked file |
+
+### 3b. Known gaps carried into implementation
+
+Not fixed by this redesign; recorded so they are not lost:
+
+- `POST /api/push` still returns `200` when no FCM client is configured. A push accepted
+  but never delivered is indistinguishable from a delivered one. Fix: return `503` when
+  `make_fcm_client` yields `None`, unless an explicit `DRY_RUN` config flag is set.
+- The server sends FCM with default priority and no TTL, so a doorbell can be delayed
+  indefinitely. For a push-to-phone doorbell this should be `AndroidConfig(priority=HIGH)`
+  with a short `time_to_live`.
+- The `path` field exists in the manifest and the download service resolves it, but
+  nothing populates it at push time — `target_folder` is not yet implemented in
+  `POST /api/push`. Every file currently lands under the "Cloud Push" root.

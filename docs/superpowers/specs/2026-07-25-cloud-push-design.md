@@ -3,14 +3,16 @@
 ## Goal
 
 Push files (markdown, images, MP3s) from a Linux desktop to an Android phone off-LAN,
-triggered by an AI agent via SSH. FCM is the doorbell: it tells the phone a file is
-available, and the phone connects to the self-hosted server over HTTPS to pull it.
+triggered by an AI agent via SSH. FCM is the doorbell: it tells the phone that a push
+is waiting, and the phone connects to the self-hosted server over HTTPS to fetch the
+file manifest and then the bytes.
 
 The push server is **self-hosted** — each user runs their own instance (Docker) on their
 own machine. The Android app pairs with that server via a **QR code**, exchanging
-**public keys**. Every FCM doorbell message is **envelope-encrypted** (server→phone) with
-the recipient's public key, so a **single shared Firebase project** can serve all instances
-of the app: FCM is a dumb doorbell that only sees ciphertext.
+**public keys**. Every FCM doorbell message is **encrypted** with a symmetric key
+negotiated during that pairing, so a **single shared Firebase project** can serve all
+instances of the app: FCM is a dumb doorbell that only sees ciphertext, and a message
+the app cannot decrypt is a silent no-op.
 
 The **LocalSend device name** is the cross-LAN identity. It is registered with the push
 server, so the existing `localsend-send` tool can address a phone by its familiar device
@@ -23,17 +25,29 @@ notification.
 
 - **One Firebase project for every install of the app.** FCM is shared infrastructure.
   It routes a data message to a specific device token and nothing more.
-- **FCM is only a doorbell.** The FCM message is a server→phone envelope saying a file is
-  available and where to fetch it; the app then connects to the server over HTTPS to
-  download the bytes. The envelope is encrypted with the phone's public key (and signed
-  with the server's private key), so Google/Firebase, a network observer, and any other
-  app instance see only ciphertext — never file names, paths, or retrieval keys.
+- **FCM is only a doorbell.** The FCM message is a fixed-size encrypted *trigger*
+  saying "a push is waiting at this server"; it names no file. The app then requests
+  the **manifest** from the server over HTTPS and downloads the bytes. The trigger is
+  encrypted with the symmetric key established at pairing, so Google/Firebase, a
+  network observer, and any other app instance see only ciphertext — never a file name,
+  a path, a retrieval key, or even a `push_id`.
+- **Forged doorbells are inert.** Because the trigger is encrypted with a key only the
+  phone and its paired server hold, anyone able to inject an FCM message into the shared
+  project (including every other operator holding the shared service-account credential)
+  produces a message the app cannot decrypt and drops. The only residual effect is a
+  wasted decryption, never a spoofed push.
+- **The manifest is signed, not encrypted.** It travels over TLS and is verified against
+  the RSA public key the QR pinned at pairing, so a rogue TLS certificate (e.g. a
+  compromised Cloudflare Tunnel terminator) still cannot inject file names or retrieval
+  keys. Encryption of the manifest is deliberately *not* used: it never reaches Firebase,
+  so encryption would protect nothing that TLS does not already protect.
 - **Only registered devices receive messages.** A device is only in the registry after
   a successful QR pairing + key-possession proof. The server sends to a device's exact
   FCM token — it never broadcasts.
 - **The LocalSend device name is a public routing address.** It sits in the registry so
   a sender can address a phone by name. Names are not secrets; content is still protected
-  by the E2E envelope. A name collision is a routing problem, not a confidentiality one
+  by the E2E doorbell and the signed manifest. A name collision is a routing problem, not
+  a confidentiality one
   (see Security).
 - **Trust anchor is the QR code** (trust-on-first-use). The server's public key comes
   from the QR the operator scans off their own server's screen, out-of-band from the
@@ -55,17 +69,24 @@ Desktop (agent/SSH)      Self-hosted Push Server         Android Phone
        │                          │ stores file +             │
        │                          │ file-linked retrieval key │
        │                          │                           │
-       │                          │ builds E2E envelope:      │
-       │                          │   RSA-OAEP(phone pub) +   │
-       │                          │   AES-GCM(payload) +      │
-       │                          │   RSA-SHA256(server sig)  │
+       │                          │ builds encrypted trigger: │
+       │                          │   AES-GCM(push_key,       │
+       │                          │    {server_url, push_id,  │
+       │                          │     challenge_key})       │
        │                          │                           │
-       │                          │ FCM data message {env}    │
+       │                          │ FCM data message {trig}   │
        │                          │ ─────────────────────────►│
        │                          │    (shared Firebase,      │
        │                          │     sees ciphertext only) │
        │                          │                           │
        │                          │  POST /api/push/{id}/     │
+       │                          │  manifest {challenge_key} │
+       │                          │◄──────────────────────────│
+       │                          │ ── signed manifest ──────►│
+       │                          │   files[], names, paths,  │
+       │                          │   retrieval keys          │
+       │                          │                           │
+       │                          │  POST /api/push/{fid}/    │
        │                          │  download {key}           │
        │                          │◄──────────────────────────│
        │                          │ ── file bytes (streamed) ►│
@@ -73,6 +94,14 @@ Desktop (agent/SSH)      Self-hosted Push Server         Android Phone
        │                          │ importFileFromTemp()      │
        │                          │ → encrypted storage       │
 ```
+
+**The FCM message carries no file manifest.** It is a fixed-size (~250 byte)
+encrypted *trigger* holding only `server_url`, `push_id`, and a per-push
+`challenge_key`. The phone exchanges the trigger for a **signed manifest** over
+HTTPS, then downloads each file. Carrying the manifest in FCM is not merely
+wasteful — it is *useless*: the manifest is only actionable if the server is
+reachable, and reaching the server is required to obtain the file bytes anyway.
+This supersedes the earlier envelope-and-batching design; see §Push flow (2).
 
 ## Push Server (Python, Docker, self-hosted)
 
@@ -92,7 +121,7 @@ Desktop (agent/SSH)      Self-hosted Push Server         Android Phone
   and prompts (see Registration).
 - **TLS**: served over TLS when off-LAN (tunnel). On plain LAN the FCM token and device
   secrets travel in the clear, so prefer a self-signed cert or accept the LAN as trusted;
-  the encrypted envelope protects message content either way.
+  the E2E doorbell protects message content either way.
 
 ### Setup automation (maintainer, one-time)
 
@@ -162,8 +191,9 @@ echo "into the server image as FCM_SERVER_KEY."
 | POST | `/api/enrol` | one-time enrolment key | Exchange `{ enrolment_id, key }` for `client_id` + `client_secret` |
 | POST | `/oauth/token` | client_id + client_secret (OAuth2 client-credentials grant) | Issue a short-lived `access_token` for tool/agent pushes |
 | POST | `/api/push` | `Authorization: Bearer` (client-credentials) | Upload files for push; `target_device` (LocalSend name) is **required** — 400 if missing/unknown |
-| POST | `/api/register-device` | pairing token + key-possession proof | Register FCM token + public key |
-| POST | `/api/register-device` (update) | JSON body `{ device_secret, device_auth }` | Rotate FCM token / device name (no pairing token needed) |
+| POST | `/api/register-device` | pairing token + key-possession proof | Register FCM token + public key + `push_key` |
+| POST | `/api/register-device` (update) | JSON body `{ device_secret, device_auth }` | Rotate FCM token / device name / `push_key` (no pairing token needed) |
+| POST | `/api/push/{push_id}/manifest` | JSON body `{ challenge_key }` | Exchange a doorbell trigger for the signed file manifest (names, paths, retrieval keys) |
 | POST | `/api/push/{file_id}/download` | JSON body `{ key }` | Phone downloads a file (returns bytes over HTTPS) |
 | POST | `/api/push/{file_id}/received` | JSON body `{ key }` | Ack: file downloaded and recorded → server deletes its copy |
 | POST | `/api/device/status` | JSON body `{ device_secret, device_auth }` | Registration check → 200 ok / 404 needs re-registration |
@@ -296,13 +326,20 @@ The phone registers by calling `POST /api/register-device`:
   "device_name": "<LocalSend device name, e.g. LocalSendPrefs.alias>",
   "fcm_token": "<Firebase instance token>",
   "public_key": "<base64 DER SPKI of phone public key>",
+  "push_key": "<base64 random 32-byte symmetric key for doorbell encryption>",
   "pairing_token": "<from QR, first registration only>",
-  "sig": "<base64: RSA-SHA256(phone private key, sha256(device_secret||device_name||fcm_token||public_key))>"
+  "sig": "<base64: RSA-SHA256(phone private key, sha256(device_secret||device_name||fcm_token||public_key||push_key))>"
 }
 ```
 
 - `device_name` is the phone's **LocalSend name** (`LocalSendPrefs.alias`) — the routing
   identity a sender uses to address this device (see Agent Integration).
+- `push_key` is a fresh 32-byte random symmetric key generated on the phone. It is the
+  **negotiated doorbell key**: from pairing onward, the server encrypts every FCM
+  trigger to this device with it and the phone is the only party that can decrypt.
+  It is covered by `sig`, so it cannot be substituted by an attacker who does not hold
+  the phone's private key. Because it rides in a request that already exists, this
+  costs no additional pairing ceremony.
 - Server verifies the pairing token (one-time, unexpired), then verifies `sig` against
   the presented `public_key` — proof the caller holds the phone's private key.
 - A `device_name` already bound to a *different* `device_secret` **replaces** the old
@@ -320,14 +357,17 @@ The phone registers by calling `POST /api/register-device`:
   `device_auth` + the new `fcm_token` (no pairing token). The server updates the token
   only if `device_auth` matches — an attacker who only has `device_secret` can't hijack
   the device.
+- **`push_key` rotation**: the same `device_secret` + `device_auth` path may replace
+  `push_key` at any time. This is the revocation lever for the doorbell key — see
+  Security for why it matters.
 - **Registration check** (`POST /api/device/status`): the phone can verify its registration
   at any time — on app foreground and when a push/ack fails. If the server was reset (DB
   lost) and the entry no longer exists it returns 404; the app shows "device needs
   re-registration" and offers to re-pair.
 
 Registry entry: `device_secret` (id) → `device_auth`, `device_name`, `fcm_token`,
-`public_key`, `registered_at`. Name-addressed pushes resolve `device_name` →
-`device_secret` → `fcm_token` + `public_key`.
+`public_key`, `push_key`, `registered_at`. Name-addressed pushes resolve `device_name` →
+`device_secret` → `fcm_token` + `push_key`.
 
 ### Push flow (detail)
 
@@ -342,44 +382,52 @@ Registry entry: `device_secret` (id) → `device_auth`, `device_name`, `fcm_toke
      partial or failed download.
    - `target_folder` (e.g. `Docs/Reports`) routes files into that subfolder of the phone's
      "Cloud Push" folder on import; nested paths are supported. Empty = Cloud Push root.
-2. For each target device, the server builds the **E2E envelope** (encrypted with that
-   device's public key) and sends an FCM data message to that device's token only:
+2. The server builds an **encrypted doorbell trigger** and sends exactly one FCM data
+   message to that device's token:
    ```json
-   {
-     "v": 1,
-     "alg": "RSA-OAEP-256",
-     "enc": "A256GCM",
-     "kid": "<phone key id / rotation>",
-     "ek": "<base64: RSA-OAEP(phone public key, random 32-byte content key)>",
-     "iv": "<base64: 12-byte IV>",
-     "tag": "<base64: 16-byte GCM tag>",
-     "ct": "<base64: AES-256-GCM(content key, payload JSON)>",
-     "sig": "<base64: RSA-SHA256(server private key, ek||iv||ct)>"
-   }
+   { "p": "<base64: AES-256-GCM(push_key, trigger JSON)>" }
    ```
-   where the payload is the plaintext the current design sends today:
+   where the trigger plaintext is:
    ```json
-   { "server_url": "<PUSH_PUBLIC_URL>", "push_id": "uuid",
-     "date": "2026-08-28T12:34:56Z",
-     "files": [ { "file_id": "<file_id>", "name": "notes.md",
-                  "path": "Docs/Reports",
-                  "retrieval_key": "<file-linked key>" } ] }
+   { "v": 1, "server_url": "<PUSH_PUBLIC_URL>", "push_id": "uuid",
+     "challenge_key": "<per-push secret>" }
    ```
-   The envelope is a **doorbell** — it says a file is available and where to fetch it
-   (server URL + file id + file-linked retrieval key). It carries only server URL, push id,
-   date/time, and per file its id, name, target path, and retrieval key. File names, paths,
-   and keys exist **only** inside the encrypted envelope; the phone then connects to the
-   server over HTTPS to download the actual bytes.
-   - **Batching (envelope ≤ 3.5 KB).** A push's files are chunked into contiguous slices
-     (~32 files per message at 256 bytes per file entry); each slice is a separate FCM
-     message with the same `push_id`. The phone merges slices sharing a `push_id` into one
-     download queue. Retry/re-push applies per file as before.
-   - `ek` (RSA-3072 OAEP-SHA256) is 384 bytes; with the 3.5 KB payload cap the full base64
-     envelope stays safely under FCM's 4 KB data-message limit.
-   - Firebase sees only the envelope. It cannot read file names, paths, or retrieval keys.
-   - The phone verifies `sig` with the server public key (authenticity), unwraps the
-     content key with its Keystore private key, and AES-GCM decrypts `ct`.
-3. **Ack & purge:**
+   - The trigger is encrypted with the **symmetric `push_key` negotiated at pairing**,
+     not with a per-message RSA-wrapped content key. AES-GCM is an AEAD, so it
+     authenticates as well as encrypts — no separate per-message signature is needed.
+   - **IV derivation:** `iv = HMAC-SHA256(push_key, push_id)[:12]`. `push_id` is a random
+     uuid4, so this is unique per key with **no nonce state on either side** and no
+     counter to persist. It also makes retries free: re-sending push *X* re-derives the
+     same IV and produces a byte-identical message. A random per-send IV would be safe
+     for uniqueness too, but every send would then depend on never drawing a collision;
+     deterministic derivation removes the failure mode rather than managing it.
+   - **The trigger is a fixed ~250 bytes regardless of file count.** There is no size
+     problem, no batching, and no slice-merge on the phone.
+   - Firebase sees only ciphertext, and learns nothing beyond "a message was delivered
+     to this token": no `push_id`, no file names, no paths, no retrieval keys, and not
+     even the number of files in the push.
+3. **The phone exchanges the trigger for a signed manifest:**
+   ```json
+   POST /api/push/{push_id}/manifest   { "challenge_key": "…" }
+   →  { "manifest": { "push_id": "…", "date": "…",
+                     "files": [ { "file_id": "…", "name": "notes.md",
+                                  "path": "Docs/Reports", "size": 1234,
+                                  "retrieval_key": "…" } ] },
+        "sig": "<base64: RSA-SHA256(server private key, manifest JSON)>" }
+   ```
+   - The server checks `challenge_key` against the push row and returns only the files
+     that are **not yet acked**, so the manifest is always current. (A retry can no
+     longer hand the phone a file that was already acked — a whole class of bug that
+     the old rebuild-envelope retry path could produce.)
+   - The phone verifies `sig` with the RSA public key the QR pinned at pairing, then
+     builds the download queue. Verification is **mandatory** and happens before any file
+     name or retrieval key is trusted: the trust anchor is the pinned key, not the TLS
+     certificate, so a compromised tunnel terminator still cannot inject a manifest.
+   - `challenge_key` does not grant authority the phone does not already have via
+     `device_auth` — it makes the endpoint *self-sufficient* (no device lookup, no
+     `device_auth` in the request). It is a capability binding, not a second
+     authorization layer.
+4. **Ack & purge:**
    - The phone downloads each file over HTTPS, imports it into app storage, then acks via
      `POST /api/push/{file_id}/received`. The ack deletes the file **bytes** on the server;
      the send record (name, path, size, date, target, status) is retained and shown in the
@@ -387,11 +435,12 @@ Registry entry: `device_secret` (id) → `device_auth`, `device_name`, `fcm_toke
    - Unacked files are purged after `PUSH_FILE_TTL_HOURS`; the record still remains.
    - The retrieval key is file-linked, not one-time — valid until ack or purge, so a partial
      or failed download can be retried.
-4. **Delivery retry:** if a file is not acked within `PUSH_RETRY_INTERVAL_MINUTES`, the
-   server re-sends the slice(s) containing the unacked files (stored envelope, or rebuilt),
-   up to `PUSH_RETRY_COUNT` attempts, then marks those files exhausted (still listed in
-   `/pending`). The operator can re-trigger a push of pending files from the UI via
-   `POST /api/push/{push_id}/retry`.
+5. **Delivery retry:** if a file is not acked within `PUSH_RETRY_INTERVAL_MINUTES`, the
+   server re-sends the **same trigger** (byte-identical: the IV is derived from
+   `push_id`, so a retry reproduces the same ciphertext) up to `PUSH_RETRY_COUNT`
+   attempts, then marks those files exhausted (still listed in `/pending`). The phone
+   re-requests the manifest, which by then reflects current state. The operator can
+   re-trigger a push of pending files from the UI via `POST /api/push/{push_id}/retry`.
 
 ### Implementation notes
 
@@ -400,7 +449,8 @@ Registry entry: `device_secret` (id) → `device_auth`, `device_name`, `fcm_toke
   device registry, pushes, files, and retrieval keys. SQLite transactions give atomic
   updates (no read-modify-write races). Backup = mount/copy the DB file (or
   `sqlite3 .backup`).
-- `cryptography` library for RSA-OAEP (SHA-256), AES-256-GCM, and RSA-SHA256 signing.
+- `cryptography` library for AES-256-GCM (doorbell), HMAC-SHA256 (IV derivation),
+  RSA-SHA256 (manifest signature), and RSA key-possession proofs at registration.
 - Graceful SIGTERM, logs to stdout.
 - Optional Cloudflare Tunnel config: `tunnel: <name>` in a `cloudflared.yaml`.
 
@@ -410,17 +460,19 @@ Registry entry: `device_secret` (id) → `device_auth`, `device_name`, `fcm_toke
 
 | Class | Purpose |
 |-------|---------|
-| `PushServerConfig` | Holds server URL + server public key + device secret + device auth + device name, persisted in preferences |
+| `PushServerConfig` | Holds server URL + server public key + device secret + device auth + **push_key** + device name, persisted in preferences |
 | `CloudPushKeyStore` | Generates and holds the phone RSA-3072 keypair in Android Keystore (`mdrender_cloudpush_keypair`), non-exportable private key |
-| `PushCrypto` | Builds/verifies the E2E envelope: RSA-OAEP unwrap, AES-GCM decrypt, server sig verify |
+| `PushCrypto` | Decrypts the doorbell trigger (AES-256-GCM with `push_key`) and verifies the manifest signature (RSA-SHA256) |
 | `QrPairingScanner` | ML Kit barcode scanner for the pairing QR |
 | `PushClient` | HTTP client using `java.net.HttpURLConnection` (no new dep) |
-| `PushFcmService` | `FirebaseMessagingService` — always registered, decrypts and handles envelopes |
-| `CloudPushManager` | Orchestrator — receives decrypted trigger, manages the download queue with progress |
+| `PushFcmService` | `FirebaseMessagingService` — always registered, decrypts the trigger and fetches the manifest |
+| `CloudPushManager` | Orchestrator — owns the download queue with progress; no slice-merge logic |
 | `CloudPushDownloadService` | `dataSync` foreground service — processes the download queue in the background with a progress notification |
 
-`PushCrypto` is separate from `CryptoEngine` (symmetric, at-rest) — this is public-key
-E2E for the transport. The phone private key never leaves the Keystore.
+`PushCrypto` is separate from `CryptoEngine` (symmetric, at-rest). The phone's RSA
+private key never leaves the Keystore and is used for exactly two things: proving key
+possession at registration, and verifying the manifest signature. The doorbell itself
+uses the symmetric `push_key` from `PushServerConfig`.
 
 ### Pairing & registration flow (app)
 
@@ -429,24 +481,33 @@ E2E for the transport. The phone private key never leaves the Keystore.
 - Parses `server_url`, server public key, pairing token; stores them in
   `PushServerConfig`.
 - Reads `device_name` from `LocalSendPrefs.alias` (the phone's LocalSend name).
-- Generates (or reuses) the Keystore keypair, then registers via `PushClient.registerDevice`
-  (with key-possession `sig`), receives `device_auth`.
+- Generates (or reuses) the Keystore keypair and a fresh random 32-byte `push_key`,
+  then registers via `PushClient.registerDevice` (with key-possession `sig` over both),
+  receives `device_auth`, and persists `push_key` alongside it.
 - On success: status shows "Paired with <server>" and the registered device name.
 - If the user renames the LocalSend alias in Settings, the phone re-registers with the
   same `device_secret`/`device_auth` and the new `device_name` so the server keeps routing
   by the current name.
+- **Re-pair / rotate keys** regenerates `push_key` as well as wiping the pairing, which
+  invalidates any doorbell an attacker may have captured.
 
 ### Data flow — FCM path (always on)
 
-- `PushFcmService.onMessageReceived()` reads the envelope (`data["p"]`).
-- Verifies the server signature, unwraps the content key, decrypts the payload
-  (`server_url`, `push_id`, `files[]` with name/path/retrieval_key) — all off the main
-  thread.
-- Enqueues the files on `CloudPushManager`, which merges slices sharing a `push_id` into
-  one download queue, and starts `CloudPushDownloadService` (a `dataSync` **foreground
-  service** — downloads run in the background because the app is usually not foreground
-  when FCM arrives). The service posts a progress notification: "Downloading notes.md from
-  Cloud Push…".
+- `PushFcmService.onMessageReceived()` reads the trigger (`data["p"]`).
+- `PushCrypto.decryptTrigger(...)` AES-256-GCM decrypts it with `push_key`, deriving the
+  IV as `HMAC-SHA256(push_key, push_id)[:12]` — mirroring the server exactly. Decryption
+  failure (including a forged message) is a silent drop with a log line. All of this runs
+  off the main thread.
+- `PushClient.fetchManifest(server_url, push_id, challenge_key)` POSTs to
+  `/api/push/{push_id}/manifest` and receives the signed manifest.
+- `PushCrypto.verifyManifest(...)` checks `sig` against the **QR-pinned** server public key
+  before trusting any file name or retrieval key. A failure drops the manifest entirely.
+- `CloudPushManager.enqueue(manifest)` adds the files to the download queue — a plain
+  enqueue with **no merge or debounce**, because the manifest is always complete and
+  always current. `CloudPushDownloadService` (a `dataSync` **foreground service** —
+  downloads run in the background because the app is usually not foreground when FCM
+  arrives) is started with the `push_id`. The service posts a progress notification:
+  "Downloading notes.md from Cloud Push…".
 - For each entry in `files`, `PushClient.downloadFile(server_url, file_id, retrieval_key)`
   POSTs `{ "key": … }` to `/api/push/{file_id}/download`, streams the response to a temp
   file, then calls `FileRepository.importFileFromTemp()`.
@@ -512,13 +573,17 @@ plugins {
 ```kotlin
 class PushFcmService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
-        val envelope = message.data["p"] ?: return
+        val trigger = message.data["p"] ?: return
         // (off main thread)
-        val payload = PushCrypto.decryptEnvelope(envelope) ?: run {
-            Log.w(TAG, "CloudPush: drop message — bad sig or decrypt"); return
+        val doorbell = PushCrypto.decryptTrigger(trigger, config.pushKey) ?: run {
+            Log.w(TAG, "CloudPush: drop message — cannot decrypt (forged?)"); return
         }
-        // payload: server_url, push_id, date, files [{file_id, name, path, retrieval_key}]
-        CloudPushManager.download(payload)
+        // doorbell: server_url, push_id, challenge_key
+        val manifest = client.fetchManifest(doorbell) ?: return
+        val files = PushCrypto.verifyManifest(manifest, config.serverPublicKeyPem) ?: run {
+            Log.w(TAG, "CloudPush: drop manifest — bad server sig"); return
+        }
+        CloudPushManager.download(files)
     }
 
     override fun onNewToken(token: String) {
@@ -560,7 +625,7 @@ Behavior with `--name`:
 3. **Not found** → fall back to `POST /api/push` with `target_device=<name>` and the files
    as multipart. The tool authenticates with the OAuth2 bearer token from its credential
    file (enrolling or fetching a token first if needed). The server resolves the name in
-   its registry and delivers via the E2E FCM envelope.
+   its registry and rings the E2E FCM doorbell.
 4. **Not found** and no enrolled server → exit with "device not found".
 
 `--host <ip>` stays direct with no fallback (scripted/agent use). The server URL comes
@@ -606,11 +671,13 @@ server returns 400 if omitted.
 | All server access | Gated by `SERVER_PASSWORD` (env var) + short-lived session cookie: pairing, enrolment, device management, file listing. Machine pushes use OAuth2 bearer; phone ops use `device_auth` |
 | Login brute force | Rate limit + lockout on `POST /login` (`LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_SECONDS`), keyed per source IP |
 | Transport to server | TLS via Cloudflare Tunnel off-LAN; plain LAN is accepted (see Deployment) |
-| FCM payload | Envelope-encrypted (server→phone): RSA-OAEP-256 wraps a random AES-256-GCM key; server signs; phone decrypts. Shared Firebase sees ciphertext only |
-| Registration | QR is the trust anchor (TOFU) + one-time pairing token + key-possession proof |
+| FCM payload | Fixed-size encrypted doorbell: AES-256-GCM under the symmetric `push_key` negotiated at pairing, IV = `HMAC-SHA256(push_key, push_id)[:12]`. Shared Firebase sees ciphertext only, and cannot forge a message the app will accept |
+| Manifest authenticity | RSA-SHA256 signature verified against the QR-pinned server public key — independent of the TLS terminator, so a compromised tunnel cannot inject file names or retrieval keys |
+| Registration | QR is the trust anchor (TOFU) + one-time pairing token + key-possession proof covering `device_secret‖device_name‖fcm_token‖public_key‖push_key` |
 | FCM token rotation | `device_auth` secret required; `device_secret` alone can't hijack |
 | Device↔server auth | `device_auth` and retrieval keys travel in **POST/PUT JSON bodies**, never query strings, so nothing leaks into proxy/TLS-terminator logs |
-| Download | File-linked retrieval keys (not single-use), delivered only inside the encrypted envelope; the phone acks via `/received` to trigger deletion |
+| Doorbell key rotation | `push_key` may be replaced at any time via `device_secret` + `device_auth`. The key is long-lived, so this is the revocation lever — a leaked key would otherwise allow forged doorbells indefinitely |
+| Download | File-linked retrieval keys (not single-use), delivered only inside the signed manifest; the phone acks via `/received` to trigger deletion |
 | Rest storage | AES-256 encrypted on phone via existing `CryptoEngine` |
 | Device identity | Auto-generated UUID device secret + device auth secret |
 | Device name routing | Names are public addresses, not secrets; registration still gated by pairing + key proof |
@@ -627,18 +694,20 @@ entry and `device_auth` are invalidated, and the displaced device is sent an FCM
 The common case is a reinstall / re-pair with a fresh keypair. An attacker who completes a
 password-gated pairing could displace a device this way — bounded by the password gate.
 Names remain a routing concern, never a confidentiality one — content is protected by the
-E2E envelope regardless of who holds the name.
+E2E doorbell and the signed manifest regardless of who holds the name.
 
 ### Shared-Firebase trade-off (acknowledged)
 
 A single Firebase project means every self-hosted operator holds the same FCM service-account
 credential (`FCM_SERVER_KEY`).
 In principle any operator could send an FCM data message to any device token in that
-project. This is safe-by-design for confidentiality — payloads are E2E encrypted with the
-recipient's phone public key, which the attacker doesn't have — so the worst case is a
-spoofed notification/spam, never a content leak. If that worst case is unacceptable, the
-alternative is per-user Firebase projects (contradicts the "one project" goal) — noted as
-an open question.
+project. Because the doorbell is encrypted with a `push_key` that only the intended phone
+and its paired server hold, an injected message **cannot be decrypted by the target app
+and is dropped as a silent no-op** — the worst case is a wasted decryption and some log
+noise, never a spoofed notification and never a content leak. What an attacker *can* do
+is learn that a token is live and deliver messages to it; they cannot learn what they mean.
+If even that is unacceptable, the alternative is per-user Firebase projects (contradicts
+the "one project" goal) — noted as an open question.
 
 ## Open Questions & Decisions
 
@@ -662,8 +731,8 @@ an open question.
   battery, long intervals defeat the push purpose. Missed pushes are recovered server-side
   by retries (`PUSH_RETRY_COUNT`, `PUSH_RETRY_INTERVAL_MINUTES`) and operator-triggered
   re-push from the UI (`POST /api/push/{push_id}/retry`).
-- **Doorbell + HTTPS pull (R2)** — FCM carries only the envelope (server URL, date, file
-  name/path, retrieval key); the app pulls the bytes over HTTPS.
+- **Doorbell + HTTPS pull (R2)** — FCM carries only the encrypted trigger (server URL,
+  push id, challenge key); the app pulls the signed manifest, then the bytes, over HTTPS.
 - **File-linked keys + ack-delete (R3/R5)** — retrieval keys are not one-time; the ack
   (`POST /api/push/{file_id}/received`) triggers server deletion of the bytes; the send
   record remains.
@@ -676,12 +745,29 @@ an open question.
   pushes, keys) in one SQLite DB; backup by mounting/copying the DB; device↔server calls
   use POST/PUT bodies (no query-string secrets); a lost DB means re-registration, which the
   app detects via `POST /api/device/status`.
-- **Envelope size** — bounded by batching. The envelope carries only server URL, push id,
-  date/time, and per file name/path + retrieval key — never file bytes. The server splits a
-  push into multiple FCM messages when the payload would exceed **3.5 KB** (headroom under
-  FCM's 4 KB cap): at ~256 bytes per file entry that is ~32 files per message. Each message
-  is the same push (`push_id`) carrying a contiguous slice of the file list; the phone
-  merges them into one download queue. See §Push flow.
+- **Doorbell trigger, not an envelope** (2026-08-29) — *supersedes the envelope +
+  batching design.* The FCM message is a fixed ~250-byte **encrypted trigger**
+  (`server_url`, `push_id`, `challenge_key`) encrypted with the symmetric `push_key`
+  negotiated at pairing. The phone exchanges it for a **signed manifest** over HTTPS,
+  then downloads bytes. Rationale: a manifest carried in FCM is only actionable if the
+  server is reachable, and reaching the server is required for the bytes anyway — so
+  carrying it spent FCM payload and receiver-side merge complexity to obtain information
+  that is useless in exactly the situation where you would want it (server down). This
+  also removes a live defect: slicing the *pre-encryption* payload against a 3.5 KB cap
+  produced FCM data messages of ~5.9 KB against FCM's hard 4 KB limit, so any push of
+  12+ files in a slice was rejected. The trigger is constant-size, so the limit cannot
+  be exceeded by file count. See §Push flow (2).
+- **Manifest signed, not encrypted** — the manifest never reaches Firebase, so encrypting
+  it would protect nothing TLS does not. Signing it against the QR-pinned key is what
+  matters, because it makes the trust anchor independent of the TLS terminator.
+- **`push_key` is a random 32-byte field, not a derived key** — derived from the two RSA
+  public keys it would be recomputable from the phone's public key, which sits in the
+  server DB; any DB read would then be a doorbell-key read. A random field covered by
+  the registration `sig` costs no extra pairing ceremony.
+- **Nonce derived, not drawn** — `iv = HMAC-SHA256(push_key, push_id)[:12]`. A long-lived
+  key with hand-picked IVs is how AES-GCM gets broken; deriving from the random `push_id`
+  guarantees uniqueness per key with no nonce state on either side, and makes a retry
+  reproduce a byte-identical message.
 - **OAuth2 scopes** — enrolment is a registration process whose only purpose is to allow
   pushing. Scope stays `push` (upload + status); the operator/management surface is
   password-session-gated, not OAuth2, so no extra scopes are needed.
@@ -696,7 +782,7 @@ Respond inline under **Resolution** (or append a response in a new subsection).
 
 ### R1. Polling fallback is structurally dead
 
-- **Problem:** Download tokens are delivered *only* inside the FCM envelope (§Push flow,
+- **Problem:** Download tokens are delivered *only* inside the signed manifest (§Push flow,
   §Polling), yet polling is specified as the fallback "for when FCM is unavailable" — and
   `GET /api/pending` returns metadata **without** download tokens.
 - **Why it matters:** When FCM is genuinely unavailable (offline, Doze, force-stop, non-GMS
@@ -711,7 +797,7 @@ Respond inline under **Resolution** (or append a response in a new subsection).
 
 ### R2. "End-to-end encrypted" is narrower than stated
 
-- **Problem:** The E2E envelope protects only the FCM doorbell message. Files are uploaded
+- **Problem:** The E2E doorbell protects only the trigger message. Files are uploaded
   in the clear and stored/served as plaintext by the server (§Push flow); the phone's
   `device_secret` and FCM token also sit on the server.
 - **Why it matters:** The Goal says "messages encrypted and thus private" and the privacy
@@ -722,11 +808,13 @@ Respond inline under **Resolution** (or append a response in a new subsection).
 - **Suggested fix:** Rename to "server-side envelope encryption" and state plainly that the
   server sees file content.
 - **Decision (2026-08-28):** scope accepted — self-hosted server sees plaintext. The
-  envelope now carries file names/paths/retrieval keys encrypted (see §Push flow), so
-  "opaque to Firebase" is the precise claim. Rename Goal/privacy wording to "server-side
-  envelope encryption".
-- **Decision (2026-08-28):** doorbell-only confirmed — FCM carries just the envelope; the
-  app pulls the bytes over HTTPS from the server. Wording updated.
+  FCM message carries no file names, paths, or retrieval keys at all (see §Push flow (2)),
+  so "opaque to Firebase" is the precise claim.
+- **Decision (2026-08-28):** doorbell-only confirmed — FCM carries just the trigger; the
+  app pulls the manifest and bytes over HTTPS from the server. Wording updated.
+- **Decision (2026-08-29):** wording tightened once more. "Envelope encryption" is no
+  longer accurate — the doorbell is symmetric encryption under a paired key, and the
+  manifest is signed rather than encrypted.
 - **Resolution:**
 
 ### R3. No delivery guarantee — pushes can vanish silently
@@ -742,6 +830,9 @@ Respond inline under **Resolution** (or append a response in a new subsection).
 - **Decision (2026-08-28):** implemented as retries + operator re-push: unacked files are
   re-pushed after `PUSH_RETRY_INTERVAL_MINUTES` up to `PUSH_RETRY_COUNT`, then exhausted but
   listed in `/pending`; the UI can re-trigger via `POST /api/push/{push_id}/retry`.
+- **Decision (2026-08-29):** a retry re-sends the same doorbell trigger and the phone
+  re-requests the manifest, so a retry can no longer hand the phone a stale file that was
+  already acked — the earlier rebuild-envelope retry path could do exactly that.
 - **Resolution:**
 
 ### R4. Enrolment/pairing funnels through one unguarded password
