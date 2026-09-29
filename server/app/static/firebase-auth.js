@@ -39,6 +39,7 @@ function val(id) {
 
 const ERRORS = {
   "auth/operation-not-allowed": "This sign-in method isn't enabled — ask the operator to enable it in Firebase.",
+  "auth/billing-not-enabled": "Phone sign-in needs the Firebase project on the Blaze (pay-as-you-go) plan.",
   "auth/unauthorized-domain": "This domain is not authorised for sign-in.",
   "auth/invalid-phone-number": "That phone number looks invalid.",
   "auth/invalid-email": "That email address looks invalid.",

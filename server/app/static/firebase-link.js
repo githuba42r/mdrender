@@ -18,6 +18,7 @@ const auth = getAuth(app);
 
 const ERRORS = {
   "auth/operation-not-allowed": "This sign-in method isn't enabled — ask the operator to enable it in Firebase.",
+  "auth/billing-not-enabled": "Phone sign-in needs the Firebase project on the Blaze (pay-as-you-go) plan.",
   "auth/unauthorized-domain": "This domain is not authorised for sign-in.",
   "auth/popup-closed-by-user": "The sign-in popup was closed before finishing.",
   "auth/network-request-failed": "Network error — check your connection.",
