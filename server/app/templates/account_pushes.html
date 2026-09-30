@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Pushes &middot; My account{% endblock %}
 {% block content %}
 <h1>Pushes</h1>
@@ -51,7 +52,7 @@
               data-confirm="Remove this push and any stored files?"
               data-confirm-ok="Remove">
           <input type="hidden" name="next" value="/account/pushes">
-          <button type="submit" class="btn-danger">Remove</button>
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
         </form>
       </td>
     </tr>

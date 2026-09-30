@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Billing &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Billing</h1>
@@ -26,7 +27,7 @@
       <td>{% if p.scope == 'account' %}{{ p.max_pending_bytes | filesize }} / {% if p.pending_expiry_hours %}{{ p.pending_expiry_hours }}h{% else %}never{% endif %}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{% if p.active %}<span class="chip acked">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
       <td>
-        <button type="button" class="inline" data-edit-plan data-id="{{ p.plan_id }}"
+        <button type="button" class="inline icon-btn" data-edit-plan data-id="{{ p.plan_id }}"
                 data-name="{{ p.name }}" data-scope="{{ p.scope }}"
                 data-price="{{ p.price_cents | dollars }}"
                 data-included-messages="{{ p.included_messages }}"
@@ -35,10 +36,10 @@
                 data-storage-grace="{{ p.storage_grace_days }}"
                 data-max-messages="{{ p.max_messages_per_month }}"
                 data-pending-mb="{{ p.max_pending_bytes | mb }}"
-                data-pending-expiry="{{ p.pending_expiry_hours }}">Edit</button>
+                data-pending-expiry="{{ p.pending_expiry_hours }}" title="Edit">{{ icons.edit() }}</button>
         <form method="POST" action="/billing/plans/{{ p.plan_id }}/active" class="inline">
           <input type="hidden" name="active" value="{{ 0 if p.active else 1 }}">
-          <button type="submit" class="inline">{{ 'Deactivate' if p.active else 'Activate' }}</button>
+          <button type="submit" class="icon-btn" title="{{ 'Deactivate' if p.active else 'Activate' }}">{{ icons.pause() if p.active else icons.check() }}</button>
         </form>
       </td>
     </tr>
@@ -59,6 +60,7 @@
   <thead><tr><th>Group</th><th>Plan</th><th>Trial</th><th>Affiliate</th><th></th></tr></thead>
   <tbody>
     {% for gr in groups %}
+    {% set plan = plans_by_id.get(gr.plan_id) %}
     <tr>
       <td>{{ gr.name }}{% if gr.is_default %} <span class="chip">system</span>{% endif %}</td>
       <td>
@@ -71,6 +73,19 @@
           </select>
           <button type="submit" class="inline">Attach</button>
         </form>
+        {% if plan %}
+        <button type="button" class="inline icon-btn" data-plan-details title="Plan details"
+                data-plan-name="{{ plan.name }}"
+                data-plan-type="{{ 'server (host)' if plan.scope == 'slave' else 'account' }}"
+                data-plan-fee="{{ plan.price_cents | money }}"
+                data-plan-included="{{ plan.included_messages }}"
+                data-plan-overage="{{ plan.message_cents_per_1000 | money }}"
+                data-plan-storage="{{ plan.storage_cents_per_mb | money }}"
+                data-plan-grace="{{ plan.storage_grace_days }}"
+                data-plan-max="{{ plan.max_messages_per_month }}"
+                data-plan-pending="{{ plan.max_pending_bytes | filesize }}"
+                data-plan-expiry="{{ plan.pending_expiry_hours }}">{{ icons.plan() }}</button>
+        {% endif %}
       </td>
       <td>
         {% if gr.trial_days and gr.next_group_id %}
@@ -86,15 +101,15 @@
         {% if gr.is_default %}
         <span class="empty">system (fixed)</span>
         {% else %}
-        <button type="button" class="inline" data-edit-group data-id="{{ gr.group_id }}"
+        <button type="button" class="inline icon-btn" data-edit-group data-id="{{ gr.group_id }}"
                 data-name="{{ gr.name }}" data-plan-id="{{ gr.plan_id or '' }}"
                 data-trial-days="{{ gr.trial_days }}" data-next-group-id="{{ gr.next_group_id or '' }}"
                 data-affiliate-code="{{ gr.affiliate_code or '' }}"
-                data-affiliate-enabled="{{ gr.affiliate_enabled }}">Edit</button>
+                data-affiliate-enabled="{{ gr.affiliate_enabled }}" title="Edit">{{ icons.edit() }}</button>
         <form method="POST" action="/billing/groups/{{ gr.group_id }}/delete" class="inline"
               data-confirm="Remove group '{{ gr.name }}'? Accounts assigned to it fall back to the system group."
               data-confirm-ok="Remove">
-          <button type="submit" class="btn-danger">Remove</button>
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
         </form>
         {% endif %}
       </td>
@@ -190,6 +205,26 @@
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
       <button type="submit" class="btn-primary">Save group</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="plan-details-dialog" class="confirm">
+  <form method="dialog">
+    <h2>Plan: <span class="pd-name"></span></h2>
+    <dl class="details">
+      <dt>Type</dt><dd class="pd-type"></dd>
+      <dt>Monthly fee</dt><dd class="pd-fee"></dd>
+      <dt>Included messages</dt><dd class="pd-included"></dd>
+      <dt>Cost / 1000 messages</dt><dd class="pd-overage"></dd>
+      <dt>Storage / MB / month</dt><dd class="pd-storage"></dd>
+      <dt>Storage grace</dt><dd class="pd-grace"></dd>
+      <dt>Max messages / month</dt><dd class="pd-max"></dd>
+      <dt>Max pending storage</dt><dd class="pd-pending"></dd>
+      <dt>Pending expiry (hours)</dt><dd class="pd-expiry"></dd>
+    </dl>
+    <div class="confirm-actions">
+      <button value="close" class="btn-primary">Close</button>
     </div>
   </form>
 </dialog>

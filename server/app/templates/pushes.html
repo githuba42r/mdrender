@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Pushes &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Pushes</h1>
@@ -84,12 +85,12 @@
       <td><span class="chip {{ p.status }}">{{ p.status }}</span></td>
       <td>
         <form method="POST" action="/api/push/{{ p.push_id }}/retry" class="inline">
-          <button type="submit">Re-push pending</button>
+          <button type="submit" class="icon-btn" title="Re-push pending">{{ icons.retry() }}</button>
         </form>
         <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
               data-confirm="Remove this push and any stored files?"
               data-confirm-ok="Remove">
-          <button type="submit" class="btn-danger">Remove</button>
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
         </form>
       </td>
     </tr>

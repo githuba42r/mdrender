@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Admins &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Admins</h1>
@@ -41,12 +42,12 @@
       <td>{{ a.created_at | dt }}</td>
       <td>{% if a.disabled_at %}<span class="chip failed">disabled</span>{% else %}<span class="chip">active</span>{% endif %}</td>
       <td>
-        <button type="button" class="inline" data-edit-admin data-id="{{ a.admin_id }}"
+        <button type="button" class="inline icon-btn" data-edit-admin data-id="{{ a.admin_id }}"
                 data-name="{{ a.name or '' }}" data-email="{{ a.email or '' }}"
-                data-username="{{ a.username }}">Edit</button>
+                data-username="{{ a.username }}" title="Edit">{{ icons.edit() }}</button>
         {% if a.firebase_uid %}
         <form method="POST" action="/admins/{{ a.admin_id }}/unlink" class="inline-form">
-          <button type="submit" class="inline">Unlink</button>
+          <button type="submit" class="inline icon-btn" title="Unlink Firebase">{{ icons.unlink() }}</button>
         </form>
         {% endif %}
       </td>

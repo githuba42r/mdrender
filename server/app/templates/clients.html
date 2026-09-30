@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Clients &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>CLI clients</h1>
@@ -20,7 +21,7 @@
         <form method="POST" action="/clients/{{ c.client_id }}/revoke" class="inline"
               data-confirm="Revoke client '{{ c.name }}'? Its tokens stop working immediately."
               data-confirm-ok="Revoke">
-          <button type="submit" class="btn-danger">Revoke</button>
+          <button type="submit" class="icon-btn btn-danger" title="Revoke">{{ icons.revoke() }}</button>
         </form>
       </td>
     </tr>

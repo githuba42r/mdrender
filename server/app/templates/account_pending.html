@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Pending &middot; My account{% endblock %}
 {% block content %}
 <h1>Pending pushes</h1>
@@ -28,7 +29,7 @@
           data-confirm="Delete this entire push and all {{ p.files | length }} pending file(s)?"
           data-confirm-ok="Delete">
       <input type="hidden" name="next" value="/account/pending">
-      <button type="submit" class="btn-danger">Delete entire push</button>
+      <button type="submit" class="icon-btn btn-danger" title="Delete entire push">{{ icons.trash() }}</button>
     </form>
   </p>
   <div class="table-wrap">

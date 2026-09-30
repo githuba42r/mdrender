@@ -1372,6 +1372,7 @@ def create_app(config):
         return render_template(
             "billing.html", tab=tab, plans=plans, groups=groups,
             plan_names={p["plan_id"]: p["name"] for p in plans},
+            plans_by_id={p["plan_id"]: p for p in plans},
             group_names={gr["group_id"]: gr["name"] for gr in groups})
 
     @app.route("/billing/plans", methods=["POST"])

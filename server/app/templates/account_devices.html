@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Devices &middot; My account{% endblock %}
 {% block content %}
 <h1>Devices</h1>
@@ -28,13 +29,13 @@
       <td>
         {% if not d.approved_at %}
         <form method="POST" action="/account/devices/{{ d.device_secret }}/approve" class="inline">
-          <button type="submit" class="btn-primary">Approve</button>
+          <button type="submit" class="icon-btn" title="Approve">{{ icons.approve() }}</button>
         </form>
         {% endif %}
         <form method="POST" action="/account/devices/{{ d.device_secret }}/revoke" class="inline"
               data-confirm="Remove device '{{ d.device_name }}'? It must re-pair before it can receive pushes again."
               data-confirm-ok="Remove">
-          <button type="submit" class="btn-danger">Remove</button>
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
         </form>
       </td>
     </tr>

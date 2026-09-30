@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Users &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Users</h1>
@@ -25,33 +26,33 @@
       </td>
       <td>{{ a.balance }}</td>
       <td>
-        <button type="button" class="inline" data-edit-account data-id="{{ a.account_id }}"
-                data-name="{{ a.name or '' }}" data-email="{{ a.email }}">Edit</button>
-        <button type="button" class="inline" data-add-credit data-id="{{ a.account_id }}"
-                data-email="{{ a.email }}">Add credit</button>
+        <button type="button" class="inline icon-btn" data-edit-account data-id="{{ a.account_id }}"
+                data-name="{{ a.name or '' }}" data-email="{{ a.email }}" title="Edit">{{ icons.edit() }}</button>
+        <button type="button" class="inline icon-btn" data-add-credit data-id="{{ a.account_id }}"
+                data-email="{{ a.email }}" title="Add credit">{{ icons.credit() }}</button>
         {% if a.status == 'active' %}
         <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline"
               data-confirm="Deactivate {{ a.email }}? Their devices will stop receiving pushes."
               data-confirm-ok="Deactivate">
           <input type="hidden" name="status" value="blocked">
-          <button type="submit">Deactivate</button>
+          <button type="submit" class="icon-btn" title="Deactivate">{{ icons.pause() }}</button>
         </form>
         {% else %}
         <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline">
           <input type="hidden" name="status" value="active">
-          <button type="submit">Activate</button>
+          <button type="submit" class="icon-btn" title="Activate">{{ icons.check() }}</button>
         </form>
         {% endif %}
         <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline"
               data-confirm="Ban {{ a.email }}? They cannot sign in or push."
               data-confirm-ok="Ban">
           <input type="hidden" name="status" value="banned">
-          <button type="submit" class="btn-danger">Ban</button>
+          <button type="submit" class="icon-btn btn-danger" title="Ban">{{ icons.ban() }}</button>
         </form>
         <form method="POST" action="/accounts/{{ a.account_id }}/delete" class="inline"
               data-confirm="Delete {{ a.email }} and detach their devices?"
               data-confirm-ok="Delete">
-          <button type="submit" class="btn-danger">Delete</button>
+          <button type="submit" class="icon-btn btn-danger" title="Delete">{{ icons.trash() }}</button>
         </form>
       </td>
     </tr>

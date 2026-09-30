@@ -275,6 +275,25 @@
       groupDialog.querySelector('[name="affiliate_enabled"]').checked =
         editGroup.getAttribute("data-affiliate-enabled") === "1";
       groupDialog.showModal();
+      return;
+    }
+    var planDetails = event.target.closest("[data-plan-details]");
+    if (planDetails) {
+      var pd = document.getElementById("plan-details-dialog");
+      if (!pd) return;
+      var fields = {
+        ".pd-name": "data-plan-name", ".pd-type": "data-plan-type",
+        ".pd-fee": "data-plan-fee", ".pd-included": "data-plan-included",
+        ".pd-overage": "data-plan-overage", ".pd-storage": "data-plan-storage",
+        ".pd-grace": "data-plan-grace", ".pd-max": "data-plan-max",
+        ".pd-pending": "data-plan-pending", ".pd-expiry": "data-plan-expiry"
+      };
+      Object.keys(fields).forEach(function (sel) {
+        var value = planDetails.getAttribute(fields[sel]);
+        pd.querySelector(sel).textContent =
+          (value === null || value === "" ? "—" : value);
+      });
+      pd.showModal();
     }
   });
 

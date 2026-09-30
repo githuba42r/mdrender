@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Devices &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Devices</h1>
@@ -19,7 +20,7 @@
         <form method="POST" action="/devices/{{ d.device_secret }}/delete" class="inline"
               data-confirm="Remove device '{{ d.device_name }}'? It must re-pair before it can receive pushes again."
               data-confirm-ok="Remove">
-          <button type="submit" class="btn-danger">Remove</button>
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
         </form>
       </td>
     </tr>
