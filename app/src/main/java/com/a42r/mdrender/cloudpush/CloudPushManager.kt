@@ -49,6 +49,18 @@ class CloudPushManager @Inject constructor() {
         _needsReRegistration.value = needed
     }
 
+    private val _pairingVersion = MutableStateFlow(0)
+
+    /**
+     * Bumped whenever the stored pairing changes outside the settings screen
+     * (for example the FCM "unpaired" message), so observers re-read the config.
+     */
+    val pairingVersion: StateFlow<Int> = _pairingVersion.asStateFlow()
+
+    fun notifyPairingChanged() {
+        _pairingVersion.update { it + 1 }
+    }
+
     /** Register a listener woken when a push has work to do. */
     fun onPushReady(callback: (String) -> Unit) {
         readyCallbacks.add(callback)

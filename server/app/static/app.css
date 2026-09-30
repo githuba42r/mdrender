@@ -191,6 +191,7 @@ p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
   border: 1px solid var(--line-strong);
   margin: 0 0 1.4rem;
 }
+.callout[hidden] { display: none; }
 .callout-icon { flex: none; color: var(--muted); }
 .callout.success {
   background: rgba(46, 160, 67, 0.15);

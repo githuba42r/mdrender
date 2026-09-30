@@ -32,6 +32,7 @@ class PushFcmService : FirebaseMessagingService() {
             keyStore.deleteKeyPair()
             keyStore.deleteContentKeyPair()
             manager.setReRegistrationNeeded(false)
+            manager.notifyPairingChanged()
             return
         }
         val ct = message.data["p"] ?: return

@@ -337,12 +337,19 @@ def create_app(config):
         """
         fcm = app.config["_fcm"]
         token = device["fcm_token"] if "fcm_token" in device.keys() else None
-        if fcm is None or not token:
+        if fcm is None:
+            app.logger.warning("unpaired nudge skipped: FCM not configured")
+            return
+        if not token:
+            app.logger.warning("unpaired nudge skipped: no FCM token for %s",
+                               device.get("device_name"))
             return
         try:
             fcm.send({"type": "unpaired"}, token, high_priority=True)
-        except Exception:  # noqa: BLE001 - removal must not depend on the push
-            pass
+            app.logger.info("sent unpaired nudge to %s", device.get("device_name"))
+        except Exception as exc:  # noqa: BLE001 - removal must not depend on the push
+            app.logger.warning("unpaired nudge failed for %s: %s",
+                               device.get("device_name"), exc)
 
     def _ring_doorbell(device, push_row) -> bool:
         """Tell a device a push is waiting.

@@ -53,7 +53,8 @@ class CloudPushViewModel @Inject constructor(
         _status,
         manager.state,
         manager.needsReRegistration,
-    ) { status, downloads, needsReRegistration ->
+        manager.pairingVersion,
+    ) { status, downloads, needsReRegistration, _ ->
         status.copy(
             isPaired = config.isPaired,
             deviceName = config.deviceName,
