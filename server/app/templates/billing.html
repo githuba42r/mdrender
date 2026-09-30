@@ -12,21 +12,23 @@
 {% if tab == 'plans' %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Name</th><th>Type</th><th>Monthly flat fee</th><th>Cost / 1000 msgs</th><th>Storage / MB</th><th>Max msgs / month</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>Name</th><th>Type</th><th>Monthly flat fee</th><th>Incl. msgs</th><th>Cost / 1000 msgs</th><th>Storage / MB / mo</th><th>Max msgs / month</th><th>Status</th><th></th></tr></thead>
   <tbody>
     {% for p in plans %}
     <tr>
       <td>{{ p.name }}</td>
       <td>{{ 'server (host)' if p.scope == 'slave' else 'account' }}</td>
       <td>{{ p.price_cents }} {{ p.currency }}</td>
+      <td>{% if p.scope == 'account' %}{{ p.included_messages }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{% if p.scope == 'account' %}{{ p.message_cents_per_1000 }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
-      <td>{% if p.scope == 'account' %}{{ p.storage_cents_per_mb }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{% if p.scope == 'account' %}{{ p.storage_cents_per_mb }} <span class="empty">(after {{ p.storage_grace_days }}d)</span>{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{% if p.max_messages_per_month %}{{ p.max_messages_per_month }}{% else %}<span class="empty">unlimited</span>{% endif %}</td>
       <td>{% if p.active %}<span class="chip acked">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
       <td>
         <button type="button" class="inline" data-edit-plan data-id="{{ p.plan_id }}"
                 data-name="{{ p.name }}" data-scope="{{ p.scope }}"
                 data-price="{{ p.price_cents }}"
+                data-included-messages="{{ p.included_messages }}"
                 data-message-cents="{{ p.message_cents_per_1000 }}"
                 data-storage-cents="{{ p.storage_cents_per_mb }}"
                 data-storage-grace="{{ p.storage_grace_days }}"
@@ -103,11 +105,13 @@
     <label for="pl-price">Monthly flat fee (cents)</label>
     <div class="field"><input type="text" id="pl-price" name="price_cents" value="" required></div>
     <div class="plan-account-only">
-      <label for="pl-message-cents">Cost per 1000 messages (cents)</label>
+      <label for="pl-included-messages">Included messages per month (in the monthly fee)</label>
+      <div class="field"><input type="text" id="pl-included-messages" name="included_messages" value="" required></div>
+      <label for="pl-message-cents">Cost per 1000 messages beyond the included (cents)</label>
       <div class="field"><input type="text" id="pl-message-cents" name="message_cents_per_1000" value="" required></div>
-      <label for="pl-storage-cents">Storage cost per MB (cents)</label>
+      <label for="pl-storage-cents">Storage cost per MB per month (after grace period)</label>
       <div class="field"><input type="text" id="pl-storage-cents" name="storage_cents_per_mb" value="" required></div>
-      <label for="pl-storage-grace">Charge storage older than (days)</label>
+      <label for="pl-storage-grace">Storage grace period (days)</label>
       <div class="field"><input type="text" id="pl-storage-grace" name="storage_grace_days" value="" required></div>
     </div>
     <label for="pl-max-messages">Max messages per month (0 = unlimited)</label>

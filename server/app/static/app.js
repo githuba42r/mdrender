@@ -199,8 +199,9 @@
       newPlanDialog.querySelector(".plan-title").textContent = "New plan";
       newPlanDialog.querySelector('[name="name"]').value = "";
       newPlanDialog.querySelector('[name="scope"]').value = "account";
-      ["price_cents", "message_cents_per_1000", "storage_cents_per_mb",
-       "storage_grace_days", "max_messages_per_month"].forEach(function (f) {
+      ["price_cents", "included_messages", "message_cents_per_1000",
+       "storage_cents_per_mb", "storage_grace_days", "max_messages_per_month"
+      ].forEach(function (f) {
         newPlanDialog.querySelector('[name="' + f + '"]').value = "";
       });
       newPlanDialog._applyScope && newPlanDialog._applyScope();
@@ -219,6 +220,7 @@
       planDialog.querySelector('[name="name"]').value = editPlan.getAttribute("data-name") || "";
       planDialog.querySelector('[name="scope"]').value = editPlan.getAttribute("data-scope") || "account";
       planDialog.querySelector('[name="price_cents"]').value = editPlan.getAttribute("data-price") || "0";
+      planDialog.querySelector('[name="included_messages"]').value = editPlan.getAttribute("data-included-messages") || "0";
       planDialog.querySelector('[name="message_cents_per_1000"]').value = editPlan.getAttribute("data-message-cents") || "0";
       planDialog.querySelector('[name="storage_cents_per_mb"]').value = editPlan.getAttribute("data-storage-cents") || "0";
       planDialog.querySelector('[name="storage_grace_days"]').value = editPlan.getAttribute("data-storage-grace") || "0";

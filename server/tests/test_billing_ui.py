@@ -67,11 +67,12 @@ def test_plan_fields_and_credit_lives_on_the_users_page(config, db_path):
     c = _admin(app)
     c.post("/billing/plans", data={
         "name": "Metered", "scope": "account", "price_cents": "1000",
-        "message_cents_per_1000": "5", "storage_cents_per_mb": "2",
-        "storage_grace_days": "30", "max_messages_per_month": "500"})
+        "included_messages": "100", "message_cents_per_1000": "5",
+        "storage_cents_per_mb": "2", "storage_grace_days": "30",
+        "max_messages_per_month": "500"})
     with app.config["_db"].connect() as conn:
         plan = billing.list_plans(conn)[0]
-    assert plan["price_cents"] == 1000
+    assert plan["price_cents"] == 1000 and plan["included_messages"] == 100
     assert plan["message_cents_per_1000"] == 5 and plan["storage_cents_per_mb"] == 2
     assert plan["storage_grace_days"] == 30 and plan["max_messages_per_month"] == 500
 
