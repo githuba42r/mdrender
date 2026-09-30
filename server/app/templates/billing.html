@@ -102,20 +102,29 @@
     <div class="field"><select id="pl-scope" name="scope">
       <option value="account">account</option>
       <option value="slave">server (host)</option></select></div>
-    <label for="pl-price">Monthly flat fee (cents)</label>
-    <div class="field"><input type="text" id="pl-price" name="price_cents" value="" required></div>
-    <div class="plan-account-only">
-      <label for="pl-included-messages">Included messages per month (in the monthly fee)</label>
-      <div class="field"><input type="text" id="pl-included-messages" name="included_messages" value="" required></div>
-      <label for="pl-message-cents">Cost per 1000 messages beyond the included (cents)</label>
-      <div class="field"><input type="text" id="pl-message-cents" name="message_cents_per_1000" value="" required></div>
-      <label for="pl-storage-cents">Storage cost per MB per month (after grace period)</label>
-      <div class="field"><input type="text" id="pl-storage-cents" name="storage_cents_per_mb" value="" required></div>
-      <label for="pl-storage-grace">Storage grace period (days)</label>
-      <div class="field"><input type="text" id="pl-storage-grace" name="storage_grace_days" value="" required></div>
+    <div class="field-row">
+      <input type="text" name="price_cents" value="" required
+             aria-label="Monthly flat fee in cents">
+      <span class="unit">cents/month for</span>
+      <input type="text" name="included_messages" value="" required
+             class="plan-account-only" aria-label="Included messages">
+      <span class="unit plan-account-only">messages included, then</span>
+      <input type="text" name="message_cents_per_1000" value="" required
+             class="plan-account-only" aria-label="Cents per 1000 messages">
+      <span class="unit plan-account-only">cents / 1000 messages, up to</span>
+      <input type="text" name="max_messages_per_month" value="" required
+             aria-label="Max messages per month (0 = unlimited)">
+      <span class="unit">messages/month</span>
     </div>
-    <label for="pl-max-messages">Max messages per month (0 = unlimited)</label>
-    <div class="field"><input type="text" id="pl-max-messages" name="max_messages_per_month" value="" required></div>
+    <div class="field-row plan-account-only">
+      <span class="unit">Storage</span>
+      <input type="text" name="storage_cents_per_mb" value="" required
+             aria-label="Storage cost in cents per MB">
+      <span class="unit">cents/MB/month after</span>
+      <input type="text" name="storage_grace_days" value="" required
+             aria-label="Storage grace period in days">
+      <span class="unit">days grace</span>
+    </div>
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
       <button type="submit" class="btn-primary">Save plan</button>

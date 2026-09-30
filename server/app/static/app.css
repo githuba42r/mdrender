@@ -202,6 +202,18 @@ p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
 
 .actions-end { text-align: right; margin: 1.2rem 0 0; }
 
+/* Inline "label units" field rows (e.g. the billing plan dialog). */
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+}
+.field-row input[type="text"] { width: auto; flex: 0 1 6rem; min-width: 4rem; }
+.field-row .unit { color: var(--muted); font-size: 0.82rem; }
+#plan-dialog { width: min(680px, 94vw); }
+
 /* ---- Tabs ---- */
 
 .tabs {
