@@ -36,3 +36,8 @@ def accept_new_slaves(conn) -> bool:
 def signup_enabled(conn) -> bool:
     """Whether new account signup is open on the login/signup pages."""
     return _bool(conn, "signup_enabled", True)
+
+
+def signup_group_id(conn):
+    """Billing group new accounts are placed in on creation (None = system)."""
+    return get(conn, "signup_group_id") or None

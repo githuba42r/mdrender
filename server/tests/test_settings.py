@@ -4,7 +4,7 @@ import base64
 import os
 import unittest.mock as mock
 
-from server.app import accounts, crypto, federation, settings
+from server.app import accounts, billing, crypto, federation, settings
 from server.app.app import create_app
 
 
@@ -57,6 +57,28 @@ def test_federation_env_disables_enrolment(config, db_path):
     config.FEDERATION_ENABLED = False
     app = _app(config)
     assert _enrol(app, "s1").status_code == 403
+
+
+def test_new_accounts_are_placed_in_the_signup_group(config, db_path):
+    app = _app(config)
+    c = _login(app)
+    with app.config["_db"].connect() as conn:
+        group_id = billing.create_group(conn, "trial")
+
+    page = c.get("/settings").data
+    assert b"signup_group_id" in page and b"trial" in page
+
+    c.post("/settings", data={"signup_enabled": "on", "signup_group_id": group_id})
+    with app.config["_db"].connect() as conn:
+        assert settings.signup_group_id(conn) == group_id
+
+    app.test_client().post("/signup", data={"email": "new@example.com",
+                                            "password": "longenough1"})
+    with app.config["_db"].connect() as conn:
+        account_id = accounts.get_account_by_email(conn, "new@example.com")["account_id"]
+        row = conn.execute("SELECT group_id FROM account_groups WHERE account_id = ?",
+                           (account_id,)).fetchone()
+    assert row is not None and row["group_id"] == group_id
 
 
 def test_signup_toggle_closes_signup(config, db_path):

@@ -25,6 +25,17 @@
   </label>
   <p class="lede">When off, the signup page is closed and a first social / magic-link
     login will not create a new account.</p>
+  <label for="signup-group">Group new accounts are added to</label>
+  <div class="field">
+    <select id="signup-group" name="signup_group_id">
+      <option value="">(system default)</option>
+      {% for gr in groups %}
+      <option value="{{ gr.group_id }}"{% if signup_group_id == gr.group_id %} selected{% endif %}>{{ gr.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <p class="lede">New accounts (via signup or a first social / magic-link login) are
+    placed in this group, so the group's plan sets their limits.</p>
 
   <div class="confirm-actions">
     <button type="submit" class="btn-primary">Save settings</button>

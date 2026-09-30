@@ -613,6 +613,13 @@ def create_app(config):
         purge_expired_sessions(g.db)
         return _local_login_cookie(make_response(redirect(_return_to("/pushes"))))
 
+    def _assign_signup_group(account_id):
+        """Place a newly created account in the operator's signup group, if set."""
+        group_id = settings.signup_group_id(g.db)
+        if group_id:
+            billing.assign_account_group(g.db, billing.SCOPE_ACCOUNT,
+                                         account_id, group_id)
+
     @app.route("/signup", methods=["GET", "POST"])
     def signup():
         """Public account (tenant) signup by email (design §9)."""
@@ -631,7 +638,8 @@ def create_app(config):
         if accounts.get_account_by_email(g.db, email) is not None:
             return render_template("signup.html",
                                    error="That email is already registered."), 400
-        accounts.create_account(g.db, email, password)
+        account_id = accounts.create_account(g.db, email, password)
+        _assign_signup_group(account_id)
         return render_template("signup.html", done=True)
 
     @app.route("/account/login", methods=["GET", "POST"])
@@ -1247,6 +1255,8 @@ def create_app(config):
             federation_env=bool(getattr(config, "FEDERATION_ENABLED", True)),
             accept_new_slaves=settings.accept_new_slaves(g.db),
             signup_enabled=settings.signup_enabled(g.db),
+            signup_group_id=settings.signup_group_id(g.db),
+            groups=[dict(gr) for gr in billing.list_groups(g.db)],
         )
 
     @app.route("/settings", methods=["POST"])
@@ -1258,6 +1268,8 @@ def create_app(config):
                            "on" if request.form.get("accept_new_slaves") else "off")
         settings.set_value(g.db, "signup_enabled",
                            "on" if request.form.get("signup_enabled") else "off")
+        settings.set_value(g.db, "signup_group_id",
+                           (request.form.get("signup_group_id") or "").strip())
         return redirect("/settings", 303)
 
     @app.route("/federation", methods=["GET"])
@@ -1633,6 +1645,7 @@ def create_app(config):
             account_id = accounts.create_account(g.db, email)
             if uid:
                 accounts.set_firebase_uid(g.db, account_id, uid)
+            _assign_signup_group(account_id)
             account = accounts.get_account(g.db, account_id)
         elif uid and account["firebase_uid"] != uid:
             accounts.set_firebase_uid(g.db, account["account_id"], uid)
