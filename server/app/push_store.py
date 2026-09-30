@@ -223,6 +223,37 @@ def get_push_by_id(conn, push_id):
     return conn.execute("SELECT * FROM pushes WHERE push_id = ?", (push_id,)).fetchone()
 
 
+def _delete_pushes(conn, push_ids) -> list[str]:
+    ids = list(push_ids)
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    conn.execute(f"DELETE FROM push_files WHERE push_id IN ({marks})", ids)
+    conn.execute(f"DELETE FROM pushes WHERE push_id IN ({marks})", ids)
+    conn.commit()
+    return ids
+
+
+def purge_all(conn, account_id=None) -> list[str]:
+    """Delete every push and file row (optionally one account). Returns the ids."""
+    if account_id is None:
+        rows = conn.execute("SELECT push_id FROM pushes").fetchall()
+    else:
+        rows = conn.execute("SELECT push_id FROM pushes WHERE account_id = ?",
+                            (account_id,)).fetchall()
+    return _delete_pushes(conn, [r["push_id"] for r in rows])
+
+
+def purge_pending(conn, account_id=None) -> list[str]:
+    """Delete every push that still has a pending file. Returns the push ids."""
+    where = "" if account_id is None else " AND p.account_id = ?"
+    params = () if account_id is None else (account_id,)
+    rows = conn.execute(
+        "SELECT DISTINCT p.push_id FROM pushes p JOIN push_files f ON f.push_id = p.push_id"
+        " WHERE f.status = 'pending'" + where, params).fetchall()
+    return _delete_pushes(conn, [r["push_id"] for r in rows])
+
+
 def delete_push(conn, push_id) -> bool:
     """Remove a push and every file row that belongs to it.
 

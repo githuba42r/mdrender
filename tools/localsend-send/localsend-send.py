@@ -271,6 +271,14 @@ def _open_browser(uri):
         pass  # headless or no handler; the URL is printed for manual opening
 
 
+class ClientAuthError(Exception):
+    """The server rejected this client's credentials (removed or revoked)."""
+
+
+_RE_REGISTER_HINT = ("re-register this client with: "
+                     "mdrender-send --enrol --server <server-url>")
+
+
 def _get_token(creds, server_url):
     """POST the client-credentials grant and return the access token."""
     data = urllib.parse.urlencode({
@@ -282,8 +290,15 @@ def _get_token(creds, server_url):
                                  data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     req.add_header("User-Agent", USER_AGENT)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)["access_token"]
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)["access_token"]
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise ClientAuthError(
+                "this client is not registered on the server (or was revoked); "
+                + _RE_REGISTER_HINT) from e
+        raise
 
 
 def get_access_token(creds_path, server_url=None):
@@ -438,7 +453,11 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
     behaves like a direct send: the same destination folder and the same
     collision behaviour.
     """
-    token = get_access_token(creds_path)
+    try:
+        token = get_access_token(creds_path)
+    except ClientAuthError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 6
     with open(creds_path) as fh:
         server_url = json.load(fh)["server_url"].rstrip("/")
 
@@ -480,8 +499,19 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
         with urllib.request.urlopen(req, timeout=30) as resp:
             reply = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        print(f"error: cloud push failed: HTTP {e.code} {e.read().decode()[:200]}",
-              file=sys.stderr)
+        body = e.read().decode()
+        if e.code in (401, 403):
+            # The server refused the bearer token: the client was removed.
+            detail = ""
+            try:
+                detail = json.loads(body).get("detail", "")
+            except ValueError:
+                pass
+            print("error: push refused — " + (detail or
+                  "this client is no longer registered; " + _RE_REGISTER_HINT),
+                  file=sys.stderr)
+            return 6
+        print(f"error: cloud push failed: HTTP {e.code} {body[:200]}", file=sys.stderr)
         return 1
     except (urllib.error.URLError, OSError) as e:
         print(f"error: cloud push failed: {e}", file=sys.stderr)

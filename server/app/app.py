@@ -232,11 +232,28 @@ def create_app(config):
         nxt = urllib.parse.quote(_return_to(default), safe="/")
         return redirect(f"/login?next={nxt}", 303)
 
-    def bearer_client_id():
+    def client_denied():
+        """None when the bearer client is valid and active, else a 401 response.
+
+        A revoked/deleted client gets a distinct `client_revoked` error so a tool
+        can tell its user to re-register instead of retrying forever. The row is
+        re-checked on every call, so even a token that somehow outlived the
+        revoke is refused.
+        """
         header = request.headers.get("Authorization", "")
         if not header.startswith("Bearer "):
-            return None
-        return validate_access_token(config, header[7:])
+            return jsonify({"error": "unauthorized", "detail":
+                            "No client token. Register this client with --enrol."}), 401
+        client_id = validate_access_token(config, header[7:])
+        if client_id is None:
+            return jsonify({"error": "unauthorized", "detail":
+                            "Client token missing or expired. Re-register with --enrol."}), 401
+        row = get_client(g.db, client_id)
+        if row is None or row["revoked_at"] is not None:
+            return jsonify({"error": "client_revoked", "detail":
+                            "This client was removed from the server. "
+                            "Re-register it with --enrol."}), 401
+        return None
 
     def _new_code() -> str:
         """Six characters from an unambiguous set, for typing by hand.
@@ -291,21 +308,37 @@ def create_app(config):
         app.config["_enrol_keys"][eid] = entry
         return eid
 
-    def _approve_enrolment(eid: str):
+    def _approve_enrolment(eid: str, account_id=None):
         """Mint the OAuth client for an enrolment and stash its credentials.
 
         Runs in a request context (uses g.db). Idempotent: a second approval
-        returns the same credentials rather than creating another client.
+        returns the same credentials rather than creating another client. When
+        *account_id* is given (an account approved it, not an admin) the client
+        is bound to that account so it shows on the account's Clients page.
         """
         entry = app.config["_enrol_keys"].get(eid)
         if entry is None:
             return None
         if entry["creds"] is None:
             secret = uuid.uuid4().hex
-            client_id = create_client(g.db, entry["name"], hash_secret(secret))
+            binding = account_id or entry.get("account_id")
+            client_id = create_client(g.db, entry["name"], hash_secret(secret),
+                                      account_id=binding)
+            entry["account_id"] = binding
             entry["creds"] = {"client_id": client_id, "client_secret": secret}
             entry["approved"] = True
         return entry["creds"]
+
+    def _enrol_actor():
+        """(kind, account_id) for a signed-in admin or account, else None."""
+        principal = _principal()
+        if principal is None:
+            return None
+        if principal["type"] == "admin":
+            return "admin", None
+        if principal["type"] == "account":
+            return "account", principal["id"]
+        return None
 
     def _publish_device(device: dict) -> None:
         """Register a device's no-PII routing tuple at its host (design §6)."""
@@ -821,6 +854,22 @@ def create_app(config):
                       ignore_errors=True)
         return redirect(_return_to("/account/pending"), 303)
 
+    @app.route("/account/pushes/purge", methods=["POST"])
+    def account_pushes_purge():
+        auth_error = require_account_form("/account/pushes")
+        if auth_error:
+            return auth_error
+        _purge_push_dirs(push_store.purge_all(g.db, _principal()["id"]))
+        return redirect("/account/pushes", 303)
+
+    @app.route("/account/pending/purge", methods=["POST"])
+    def account_pending_purge():
+        auth_error = require_account_form("/account/pending")
+        if auth_error:
+            return auth_error
+        _purge_push_dirs(push_store.purge_pending(g.db, _principal()["id"]))
+        return redirect("/account/pending", 303)
+
     def require_account_api():
         principal = _principal()
         if principal is not None and principal["type"] == "account":
@@ -967,9 +1016,10 @@ def create_app(config):
 
     @app.route("/enrol/<eid>", methods=["GET"])
     def enrol_page(eid):
-        auth_error = require_page_session()
-        if auth_error:
-            return auth_error
+        # An admin (CLI tools) or an account (own CLI clients) may approve.
+        if _enrol_actor() is None:
+            nxt = urllib.parse.quote(request.path, safe="/")
+            return redirect(f"/login?next={nxt}", 303)
         entry = app.config["_enrol_keys"].get(eid)
         if (entry is not None and not entry["approved"]
                 and time.time() > entry["code_expires"]):
@@ -988,12 +1038,14 @@ def create_app(config):
         """Complete an enrolment: create the client, then tell the CLI to collect.
 
         The signed-in browser session is the authorisation — it is what proves a
-        human at this server approved the tool.
+        human at this server approved the tool. An account's approval binds the
+        client to that account.
         """
-        auth_error = require_form_session(f"/enrol/{eid}")
-        if auth_error:
-            return auth_error
-        if _approve_enrolment(eid) is None:
+        actor = _enrol_actor()
+        if actor is None:
+            nxt = urllib.parse.quote(f"/enrol/{eid}", safe="/")
+            return redirect(f"/login?next={nxt}", 303)
+        if _approve_enrolment(eid, actor[1]) is None:
             return render_template("enrol.html", eid=eid, code=None,
                                    code_expires=None, approved=False), 404
         return render_template("enrol_done.html")
@@ -1001,9 +1053,9 @@ def create_app(config):
     @app.route("/enrol/<eid>/new-code", methods=["POST"])
     def enrol_new_code(eid):
         """Issue a fresh short code for an enrolment whose code expired."""
-        auth_error = require_form_session(f"/enrol/{eid}")
-        if auth_error:
-            return auth_error
+        if _enrol_actor() is None:
+            nxt = urllib.parse.quote(f"/enrol/{eid}", safe="/")
+            return redirect(f"/login?next={nxt}", 303)
         entry = app.config["_enrol_keys"].get(eid)
         if entry is not None and not entry["approved"]:
             _refresh_code(entry)
@@ -1325,6 +1377,29 @@ def create_app(config):
         return render_template("pending.html",
                                pushes=push_store.list_pending_pushes(g.db))
 
+    def _purge_push_dirs(push_ids):
+        for push_id in push_ids:
+            shutil.rmtree(os.path.join(config.PUSH_STORAGE_DIR, push_id),
+                          ignore_errors=True)
+
+    @app.route("/pushes/purge", methods=["POST"])
+    def pushes_purge():
+        """Delete every push record and its stored files."""
+        auth_error = require_form_session("/pushes")
+        if auth_error:
+            return auth_error
+        _purge_push_dirs(push_store.purge_all(g.db))
+        return redirect("/pushes", 303)
+
+    @app.route("/pending/purge", methods=["POST"])
+    def pending_purge():
+        """Delete every push that still has pending files."""
+        auth_error = require_form_session("/pending")
+        if auth_error:
+            return auth_error
+        _purge_push_dirs(push_store.purge_pending(g.db))
+        return redirect("/pending", 303)
+
     @app.route("/devices/<device_secret>", methods=["DELETE"])
     def devices_delete(device_secret):
         auth_error = require_form_session("/devices")
@@ -1592,8 +1667,9 @@ def create_app(config):
 
         Bearer-gated like /api/push; the device secret is never returned.
         """
-        if bearer_client_id() is None:
-            return jsonify({"error": "unauthorized"}), 401
+        denied = client_denied()
+        if denied is not None:
+            return denied
         return jsonify({"devices": [
             {"name": r["device_name"],
              "registered_at": r["registered_at"],
@@ -1645,7 +1721,8 @@ def create_app(config):
             return jsonify({"error": "enrolment expired"}), 401
         app.config["_enrol_keys"].pop(eid, None)
         secret = uuid.uuid4().hex
-        client_id = create_client(g.db, entry["name"], hash_secret(secret))
+        client_id = create_client(g.db, entry["name"], hash_secret(secret),
+                                  account_id=entry.get("account_id"))
         return jsonify({"client_id": client_id, "client_secret": secret})
 
     @app.route("/oauth/token", methods=["POST"])
@@ -1665,8 +1742,9 @@ def create_app(config):
 
     @app.route("/api/push", methods=["POST"])
     def api_push():
-        if bearer_client_id() is None:
-            return jsonify({"error": "unauthorized"}), 401
+        denied = client_denied()
+        if denied is not None:
+            return denied
         target_device = request.form.get("target_device")
         if not target_device:
             return jsonify({"error": "device not found"}), 400
@@ -1860,8 +1938,9 @@ def create_app(config):
 
     @app.route("/api/push/<push_id>/status", methods=["GET"])
     def push_status(push_id):
-        if bearer_client_id() is None:
-            return jsonify({"error": "unauthorized"}), 401
+        denied = client_denied()
+        if denied is not None:
+            return denied
         rows = push_store.get_push_files(g.db, push_id)
         return jsonify({"push_id": push_id, "files": [
             {"file_id": r["file_id"], "name": r["file_name"],

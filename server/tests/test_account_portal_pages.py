@@ -171,6 +171,45 @@ def test_account_menu_is_rendered(config, db_path):
         assert link in body
 
 
+def test_account_purge_all_is_scoped_to_the_account(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_push(app, account_id)
+    _c2, other_id = _account(app, "other@example.com")
+    _seed_push(app, other_id, push_id="other-push")
+    # A push directory on disk, to prove the bytes are cleaned up too.
+    os.makedirs(os.path.join(config.PUSH_STORAGE_DIR, "push-1"), exist_ok=True)
+
+    assert c.post("/account/pushes/purge").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert push_store.get_push_by_id(conn, "push-1") is None
+        assert push_store.get_push_by_id(conn, "other-push") is not None
+    assert not os.path.exists(os.path.join(config.PUSH_STORAGE_DIR, "push-1"))
+
+
+def test_account_can_purge_pending(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_push(app, account_id)
+    assert c.post("/account/pending/purge").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert push_store.get_push_by_id(conn, "push-1") is None
+
+
+def test_admin_can_purge_all_pushes(config, db_path):
+    app = _app(config)
+    with app.config["_db"].connect() as conn:
+        push_store.create_push(conn, "p-admin", "dev")
+        push_store.add_file(conn, file_id="fa", push_id="p-admin", file_name="a.pdf",
+                            file_path="", size=1, retrieval_key="rk", stored_path=None,
+                            created_at=1)
+    admin = app.test_client()
+    admin.post("/login", data={"username": "admin", "password": "testpass"})
+    assert admin.post("/pushes/purge").status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert push_store.get_push_by_id(conn, "p-admin") is None
+
+
 def test_portal_pages_are_gated(config, db_path):
     app = _app(config)
     for path in ("/account/devices", "/account/clients", "/account/profile",

@@ -3,6 +3,11 @@
 {% block content %}
 <h1>Pending files</h1>
 <p class="lede">Pushes whose files the device has not acknowledged yet.</p>
+<form method="POST" action="/pending/purge" class="inline"
+      data-confirm="Delete every pending push and its stored files? This cannot be undone."
+      data-confirm-ok="Purge all pending">
+  <button type="submit" class="btn-danger">Purge all pending</button>
+</form>
 {% if pushes %}
 {% for p in pushes %}
 <section class="push-group">
