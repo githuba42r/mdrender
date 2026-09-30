@@ -200,6 +200,8 @@ p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
 }
 .callout.success .callout-icon { color: #3fb950; }
 
+.actions-end { text-align: right; margin: 1.2rem 0 0; }
+
 /* ---- Tabs ---- */
 
 .tabs {

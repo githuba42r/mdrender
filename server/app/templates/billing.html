@@ -10,9 +10,6 @@
 </nav>
 
 {% if tab == 'plans' %}
-<p><button type="button" class="btn-primary" data-new-plan>
-  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>
-  New plan</button></p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Name</th><th>Type</th><th>Monthly flat fee</th><th>Cost / 1000 msgs</th><th>Storage / MB</th><th>Max msgs / month</th><th>Status</th><th></th></tr></thead>
@@ -45,6 +42,10 @@
 </table>
 </div>
 {% if not plans %}<p class="empty">No plans yet.</p>{% endif %}
+
+<p class="actions-end"><button type="button" class="btn-primary" data-new-plan>
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>
+  New plan</button></p>
 
 {% else %}
 
