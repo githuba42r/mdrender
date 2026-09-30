@@ -91,6 +91,8 @@ def create_app(config):
         if count_admins(conn) == 0 and getattr(config, "SERVER_PASSWORD", ""):
             create_admin(conn, "admin", config.SERVER_PASSWORD)
         server_identity = get_or_create_identity(conn)
+        # The default billing group always exists (accounts fall back to it).
+        billing.ensure_default_group(conn)
 
     # The server keypair is stable per database; the session secret derives from it.
     config.session_secret = session_secret_from_pem(server_pem)
