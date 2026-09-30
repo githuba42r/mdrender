@@ -64,16 +64,7 @@
     <tr>
       <td>{{ gr.name }}{% if gr.is_default %} <span class="chip">system</span>{% endif %}</td>
       <td>
-        <form method="POST" action="/billing/groups/{{ gr.group_id }}/plan" class="inline">
-          <select name="plan_id">
-            <option value="">(no plan)</option>
-            {% for p in plans %}
-            <option value="{{ p.plan_id }}"{% if gr.plan_id == p.plan_id %} selected{% endif %}>{{ p.name }}</option>
-            {% endfor %}
-          </select>
-          <button type="submit" class="inline">Attach</button>
-        </form>
-        {% if plan %}
+        {% if plan %}{{ plan.name }}
         <button type="button" class="inline icon-btn" data-plan-details title="Plan details"
                 data-plan-name="{{ plan.name }}"
                 data-plan-type="{{ 'server (host)' if plan.scope == 'slave' else 'account' }}"
@@ -85,7 +76,7 @@
                 data-plan-max="{{ plan.max_messages_per_month }}"
                 data-plan-pending="{{ plan.max_pending_bytes | filesize }}"
                 data-plan-expiry="{{ plan.pending_expiry_hours }}">{{ icons.plan() }}</button>
-        {% endif %}
+        {% else %}<span class="empty">(no plan)</span>{% endif %}
       </td>
       <td>
         {% if gr.trial_days and gr.next_group_id %}
@@ -98,14 +89,13 @@
         {% else %}<span class="empty">&mdash;</span>{% endif %}
       </td>
       <td>
-        {% if gr.is_default %}
-        <span class="empty">system (fixed)</span>
-        {% else %}
         <button type="button" class="inline icon-btn" data-edit-group data-id="{{ gr.group_id }}"
+                data-is-default="{{ gr.is_default }}"
                 data-name="{{ gr.name }}" data-plan-id="{{ gr.plan_id or '' }}"
                 data-trial-days="{{ gr.trial_days }}" data-next-group-id="{{ gr.next_group_id or '' }}"
                 data-affiliate-code="{{ gr.affiliate_code or '' }}"
                 data-affiliate-enabled="{{ gr.affiliate_enabled }}" title="Edit">{{ icons.edit() }}</button>
+        {% if not gr.is_default %}
         <form method="POST" action="/billing/groups/{{ gr.group_id }}/delete" class="inline"
               data-confirm="Remove group '{{ gr.name }}'? Accounts assigned to it fall back to the system group."
               data-confirm-ok="Remove">

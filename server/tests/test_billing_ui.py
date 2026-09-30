@@ -62,6 +62,24 @@ def test_plan_can_be_edited_and_toggled(config, db_path):
         assert billing.get_plan(conn, plan["plan_id"])["active"] == 1
 
 
+def test_default_group_accepts_a_plan_but_stays_fixed(config, db_path):
+    app = _app(config)
+    c = _admin(app)
+    c.get("/billing?tab=groups")  # ensures the system group exists
+    c.post("/billing/plans", data={"name": "Starter", "scope": "account"})
+    with app.config["_db"].connect() as conn:
+        plan_id = billing.list_plans(conn)[0]["plan_id"]
+        group_id = billing.ensure_default_group(conn)
+
+    c.post(f"/billing/groups/{group_id}/update",
+           data={"name": "hacked", "plan_id": plan_id, "trial_days": "9"})
+    with app.config["_db"].connect() as conn:
+        group = billing.get_group(conn, group_id)
+    assert group["plan_id"] == plan_id      # plan can be attached
+    assert group["name"] == "system"        # but nothing else changes
+    assert group["trial_days"] == 0
+
+
 def test_plan_fields_and_credit_lives_on_the_users_page(config, db_path):
     app = _app(config)
     c = _admin(app)
@@ -98,9 +116,11 @@ def test_groups_attach_plans_and_default_group_is_fixed(config, db_path):
     c.post("/billing/plans", data={"name": "Starter", "scope": "account"})
     c.post("/billing/groups", data={"name": "Beta"})
 
-    # The new-group control is a button opening a dialog.
+    # The new-group control is a button opening a dialog; the inline Attach
+    # action is gone from the list (plans are attached via the group editor).
     groups_page = c.get("/billing?tab=groups").data
     assert b"data-new-group" in groups_page and b'id="group-dialog"' in groups_page
+    assert b">Attach<" not in groups_page
 
     with app.config["_db"].connect() as conn:
         plan_id = billing.list_plans(conn)[0]["plan_id"]

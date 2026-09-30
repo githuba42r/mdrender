@@ -125,15 +125,27 @@ def create_group(conn, name, *, plan_id=None, trial_days=0, next_group_id=None,
 
 def update_group(conn, group_id, *, name=None, plan_id=None, trial_days=None,
                  next_group_id=None, affiliate_code=None, affiliate_enabled=0) -> bool:
-    """Update a non-default group (name, plan, trial, affiliate). The default is fixed."""
-    cur = conn.execute(
+    """Update a group.
+
+    A normal group gets every field; the default ('system') group is fixed apart
+    from its attached plan, so only plan_id is applied for it.
+    """
+    group = get_group(conn, group_id)
+    if group is None:
+        return False
+    if group["is_default"]:
+        conn.execute("UPDATE billing_groups SET plan_id = ? WHERE group_id = ?",
+                     (plan_id or None, group_id))
+        conn.commit()
+        return True
+    conn.execute(
         "UPDATE billing_groups SET name = COALESCE(?, name), plan_id = ?,"
         " trial_days = ?, next_group_id = ?, affiliate_code = ?, affiliate_enabled = ?"
-        " WHERE group_id = ? AND is_default = 0",
+        " WHERE group_id = ?",
         (name, plan_id or None, int(trial_days or 0), next_group_id or None,
          (affiliate_code or None), 1 if affiliate_enabled else 0, group_id))
     conn.commit()
-    return cur.rowcount > 0
+    return True
 
 
 def group_by_affiliate(conn, code):

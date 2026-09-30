@@ -257,6 +257,10 @@
       newGroupDialog.querySelector('[name="next_group_id"]').value = "";
       newGroupDialog.querySelector('[name="affiliate_code"]').value = "";
       newGroupDialog.querySelector('[name="affiliate_enabled"]').checked = false;
+      ["name", "trial_days", "next_group_id", "affiliate_code", "affiliate_enabled",
+       "plan_id"].forEach(function (f) {
+        newGroupDialog.querySelector('[name="' + f + '"]').disabled = false;
+      });
       newGroupDialog.showModal();
       return;
     }
@@ -264,16 +268,23 @@
     if (editGroup) {
       var groupDialog = document.getElementById("group-dialog");
       if (!groupDialog) return;
-      groupDialog.querySelector("form").setAttribute(
-        "action", "/billing/groups/" + editGroup.getAttribute("data-id") + "/update");
-      groupDialog.querySelector(".group-title").textContent = "Edit group";
-      groupDialog.querySelector('[name="name"]').value = editGroup.getAttribute("data-name") || "";
-      groupDialog.querySelector('[name="plan_id"]').value = editGroup.getAttribute("data-plan-id") || "";
-      groupDialog.querySelector('[name="trial_days"]').value = editGroup.getAttribute("data-trial-days") || "0";
-      groupDialog.querySelector('[name="next_group_id"]').value = editGroup.getAttribute("data-next-group-id") || "";
-      groupDialog.querySelector('[name="affiliate_code"]').value = editGroup.getAttribute("data-affiliate-code") || "";
-      groupDialog.querySelector('[name="affiliate_enabled"]').checked =
+      var gForm = groupDialog.querySelector("form");
+      gForm.setAttribute("action",
+        "/billing/groups/" + editGroup.getAttribute("data-id") + "/update");
+      var isDefault = editGroup.getAttribute("data-is-default") === "1";
+      groupDialog.querySelector(".group-title").textContent =
+        isDefault ? "System group (plan only)" : "Edit group";
+      gForm.querySelector('[name="name"]').value = editGroup.getAttribute("data-name") || "";
+      gForm.querySelector('[name="plan_id"]').value = editGroup.getAttribute("data-plan-id") || "";
+      gForm.querySelector('[name="trial_days"]').value = editGroup.getAttribute("data-trial-days") || "0";
+      gForm.querySelector('[name="next_group_id"]').value = editGroup.getAttribute("data-next-group-id") || "";
+      gForm.querySelector('[name="affiliate_code"]').value = editGroup.getAttribute("data-affiliate-code") || "";
+      gForm.querySelector('[name="affiliate_enabled"]').checked =
         editGroup.getAttribute("data-affiliate-enabled") === "1";
+      // The system group is fixed except for the attached plan.
+      ["name", "trial_days", "next_group_id", "affiliate_code", "affiliate_enabled"]
+        .forEach(function (f) { gForm.querySelector('[name="' + f + '"]').disabled = isDefault; });
+      gForm.querySelector('[name="plan_id"]').disabled = false;
       groupDialog.showModal();
       return;
     }
