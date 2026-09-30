@@ -212,6 +212,13 @@ p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
 }
 .field-row input[type="text"] { width: auto; flex: 0 1 6rem; min-width: 4rem; }
 .field-row .unit { color: var(--muted); font-size: 0.82rem; }
+.field-row .unit input[type="text"] { min-width: 3.5rem; }
+.field-row .row-title {
+  flex: 0 0 7.5rem;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
 #plan-dialog { width: min(680px, 94vw); }
 
 /* ---- Tabs ---- */

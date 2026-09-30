@@ -103,23 +103,27 @@
       <option value="account">account</option>
       <option value="slave">server (host)</option></select></div>
     <div class="field-row">
+      <span class="row-title">Monthly fee:</span>
       <input type="text" name="price_cents" value="" required
              aria-label="Monthly flat fee in cents">
-      <span class="unit">cents/month for</span>
-      <input type="text" name="included_messages" value="" required
-             class="plan-account-only" aria-label="Included messages">
-      <span class="unit plan-account-only">messages included, then</span>
-      <input type="text" name="message_cents_per_1000" value="" required
-             class="plan-account-only" aria-label="Cents per 1000 messages">
-      <span class="unit plan-account-only">cents / 1000 messages, up to</span>
+      <span class="unit">cents/month</span>
+      <span class="unit plan-account-only">for
+        <input type="text" name="included_messages" value="" required
+               aria-label="Included messages"> messages, up to</span>
       <input type="text" name="max_messages_per_month" value="" required
              aria-label="Max messages per month (0 = unlimited)">
       <span class="unit">messages/month</span>
     </div>
     <div class="field-row plan-account-only">
-      <span class="unit">Storage</span>
+      <span class="row-title">Message fees:</span>
+      <input type="text" name="message_cents_per_1000" value="" required
+             aria-label="Cents per 1000 messages">
+      <span class="unit">cents per 1000 messages</span>
+    </div>
+    <div class="field-row plan-account-only">
+      <span class="row-title">Storage fees:</span>
       <input type="text" name="storage_cents_per_mb" value="" required
-             aria-label="Storage cost in cents per MB">
+             aria-label="Storage cost in cents per MB per month">
       <span class="unit">cents/MB/month after</span>
       <input type="text" name="storage_grace_days" value="" required
              aria-label="Storage grace period in days">
