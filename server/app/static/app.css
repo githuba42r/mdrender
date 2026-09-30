@@ -200,6 +200,24 @@ p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
 }
 .callout.success .callout-icon { color: #3fb950; }
 
+/* ---- Tabs ---- */
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 1rem 0 1.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.tabs a {
+  padding: 0.5rem 0.9rem;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tabs a:hover { color: var(--text); }
+.tabs a.active { color: var(--text); border-bottom-color: var(--accent); }
+
 /* ---- Stat cards ---- */
 
 .stats {

@@ -41,18 +41,65 @@ def list_plans(conn):
     return conn.execute("SELECT * FROM billing_plans ORDER BY created_at").fetchall()
 
 
+def update_plan(conn, plan_id, **fields) -> None:
+    """Update the given plan columns (only known, non-None fields are applied)."""
+    allowed = ("name", "scope", "price_cents", "currency", "interval",
+               "included_bytes", "included_messages", "storage_cents_per_mb",
+               "message_cents_per_1000", "active")
+    pairs = [(k, v) for k, v in fields.items() if k in allowed and v is not None]
+    if not pairs:
+        return
+    assignments = ", ".join(f"{k} = ?" for k, _ in pairs)
+    conn.execute(f"UPDATE billing_plans SET {assignments} WHERE plan_id = ?",
+                 (*[v for _, v in pairs], plan_id))
+    conn.commit()
+
+
+def set_plan_active(conn, plan_id, active) -> None:
+    update_plan(conn, plan_id, active=1 if active else 0)
+
+
 # ---- Groups -----------------------------------------------------------------
 
+DEFAULT_GROUP_NAME = "system"
+
+
 def ensure_default_group(conn) -> str:
-    row = conn.execute("SELECT group_id FROM billing_groups WHERE is_default = 1").fetchone()
+    """The one group every account falls back to. Named 'system', never removed."""
+    row = conn.execute("SELECT group_id, name FROM billing_groups WHERE is_default = 1").fetchone()
     if row:
+        if row["name"] != DEFAULT_GROUP_NAME:
+            conn.execute("UPDATE billing_groups SET name = ? WHERE group_id = ?",
+                         (DEFAULT_GROUP_NAME, row["group_id"]))
+            conn.commit()
         return row["group_id"]
     group_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO billing_groups (group_id, name, plan_id, is_default, created_at)"
-        " VALUES (?, 'Default', NULL, 1, ?)", (group_id, int(time.time())))
+        " VALUES (?, ?, NULL, 1, ?)", (group_id, DEFAULT_GROUP_NAME, int(time.time())))
     conn.commit()
     return group_id
+
+
+def get_group(conn, group_id):
+    return conn.execute("SELECT * FROM billing_groups WHERE group_id = ?",
+                        (group_id,)).fetchone()
+
+
+def rename_group(conn, group_id, name) -> bool:
+    """Rename a non-default group. The default ('system') group is fixed."""
+    cur = conn.execute("UPDATE billing_groups SET name = ? WHERE group_id = ? AND is_default = 0",
+                       (name, group_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_group(conn, group_id) -> bool:
+    """Remove a non-default group. The default group cannot be removed."""
+    cur = conn.execute("DELETE FROM billing_groups WHERE group_id = ? AND is_default = 0",
+                       (group_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def create_group(conn, name, *, plan_id=None) -> str:

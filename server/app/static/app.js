@@ -184,6 +184,34 @@
         editAccount.getAttribute("data-name") || "";
       accountDialog.querySelector('[name="password"]').value = "";
       accountDialog.showModal();
+      return;
+    }
+    var editPlan = event.target.closest("[data-edit-plan]");
+    if (editPlan) {
+      var planDialog = document.getElementById("edit-plan-dialog");
+      if (!planDialog) return;
+      var form = planDialog.querySelector("form");
+      form.setAttribute("action", "/billing/plans/" + editPlan.getAttribute("data-id"));
+      planDialog.querySelector('[name="name"]').value = editPlan.getAttribute("data-name") || "";
+      planDialog.querySelector('[name="scope"]').value = editPlan.getAttribute("data-scope") || "account";
+      planDialog.querySelector('[name="price_cents"]').value = editPlan.getAttribute("data-price") || "0";
+      planDialog.querySelector('[name="interval"]').value = editPlan.getAttribute("data-interval") || "month";
+      planDialog.querySelector('[name="included_bytes"]').value = editPlan.getAttribute("data-included-bytes") || "0";
+      planDialog.querySelector('[name="included_messages"]').value = editPlan.getAttribute("data-included-messages") || "0";
+      planDialog.querySelector('[name="storage_cents_per_mb"]').value = editPlan.getAttribute("data-storage-cents") || "0";
+      planDialog.querySelector('[name="message_cents_per_1000"]').value = editPlan.getAttribute("data-message-cents") || "0";
+      planDialog.querySelector(".edit-plan-name").textContent = editPlan.getAttribute("data-name") || "";
+      planDialog.showModal();
+      return;
+    }
+    var renameGroup = event.target.closest("[data-rename-group]");
+    if (renameGroup) {
+      var groupDialog = document.getElementById("rename-group-dialog");
+      if (!groupDialog) return;
+      groupDialog.querySelector("form").setAttribute(
+        "action", "/billing/groups/" + renameGroup.getAttribute("data-id") + "/rename");
+      groupDialog.querySelector('[name="name"]').value = renameGroup.getAttribute("data-name") || "";
+      groupDialog.showModal();
     }
   });
 })();

@@ -1284,14 +1284,26 @@ def create_app(config):
         bans.remove_ban(g.db, ban_id)
         return redirect("/bans", 303)
 
+    def _opt_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     @app.route("/billing", methods=["GET"])
     def billing_page():
         auth_error = require_page_session()
         if auth_error:
             return auth_error
-        return render_template("billing.html",
-                               plans=[dict(p) for p in billing.list_plans(g.db)],
-                               groups=[dict(gr) for gr in billing.list_groups(g.db)])
+        billing.ensure_default_group(g.db)
+        tab = request.args.get("tab", "plans")
+        if tab not in ("plans", "groups"):
+            tab = "plans"
+        plans = [dict(p) for p in billing.list_plans(g.db)]
+        return render_template(
+            "billing.html", tab=tab, plans=plans,
+            groups=[dict(gr) for gr in billing.list_groups(g.db)],
+            plan_names={p["plan_id"]: p["name"] for p in plans})
 
     @app.route("/billing/plans", methods=["POST"])
     def billing_plan_create():
@@ -1302,9 +1314,35 @@ def create_app(config):
         scope = request.form.get("scope", billing.SCOPE_ACCOUNT)
         if name and scope in (billing.SCOPE_SLAVE, billing.SCOPE_ACCOUNT):
             billing.create_plan(g.db, name, scope,
-                                price_cents=int(request.form.get("price_cents") or 0),
+                                price_cents=_opt_int(request.form.get("price_cents")) or 0,
                                 interval=request.form.get("interval", "month"))
-        return redirect("/billing", 303)
+        return redirect("/billing?tab=plans", 303)
+
+    @app.route("/billing/plans/<plan_id>", methods=["POST"])
+    def billing_plan_update(plan_id):
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        billing.update_plan(
+            g.db, plan_id,
+            name=(request.form.get("name") or "").strip() or None,
+            scope=request.form.get("scope") or None,
+            price_cents=_opt_int(request.form.get("price_cents")),
+            interval=request.form.get("interval") or None,
+            included_bytes=_opt_int(request.form.get("included_bytes")),
+            included_messages=_opt_int(request.form.get("included_messages")),
+            storage_cents_per_mb=_opt_int(request.form.get("storage_cents_per_mb")),
+            message_cents_per_1000=_opt_int(request.form.get("message_cents_per_1000")),
+        )
+        return redirect("/billing?tab=plans", 303)
+
+    @app.route("/billing/plans/<plan_id>/active", methods=["POST"])
+    def billing_plan_active(plan_id):
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        billing.set_plan_active(g.db, plan_id, request.form.get("active") == "1")
+        return redirect("/billing?tab=plans", 303)
 
     @app.route("/billing/groups", methods=["POST"])
     def billing_group_create():
@@ -1314,7 +1352,33 @@ def create_app(config):
         name = (request.form.get("name") or "").strip()
         if name:
             billing.create_group(g.db, name, plan_id=request.form.get("plan_id") or None)
-        return redirect("/billing", 303)
+        return redirect("/billing?tab=groups", 303)
+
+    @app.route("/billing/groups/<group_id>/plan", methods=["POST"])
+    def billing_group_plan(group_id):
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        billing.set_group_plan(g.db, group_id, request.form.get("plan_id") or None)
+        return redirect("/billing?tab=groups", 303)
+
+    @app.route("/billing/groups/<group_id>/rename", methods=["POST"])
+    def billing_group_rename(group_id):
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        name = (request.form.get("name") or "").strip()
+        if name:
+            billing.rename_group(g.db, group_id, name)
+        return redirect("/billing?tab=groups", 303)
+
+    @app.route("/billing/groups/<group_id>/delete", methods=["POST"])
+    def billing_group_delete(group_id):
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        billing.delete_group(g.db, group_id)
+        return redirect("/billing?tab=groups", 303)
 
     @app.route("/billing/credit", methods=["POST"])
     def billing_credit():

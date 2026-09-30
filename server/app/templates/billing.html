@@ -2,57 +2,114 @@
 {% block title %}Billing &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Billing</h1>
-<p class="lede">Plans, groups, and prepaid credits. Slaves are billed a flat monthly fee; accounts hosted here are metered. Payment gateways plug in later — for now, add credits manually.</p>
+<p class="lede">Plans, groups, and prepaid credits. Every account falls back to the system group; attach a plan to a group, or set a per-account override.</p>
 
-<h2>Plans</h2>
-{% if plans %}
+<nav class="tabs">
+  <a href="/billing?tab=plans" class="{{ 'active' if tab == 'plans' else '' }}">Plans</a>
+  <a href="/billing?tab=groups" class="{{ 'active' if tab == 'groups' else '' }}">Groups</a>
+</nav>
+
+{% if tab == 'plans' %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Name</th><th>Scope</th><th>Price (cents)</th><th>Interval</th></tr></thead>
+  <thead><tr><th>Name</th><th>Scope</th><th>Price</th><th>Interval</th><th>Status</th><th></th></tr></thead>
   <tbody>
     {% for p in plans %}
-    <tr><td>{{ p.name }}</td><td>{{ p.scope }}</td><td>{{ p.price_cents }}</td><td>{{ p.interval }}</td></tr>
+    <tr>
+      <td>{{ p.name }}</td>
+      <td>{{ p.scope }}</td>
+      <td>{{ p.price_cents }} {{ p.currency }}</td>
+      <td>{{ p.interval }}</td>
+      <td>{% if p.active %}<span class="chip acked">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
+      <td>
+        <button type="button" class="inline" data-edit-plan data-id="{{ p.plan_id }}"
+                data-name="{{ p.name }}" data-scope="{{ p.scope }}"
+                data-price="{{ p.price_cents }}" data-interval="{{ p.interval }}"
+                data-included-bytes="{{ p.included_bytes }}"
+                data-included-messages="{{ p.included_messages }}"
+                data-storage-cents="{{ p.storage_cents_per_mb }}"
+                data-message-cents="{{ p.message_cents_per_1000 }}">Edit</button>
+        <form method="POST" action="/billing/plans/{{ p.plan_id }}/active" class="inline">
+          <input type="hidden" name="active" value="{{ 0 if p.active else 1 }}">
+          <button type="submit" class="inline">{{ 'Deactivate' if p.active else 'Activate' }}</button>
+        </form>
+      </td>
+    </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
-{% else %}<p class="empty">No plans yet.</p>{% endif %}
+{% if not plans %}<p class="empty">No plans yet.</p>{% endif %}
 
-<form method="POST" action="/billing/plans">
-  <label for="pname">New plan name</label>
+<form method="POST" action="/billing/plans" class="stack">
+  <h2>New plan</h2>
+  <label for="pname">Name</label>
   <div class="field"><input type="text" id="pname" name="name" required></div>
   <label for="pscope">Scope</label>
   <div class="field"><select id="pscope" name="scope">
     <option value="account">account</option><option value="slave">slave</option></select></div>
   <label for="pprice">Price (cents)</label>
   <div class="field"><input type="text" id="pprice" name="price_cents" value="0"></div>
+  <label for="pinterval">Interval</label>
+  <div class="field"><select id="pinterval" name="interval">
+    <option value="month">month</option><option value="year">year</option></select></div>
   <button type="submit" class="btn-primary">Create plan</button>
 </form>
 
-<h2>Groups</h2>
-{% if groups %}
+{% else %}
+
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Name</th><th>Plan</th><th>Default</th></tr></thead>
+  <thead><tr><th>Group</th><th>Plan</th><th></th></tr></thead>
   <tbody>
     {% for gr in groups %}
-    <tr><td>{{ gr.name }}</td><td>{% if gr.plan_id %}<code>{{ gr.plan_id }}</code>{% else %}<span class="empty">none</span>{% endif %}</td><td>{{ "yes" if gr.is_default else "no" }}</td></tr>
+    <tr>
+      <td>{{ gr.name }}{% if gr.is_default %} <span class="chip">system</span>{% endif %}</td>
+      <td>
+        <form method="POST" action="/billing/groups/{{ gr.group_id }}/plan" class="inline">
+          <select name="plan_id">
+            <option value="">(no plan)</option>
+            {% for p in plans %}
+            <option value="{{ p.plan_id }}"{% if gr.plan_id == p.plan_id %} selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="inline">Attach</button>
+        </form>
+      </td>
+      <td>
+        {% if gr.is_default %}
+        <span class="empty">system (fixed)</span>
+        {% else %}
+        <button type="button" class="inline" data-rename-group data-id="{{ gr.group_id }}"
+                data-name="{{ gr.name }}">Rename</button>
+        <form method="POST" action="/billing/groups/{{ gr.group_id }}/delete" class="inline"
+              data-confirm="Remove group '{{ gr.name }}'? Accounts assigned to it fall back to the system group."
+              data-confirm-ok="Remove">
+          <button type="submit" class="btn-danger">Remove</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
-{% else %}<p class="empty">No groups yet.</p>{% endif %}
 
-<form method="POST" action="/billing/groups">
-  <label for="gname">New group name</label>
+<form method="POST" action="/billing/groups" class="stack">
+  <h2>New group</h2>
+  <label for="gname">Name</label>
   <div class="field"><input type="text" id="gname" name="name" required></div>
-  <label for="gplan">Plan ID (optional)</label>
-  <div class="field"><input type="text" id="gplan" name="plan_id"></div>
+  <label for="gplan">Plan</label>
+  <div class="field"><select id="gplan" name="plan_id">
+    <option value="">(no plan)</option>
+    {% for p in plans %}<option value="{{ p.plan_id }}">{{ p.name }}</option>{% endfor %}
+  </select></div>
   <button type="submit" class="btn-primary">Create group</button>
 </form>
+{% endif %}
 
 <h2>Add credit</h2>
-<form method="POST" action="/billing/credit">
+<form method="POST" action="/billing/credit" class="stack">
   <label for="atype">Account type</label>
   <div class="field"><select id="atype" name="account_type">
     <option value="account">account</option><option value="slave">slave</option></select></div>
@@ -64,4 +121,44 @@
   <div class="field"><input type="text" id="reason" name="reason" value="manual"></div>
   <button type="submit" class="btn-primary">Add credit</button>
 </form>
+
+<dialog id="edit-plan-dialog" class="confirm">
+  <form method="POST" action="">
+    <h2>Edit plan <span class="edit-plan-name empty"></span></h2>
+    <label for="ep-name">Name</label>
+    <div class="field"><input type="text" id="ep-name" name="name" required></div>
+    <label for="ep-scope">Scope</label>
+    <div class="field"><select id="ep-scope" name="scope">
+      <option value="account">account</option><option value="slave">slave</option></select></div>
+    <label for="ep-price">Price (cents)</label>
+    <div class="field"><input type="text" id="ep-price" name="price_cents"></div>
+    <label for="ep-interval">Interval</label>
+    <div class="field"><select id="ep-interval" name="interval">
+      <option value="month">month</option><option value="year">year</option></select></div>
+    <label for="ep-included-bytes">Included bytes</label>
+    <div class="field"><input type="text" id="ep-included-bytes" name="included_bytes"></div>
+    <label for="ep-included-messages">Included messages</label>
+    <div class="field"><input type="text" id="ep-included-messages" name="included_messages"></div>
+    <label for="ep-storage-cents">Storage cents / MB</label>
+    <div class="field"><input type="text" id="ep-storage-cents" name="storage_cents_per_mb"></div>
+    <label for="ep-message-cents">Message cents / 1000</label>
+    <div class="field"><input type="text" id="ep-message-cents" name="message_cents_per_1000"></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="rename-group-dialog" class="confirm">
+  <form method="POST" action="">
+    <h2>Rename group</h2>
+    <label for="rg-name">Name</label>
+    <div class="field"><input type="text" id="rg-name" name="name" required></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Rename</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
