@@ -38,7 +38,14 @@
     <code>~/.config/mdrender/push-credentials.json</code>.
   </li>
   <li>
-    Push files to a paired device by name:
+    List the devices you can send to — paired phones and LAN receivers:
+    <div class="copy-wrap">
+      <pre>mdrender-send --list --names</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
+  </li>
+  <li>
+    Push files to one of those devices by name:
     <div class="copy-wrap">
       <pre>mdrender-send --name "&lt;device-name&gt;" file.pdf</pre>
       <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
