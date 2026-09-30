@@ -7,13 +7,14 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Name</th><th>Client ID</th><th>Created</th><th></th></tr>
+    <tr><th>Name</th><th>Client ID</th><th>Account</th><th>Created</th><th></th></tr>
   </thead>
   <tbody>
     {% for c in clients %}
     <tr>
       <td>{{ c.name }}</td>
       <td><code>{{ c.client_id }}</code></td>
+      <td>{% if c.account_id %}<code>{{ c.account_id[:10] }}</code>{% else %}<span class="empty">admin</span>{% endif %}</td>
       <td>{{ c.created_at | dt }}</td>
       <td>
         <form method="POST" action="/clients/{{ c.client_id }}/revoke" class="inline"
@@ -27,36 +28,12 @@
   </tbody>
 </table>
 </div>
+<details class="disclosure">
+  <summary>Register a new client</summary>
+  {% include "_register_client.html" %}
+</details>
 {% else %}
 <p class="empty">No clients enrolled yet.</p>
+{% include "_register_client.html" %}
 {% endif %}
-
-<h2>Register a new client</h2>
-<ol>
-  <li>
-    On the machine that will push, run:
-    <div class="copy-wrap">
-      <pre>tools/localsend-send/localsend-send.py --enrol --server {{ server_url }}</pre>
-      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
-    </div>
-  </li>
-  <li>
-    It prints a verification URL. Open it in this signed-in browser and either
-    click <strong>Complete registration</strong>, or read the short one-time
-    code off the page and type it into the waiting terminal. Either way the tool
-    writes <code>~/.config/mdrender/push-credentials.json</code>.
-  </li>
-  <li>
-    Push files to a paired device by name:
-    <div class="copy-wrap">
-      <pre>tools/localsend-send/localsend-send.py --name "&lt;device-name&gt;" file.pdf</pre>
-      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
-    </div>
-    The curl wrapper works the same way:
-    <div class="copy-wrap">
-      <pre>tools/push-to-phone.sh --target "&lt;device-name&gt;" file.pdf</pre>
-      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
-    </div>
-  </li>
-</ol>
 {% endblock %}

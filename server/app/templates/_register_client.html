@@ -1,0 +1,47 @@
+{# How to install and enrol a CLI client. Expects `server_url` and `release`. #}
+{% set assets = release.assets if release else [] %}
+<h2 id="register-client">Register a new client</h2>
+<ol>
+  <li>
+    Install <code>mdrender-send</code> on the machine that will push.
+    {% if assets %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Platform</th><th>Download</th></tr></thead>
+      <tbody>
+        {% for a in assets %}
+        <tr>
+          <td>{{ a.platform }}</td>
+          <td><a href="{{ a.url }}">{{ a.name }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="lede">Download the package for your OS from the releases page:
+      <a href="{{ release.page }}" target="_blank" rel="noopener">{{ release.page }}</a>.</p>
+    {% endif %}
+    <p class="lede">Linux packages install the <code>mdrender-send</code> command
+      (run <code>mdrender-send --version</code> to check).</p>
+  </li>
+  <li>
+    On that machine, run:
+    <div class="copy-wrap">
+      <pre>mdrender-send --enrol --server {{ server_url }}</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
+  </li>
+  <li>
+    It prints a verification URL. Open it in this signed-in browser and complete
+    the registration. Credentials are written to
+    <code>~/.config/mdrender/push-credentials.json</code>.
+  </li>
+  <li>
+    Push files to a paired device by name:
+    <div class="copy-wrap">
+      <pre>mdrender-send --name "&lt;device-name&gt;" file.pdf</pre>
+      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
+    </div>
+  </li>
+</ol>

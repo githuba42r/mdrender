@@ -22,8 +22,8 @@ from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, encryption, events,
                         federation, federation_client, fcm as fcm_mod, geoip,
-                        identity_admin, oidc, pairing, push_store, settings,
-                        storage, trigger)
+                        identity_admin, oidc, pairing, push_store, releases,
+                        settings, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
                              hash_secret, issue_access_token, principal_of,
@@ -737,7 +737,8 @@ def create_app(config):
         return render_template(
             "account_clients.html",
             clients=[dict(r) for r in list_clients(g.db, account_id)],
-            server_url=config.PUSH_PUBLIC_URL)
+            server_url=config.PUSH_PUBLIC_URL,
+            release=releases.latest(config))
 
     @app.route("/account/clients/<client_id>/revoke", methods=["POST"])
     def account_client_revoke(client_id):
@@ -1346,7 +1347,8 @@ def create_app(config):
             return auth_error
         return render_template("clients.html",
                                clients=[dict(r) for r in list_clients(g.db)],
-                               server_url=config.PUSH_PUBLIC_URL)
+                               server_url=config.PUSH_PUBLIC_URL,
+                               release=releases.latest(config))
 
     @app.route("/clients/<client_id>/revoke", methods=["POST"])
     def clients_revoke(client_id):

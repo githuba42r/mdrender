@@ -61,6 +61,9 @@ DEFAULTS = {
     # Whether this master exposes federation at all (env gate). The admin
     # Settings page can then toggle accepting new slaves while this is on.
     "FEDERATION_ENABLED": True,
+    # GitHub releases for the mdrender-send CLI, surfaced on the Clients pages.
+    "RELEASE_REPO": "githuba42r/mdrender",
+    "RELEASES_URL": "https://github.com/githuba42r/mdrender/releases",
     # DB-IP Lite MMDB paths for local ASN/country lookups (D9).
     "GEOIP_ASN_DB": "",
     "GEOIP_COUNTRY_DB": "",

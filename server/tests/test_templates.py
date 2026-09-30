@@ -311,11 +311,13 @@ def test_clients_page_lists_enrolled_clients_and_shows_instructions(config, db_p
     # The revoke confirmation names the client it will revoke.
     assert b"Revoke client 'cli-laptop'?" in body
 
-    # Registration and pushing instructions, with this server's URL.
-    assert b"--enrol --server" in body
+    # Registration and pushing instructions use the installed command, with
+    # this server's URL, and are collapsed under a disclosure once a client
+    # exists.
+    assert b"mdrender-send --enrol --server" in body
     assert config.PUSH_PUBLIC_URL.encode() in body
-    assert b"--name" in body
-    assert b"push-to-phone.sh" in body
+    assert b'mdrender-send --name' in body
+    assert b"disclosure" in body
     # The browser "Register a new client" link is gone (it minted an enrolment
     # with no CLI to collect the credentials).
     assert b"/clients/new" not in body

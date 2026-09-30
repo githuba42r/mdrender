@@ -471,6 +471,23 @@ button.social:hover { border-color: var(--accent); }
 .admin-details[open] summary { margin-bottom: 0.9rem; }
 .inline-form { display: inline; }
 
+/* Collapsible "Register a new client" disclosure, button-styled summary. */
+.disclosure { margin-top: 1.4rem; }
+.disclosure > summary {
+  display: inline-block;
+  padding: 0.5rem 0.95rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.9rem;
+}
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure > summary:hover { border-color: var(--accent); }
+.disclosure[open] > summary { margin-bottom: 1rem; }
+
 /* ---- Click to copy ---- */
 
 .copy-wrap { position: relative; }

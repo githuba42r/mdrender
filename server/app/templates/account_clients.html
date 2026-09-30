@@ -27,23 +27,12 @@
   </tbody>
 </table>
 </div>
+<details class="disclosure">
+  <summary>Register a new client</summary>
+  {% include "_register_client.html" %}
+</details>
 {% else %}
 <p class="empty">No CLI clients enrolled yet.</p>
+{% include "_register_client.html" %}
 {% endif %}
-
-<h2>Register a new client</h2>
-<ol>
-  <li>
-    On the machine that will push, run:
-    <div class="copy-wrap">
-      <pre>tools/localsend-send/localsend-send.py --enrol --server {{ server_url }}</pre>
-      <button type="button" class="copy-btn" data-copy-sibling aria-label="Copy command">Copy</button>
-    </div>
-  </li>
-  <li>
-    It prints a verification URL. Open it in this signed-in browser and complete
-    the registration. The tool then writes
-    <code>~/.config/mdrender/push-credentials.json</code>.
-  </li>
-</ol>
 {% endblock %}

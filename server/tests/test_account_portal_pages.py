@@ -60,6 +60,9 @@ def test_clients_page_and_revoke(config, db_path):
         cid = store.create_client(conn, "laptop", "hash", account_id=account_id)
     page = c.get("/account/clients")
     assert page.status_code == 200 and b"laptop" in page.data
+    # With a client present, the register section is collapsed under a disclosure.
+    assert b"disclosure" in page.data and b"Register a new client" in page.data
+    assert b"mdrender-send --enrol" in page.data
 
     assert c.post(f"/account/clients/{cid}/revoke").status_code == 303
     with app.config["_db"].connect() as conn:
