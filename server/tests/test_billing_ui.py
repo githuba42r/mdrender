@@ -92,6 +92,10 @@ def test_groups_attach_plans_and_default_group_is_fixed(config, db_path):
     c.post("/billing/plans", data={"name": "Starter", "scope": "account"})
     c.post("/billing/groups", data={"name": "Beta"})
 
+    # The new-group control is a button opening a dialog.
+    groups_page = c.get("/billing?tab=groups").data
+    assert b"data-new-group" in groups_page and b'id="group-dialog"' in groups_page
+
     with app.config["_db"].connect() as conn:
         plan_id = billing.list_plans(conn)[0]["plan_id"]
         groups = {gr["name"]: gr for gr in billing.list_groups(conn)}

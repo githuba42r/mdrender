@@ -86,17 +86,9 @@
 </table>
 </div>
 
-<form method="POST" action="/billing/groups" class="stack">
-  <h2>New group</h2>
-  <label for="gname">Name</label>
-  <div class="field"><input type="text" id="gname" name="name" required></div>
-  <label for="gplan">Plan</label>
-  <div class="field"><select id="gplan" name="plan_id">
-    <option value="">(no plan)</option>
-    {% for p in plans %}<option value="{{ p.plan_id }}">{{ p.name }}</option>{% endfor %}
-  </select></div>
-  <button type="submit" class="btn-primary">Create group</button>
-</form>
+<p class="actions-end"><button type="button" class="btn-primary" data-new-group>
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>
+  New group</button></p>
 {% endif %}
 
 <dialog id="plan-dialog" class="confirm">
@@ -123,6 +115,23 @@
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
       <button type="submit" class="btn-primary">Save plan</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="group-dialog" class="confirm">
+  <form method="POST" action="/billing/groups">
+    <h2>New group</h2>
+    <label for="ng-name">Name</label>
+    <div class="field"><input type="text" id="ng-name" name="name" required></div>
+    <label for="ng-plan">Plan</label>
+    <div class="field"><select id="ng-plan" name="plan_id">
+      <option value="">(no plan)</option>
+      {% for p in plans %}<option value="{{ p.plan_id }}">{{ p.name }}</option>{% endfor %}
+    </select></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Create group</button>
     </div>
   </form>
 </dialog>

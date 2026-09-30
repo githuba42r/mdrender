@@ -232,6 +232,15 @@
       creditDialog.showModal();
       return;
     }
+    var newGroup = event.target.closest("[data-new-group]");
+    if (newGroup) {
+      var newGroupDialog = document.getElementById("group-dialog");
+      if (!newGroupDialog) return;
+      newGroupDialog.querySelector('[name="name"]').value = "";
+      newGroupDialog.querySelector('[name="plan_id"]').value = "";
+      newGroupDialog.showModal();
+      return;
+    }
     var renameGroup = event.target.closest("[data-rename-group]");
     if (renameGroup) {
       var groupDialog = document.getElementById("rename-group-dialog");
