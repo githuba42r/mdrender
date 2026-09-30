@@ -18,19 +18,19 @@
     <tr>
       <td>{{ p.name }}</td>
       <td>{{ 'server (host)' if p.scope == 'slave' else 'account' }}</td>
-      <td>{{ p.price_cents }} {{ p.currency }}</td>
+      <td>{{ p.price_cents | money }}</td>
       <td>{% if p.scope == 'account' %}{{ p.included_messages }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
-      <td>{% if p.scope == 'account' %}{{ p.message_cents_per_1000 }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
-      <td>{% if p.scope == 'account' %}{{ p.storage_cents_per_mb }} <span class="empty">(after {{ p.storage_grace_days }}d)</span>{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{% if p.scope == 'account' %}{{ p.message_cents_per_1000 | money }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{% if p.scope == 'account' %}{{ p.storage_cents_per_mb | money }} <span class="empty">(after {{ p.storage_grace_days }}d)</span>{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{% if p.max_messages_per_month %}{{ p.max_messages_per_month }}{% else %}<span class="empty">unlimited</span>{% endif %}</td>
       <td>{% if p.active %}<span class="chip acked">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
       <td>
         <button type="button" class="inline" data-edit-plan data-id="{{ p.plan_id }}"
                 data-name="{{ p.name }}" data-scope="{{ p.scope }}"
-                data-price="{{ p.price_cents }}"
+                data-price="{{ p.price_cents | dollars }}"
                 data-included-messages="{{ p.included_messages }}"
-                data-message-cents="{{ p.message_cents_per_1000 }}"
-                data-storage-cents="{{ p.storage_cents_per_mb }}"
+                data-message-cost="{{ p.message_cents_per_1000 | dollars }}"
+                data-storage-cost="{{ p.storage_cents_per_mb | dollars }}"
                 data-storage-grace="{{ p.storage_grace_days }}"
                 data-max-messages="{{ p.max_messages_per_month }}">Edit</button>
         <form method="POST" action="/billing/plans/{{ p.plan_id }}/active" class="inline">
@@ -104,9 +104,9 @@
       <option value="slave">server (host)</option></select></div>
     <div class="field-row">
       <span class="row-title">Monthly fee:</span>
-      <input type="text" name="price_cents" value="" required
-             aria-label="Monthly flat fee in cents">
-      <span class="unit">cents/month, up to</span>
+      <span class="unit">$</span>
+      <input type="text" name="price" value="" required aria-label="Monthly flat fee in dollars">
+      <span class="unit">/month, up to</span>
       <input type="text" name="max_messages_per_month" value="" required
              aria-label="Max messages per month (0 = unlimited)">
       <span class="unit">messages/month</span>
@@ -116,15 +116,17 @@
       <input type="text" name="included_messages" value="" required
              aria-label="Included messages">
       <span class="unit">messages included, then</span>
-      <input type="text" name="message_cents_per_1000" value="" required
-             aria-label="Cents per 1000 messages">
-      <span class="unit">cents per 1000 messages</span>
+      <span class="unit">$</span>
+      <input type="text" name="message_cost" value="" required
+             aria-label="Dollars per 1000 messages">
+      <span class="unit">per 1000 messages</span>
     </div>
     <div class="field-row plan-account-only">
       <span class="row-title">Storage fees:</span>
-      <input type="text" name="storage_cents_per_mb" value="" required
-             aria-label="Storage cost in cents per MB per month">
-      <span class="unit">cents/MB/month after</span>
+      <span class="unit">$</span>
+      <input type="text" name="storage_cost" value="" required
+             aria-label="Storage cost in dollars per MB per month">
+      <span class="unit">/MB/month after</span>
       <input type="text" name="storage_grace_days" value="" required
              aria-label="Storage grace period in days">
       <span class="unit">days grace</span>

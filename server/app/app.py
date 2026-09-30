@@ -123,6 +123,26 @@ def create_app(config):
         except (TypeError, ValueError, OverflowError, OSError):
             return "-"
 
+    @app.template_filter("money")
+    def _fmt_money(cents):
+        """Render a cent amount as dollars (no cents when the amount is whole)."""
+        try:
+            value = int(cents)
+        except (TypeError, ValueError):
+            return "$0"
+        if value % 100 == 0:
+            return f"${value // 100}"
+        return f"${value / 100:.2f}"
+
+    @app.template_filter("dollars")
+    def _fmt_dollars(cents):
+        """Render a cent amount as a plain dollar number (for form values)."""
+        try:
+            value = int(cents) / 100
+        except (TypeError, ValueError):
+            return "0"
+        return f"{value:g}"
+
     @app.template_filter("filesize")
     def _fmt_filesize(size):
         """Render a byte count as a short human-readable size."""
@@ -1292,6 +1312,13 @@ def create_app(config):
         except (TypeError, ValueError):
             return None
 
+    def _opt_dollars(value):
+        """Dollars from the form -> whole cents (None if not a number)."""
+        try:
+            return int(round(float(value) * 100))
+        except (TypeError, ValueError):
+            return None
+
     @app.route("/billing", methods=["GET"])
     def billing_page():
         auth_error = require_page_session()
@@ -1317,11 +1344,11 @@ def create_app(config):
         if name and scope in (billing.SCOPE_SLAVE, billing.SCOPE_ACCOUNT):
             billing.create_plan(
                 g.db, name, scope,
-                price_cents=_opt_int(request.form.get("price_cents")) or 0,
+                price_cents=_opt_dollars(request.form.get("price")) or 0,
                 interval=request.form.get("interval", "month"),
                 included_messages=_opt_int(request.form.get("included_messages")) or 0,
-                message_cents_per_1000=_opt_int(request.form.get("message_cents_per_1000")) or 0,
-                storage_cents_per_mb=_opt_int(request.form.get("storage_cents_per_mb")) or 0,
+                message_cents_per_1000=_opt_dollars(request.form.get("message_cost")) or 0,
+                storage_cents_per_mb=_opt_dollars(request.form.get("storage_cost")) or 0,
                 storage_grace_days=_opt_int(request.form.get("storage_grace_days")) or 0,
                 max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")) or 0)
         return redirect("/billing?tab=plans", 303)
@@ -1335,12 +1362,12 @@ def create_app(config):
             g.db, plan_id,
             name=(request.form.get("name") or "").strip() or None,
             scope=request.form.get("scope") or None,
-            price_cents=_opt_int(request.form.get("price_cents")),
+            price_cents=_opt_dollars(request.form.get("price")),
             interval=request.form.get("interval") or None,
             included_bytes=_opt_int(request.form.get("included_bytes")),
             included_messages=_opt_int(request.form.get("included_messages")),
-            storage_cents_per_mb=_opt_int(request.form.get("storage_cents_per_mb")),
-            message_cents_per_1000=_opt_int(request.form.get("message_cents_per_1000")),
+            storage_cents_per_mb=_opt_dollars(request.form.get("storage_cost")),
+            message_cents_per_1000=_opt_dollars(request.form.get("message_cost")),
             max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")),
             storage_grace_days=_opt_int(request.form.get("storage_grace_days")),
         )

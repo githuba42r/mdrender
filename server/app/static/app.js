@@ -199,8 +199,8 @@
       newPlanDialog.querySelector(".plan-title").textContent = "New plan";
       newPlanDialog.querySelector('[name="name"]').value = "";
       newPlanDialog.querySelector('[name="scope"]').value = "account";
-      ["price_cents", "included_messages", "message_cents_per_1000",
-       "storage_cents_per_mb", "storage_grace_days", "max_messages_per_month"
+      ["price", "included_messages", "message_cost",
+       "storage_cost", "storage_grace_days", "max_messages_per_month"
       ].forEach(function (f) {
         newPlanDialog.querySelector('[name="' + f + '"]').value = "";
       });
@@ -219,10 +219,10 @@
       planDialog.querySelector(".plan-title").textContent = "Edit plan";
       planDialog.querySelector('[name="name"]').value = editPlan.getAttribute("data-name") || "";
       planDialog.querySelector('[name="scope"]').value = editPlan.getAttribute("data-scope") || "account";
-      planDialog.querySelector('[name="price_cents"]').value = editPlan.getAttribute("data-price") || "0";
+      planDialog.querySelector('[name="price"]').value = editPlan.getAttribute("data-price") || "0";
       planDialog.querySelector('[name="included_messages"]').value = editPlan.getAttribute("data-included-messages") || "0";
-      planDialog.querySelector('[name="message_cents_per_1000"]').value = editPlan.getAttribute("data-message-cents") || "0";
-      planDialog.querySelector('[name="storage_cents_per_mb"]').value = editPlan.getAttribute("data-storage-cents") || "0";
+      planDialog.querySelector('[name="message_cost"]').value = editPlan.getAttribute("data-message-cost") || "0";
+      planDialog.querySelector('[name="storage_cost"]').value = editPlan.getAttribute("data-storage-cost") || "0";
       planDialog.querySelector('[name="storage_grace_days"]').value = editPlan.getAttribute("data-storage-grace") || "0";
       planDialog.querySelector('[name="max_messages_per_month"]').value = editPlan.getAttribute("data-max-messages") || "0";
       planDialog._applyScope && planDialog._applyScope();
