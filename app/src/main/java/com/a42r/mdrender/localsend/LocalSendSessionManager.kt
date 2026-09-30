@@ -305,8 +305,9 @@ class LocalSendSessionManager @Inject constructor(
     }
 
     companion object {
+        /** Root folder incoming transfers land in, shared by LocalSend and cloud push. */
+        const val FOLDER_NAME = "LocalSend"
         private const val TAG = "LocalSendSession"
-        private const val FOLDER_NAME = "LocalSend"
         // Long enough to notice the notification, unlock, and tap Accept
         // without the app being open.
         private const val DECISION_TIMEOUT_MS = 3 * 60_000L

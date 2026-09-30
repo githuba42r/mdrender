@@ -577,3 +577,24 @@ def test_push_to_server_multipart(tmp_path, cloud_server):
     assert b'filename="two.bin"' in body
     assert b"\x00\x01\x02binary" in body   # file 2 bytes
     assert body.endswith(("--" + boundary + "--").encode())  # closing delimiter
+
+
+def test_push_to_server_sends_folder_and_conflict(tmp_path, cloud_server):
+    """The cloud path carries the same folder/conflict options as a direct send."""
+    server_url, state = cloud_server
+    f1 = tmp_path / "one.txt"
+    f1.write_bytes(b"x")
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text(json.dumps({
+        "server_url": server_url,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+    }))
+
+    rc = ls.push_to_server(str(creds_path), "Clever Juniper", [str(f1)],
+                           folder="Docs", conflict="replace")
+
+    assert rc == 0
+    body = state["push_body"]
+    assert b'name="target_folder"' in body and b"Docs" in body
+    assert b'name="conflict"' in body and b"replace" in body

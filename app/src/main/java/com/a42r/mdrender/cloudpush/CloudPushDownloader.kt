@@ -171,6 +171,8 @@ class CloudPushDownloader @Inject constructor(
     }
 
     companion object {
-        const val ROOT_FOLDER = "Cloud Push"
+        // Cloud push is the same receive experience as LocalSend, so files land
+        // in the same root folder rather than a separate "Cloud Push" tree.
+        const val ROOT_FOLDER = com.a42r.mdrender.localsend.LocalSendSessionManager.FOLDER_NAME
     }
 }

@@ -426,13 +426,17 @@ def resolve_name(name, timeout=3.0):
     return discover_lan([name], timeout=timeout).get(name)
 
 
-def push_to_server(creds_path, target_device, paths):
+def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=None):
     """Push files to a registered device via the cloud-push server.
 
     Fetches a fresh OAuth2 token from *creds_path* (C2's get_access_token),
     then POSTs a multipart/form-data body to {server_url}/api/push carrying a
     target_device text part and one file part per path. Prints per-file results
     and a summary; returns 0 on success (files_sent >= 1), 1 on any failure.
+
+    *folder* and *conflict* mirror the LocalSend "mds" options so the cloud path
+    behaves like a direct send: the same destination folder and the same
+    collision behaviour.
     """
     token = get_access_token(creds_path)
     with open(creds_path) as fh:
@@ -440,12 +444,21 @@ def push_to_server(creds_path, target_device, paths):
 
     boundary = f"----mdrender{uuid.uuid4().hex}"
     parts = []
-    # Text part: the target device name.
-    parts.append(f"--{boundary}".encode())
-    parts.append(b'Content-Disposition: form-data; name="target_device"')
-    parts.append(b"Content-Type: text/plain")
-    parts.append(b"")
-    parts.append(target_device.encode())
+
+    def text_part(field, value):
+        parts.append(f"--{boundary}".encode())
+        parts.append(f'Content-Disposition: form-data; name="{field}"'.encode())
+        parts.append(b"Content-Type: text/plain")
+        parts.append(b"")
+        parts.append(value.encode())
+
+    # Text part: the target device name, plus the destination folder and
+    # conflict strategy when set (the server reads target_folder/conflict).
+    text_part("target_device", target_device)
+    if folder:
+        text_part("target_folder", folder)
+    if conflict:
+        text_part("conflict", conflict)
     # One file part per path.
     for path in paths:
         name = os.path.basename(path)
@@ -770,7 +783,8 @@ def main(argv=None):
             if not os.path.exists(creds):
                 print("device not found on LAN and no push credentials", file=sys.stderr)
                 return 3
-            return push_to_server(creds, args.name, paths)
+            return push_to_server(creds, args.name, paths,
+                                  folder=args.folder, conflict=args.conflict)
 
     scheme = "http" if args.http else "https"
     base = f"{scheme}://{args.host}:{args.port}{API}"
