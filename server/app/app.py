@@ -328,6 +328,22 @@ def create_app(config):
             except Exception:  # noqa: BLE001 - the worker will resync
                 pass
 
+    def _notify_unpaired(device) -> None:
+        """Best-effort FCM nudge telling a device it has been unpaired.
+
+        Sent just before the row is removed so the app clears its stored pairing
+        without waiting for the next settings open. A push failure must never
+        stop the removal, so this never raises.
+        """
+        fcm = app.config["_fcm"]
+        token = device["fcm_token"] if "fcm_token" in device.keys() else None
+        if fcm is None or not token:
+            return
+        try:
+            fcm.send({"type": "unpaired"}, token, high_priority=True)
+        except Exception:  # noqa: BLE001 - removal must not depend on the push
+            pass
+
     def _ring_doorbell(device, push_row) -> bool:
         """Tell a device a push is waiting.
 
@@ -640,9 +656,12 @@ def create_app(config):
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
-        return render_template(
-            "account_devices.html",
-            devices=[dict(r) for r in list_account_devices(g.db, account_id)])
+        devices = [dict(r) for r in list_account_devices(g.db, account_id)]
+        # Arriving from the pairing page: surface the device just added (newest
+        # by registration) in a success banner.
+        just_paired = devices[-1] if (request.args.get("paired") and devices) else None
+        return render_template("account_devices.html", devices=devices,
+                               just_paired=just_paired)
 
     @app.route("/account/devices/<device_secret>/approve", methods=["POST"])
     def account_device_approve(device_secret):
@@ -664,6 +683,7 @@ def create_app(config):
         device = get_device_by_secret(g.db, device_secret)
         if device is None or device["account_id"] != _principal()["id"]:
             return redirect("/account/devices", 303)
+        _notify_unpaired(dict(device))
         delete_device(g.db, device_secret)
         return redirect("/account/devices", 303)
 
@@ -1303,6 +1323,9 @@ def create_app(config):
         auth_error = require_form_session("/devices")
         if auth_error:
             return auth_error
+        device = get_device_by_secret(g.db, device_secret)
+        if device is not None:
+            _notify_unpaired(dict(device))
         delete_device(g.db, device_secret)
         return redirect("/devices", 303)
 
@@ -1311,6 +1334,9 @@ def create_app(config):
         auth_error = require_form_session("/devices")
         if auth_error:
             return auth_error
+        device = get_device_by_secret(g.db, device_secret)
+        if device is not None:
+            _notify_unpaired(dict(device))
         delete_device(g.db, device_secret)
         return redirect("/devices", 303)
 
@@ -1685,6 +1711,7 @@ def create_app(config):
                 push_key_b64=data.get("push_key", ""),
                 pairing_token=data.get("pairing_token"),
                 sig_b64=data.get("sig"),
+                device_model=data.get("device_model"),
             )
             if device_auth is None:
                 return jsonify({"error": "registration failed"}), 400
@@ -1701,8 +1728,9 @@ def create_app(config):
             if device is not None and device["account_id"] and device["approved_at"]:
                 _publish_device(dict(device))
             # Tell the pairing page (SSE) that its QR was scanned and paired.
-            events.publish(data.get("pairing_token", ""), "paired",
-                           {"device_name": data.get("device_name") or ""})
+            events.publish(data.get("pairing_token", ""), "paired", {
+                "device_name": data.get("device_name") or "",
+                "device_model": data.get("device_model") or ""})
             # The device needs this key to verify the manifest signature, and it
             # only ever learns it from here, so hand it over in the same response
             # that completes pairing. The request arrived over the TLS connection

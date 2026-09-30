@@ -20,8 +20,20 @@ class PushFcmService : FirebaseMessagingService() {
     @Inject lateinit var handler: CloudPushMessageHandler
     @Inject lateinit var client: PushClient
     @Inject lateinit var config: PushServerConfig
+    @Inject lateinit var keyStore: CloudPushKeyStore
+    @Inject lateinit var manager: CloudPushManager
 
     override fun onMessageReceived(message: RemoteMessage) {
+        // The server removes a device by sending this: forget the pairing here so
+        // the app stops acting on a server that no longer knows it.
+        if (message.data["type"] == "unpaired") {
+            Log.d(TAG, "CloudPush: unpaired by server; clearing local pairing")
+            config.clear()
+            keyStore.deleteKeyPair()
+            keyStore.deleteContentKeyPair()
+            manager.setReRegistrationNeeded(false)
+            return
+        }
         val ct = message.data["p"] ?: return
         val iv = message.data["i"] ?: return
         // EnhancedIntentService delivers on its own worker executor and keeps

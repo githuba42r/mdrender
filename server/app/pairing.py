@@ -78,7 +78,7 @@ def registration_proof_input(device_secret, device_name, fcm_token, public_key_b
 
 
 def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b64,
-                    push_key_b64, pairing_token, sig_b64):
+                    push_key_b64, pairing_token, sig_b64, device_model=None):
     if not push_key_b64:
         return None, None
     token_row = conn.execute("SELECT account_id FROM pairing_tokens WHERE token = ?",
@@ -109,10 +109,10 @@ def register_device(conn, *, device_secret, device_name, fcm_token, public_key_b
     approved_at = now if account_id else None
     conn.execute(
         "INSERT OR REPLACE INTO devices (device_secret, device_auth, device_name, fcm_token,"
-        " public_key, push_key, registered_at, last_seen, account_id, approved_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " public_key, push_key, registered_at, last_seen, account_id, approved_at, device_model)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (device_secret, device_auth, device_name, fcm_token, public_key_b64,
-         push_key_b64, now, now, account_id, approved_at),
+         push_key_b64, now, now, account_id, approved_at, device_model),
     )
     conn.commit()
     return device_auth, displaced

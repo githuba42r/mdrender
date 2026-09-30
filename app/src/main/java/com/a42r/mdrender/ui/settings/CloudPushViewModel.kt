@@ -98,6 +98,7 @@ class CloudPushViewModel @Inject constructor(
                     pairingToken = info.token,
                     contentPublicKeyB64 = contentPub,
                     contentProofB64 = contentProof,
+                    deviceModel = android.os.Build.MODEL,
                 ).getOrThrow()
                 val serverPem = pairing.pemFromBase64(registered.serverPublicKeyB64)
                     ?: throw IllegalStateException("server sent an unreadable public key")
@@ -117,10 +118,16 @@ class CloudPushViewModel @Inject constructor(
         }
     }
 
+    /** Manual check from the settings screen. */
     fun checkRegistration() {
         viewModelScope.launch {
-            val known = runCatching { client.checkRegistration(config) }.getOrDefault(false)
-            _status.update { it.copy(registrationKnown = known) }
+            when (client.verifyRegistration(config)) {
+                true -> _status.update { it.copy(registrationKnown = true) }
+                false -> clearLocalPairing()
+                null -> _status.update {
+                    it.copy(message = "Could not reach the server to check registration.")
+                }
+            }
         }
     }
 
@@ -135,21 +142,24 @@ class CloudPushViewModel @Inject constructor(
         viewModelScope.launch {
             when (client.verifyRegistration(config)) {
                 true -> _status.update { it.copy(registrationKnown = true) }
-                false -> {
-                    config.clear()
-                    keyStore.deleteKeyPair()
-                    keyStore.deleteContentKeyPair()
-                    manager.setReRegistrationNeeded(false)
-                    _status.update {
-                        it.copy(
-                            message = "This server no longer recognises this device. " +
-                                "Pairing cleared — scan a new pairing code.",
-                            registrationKnown = false,
-                        )
-                    }
-                }
+                false -> clearLocalPairing()
                 null -> Unit // unreachable: keep the pairing as-is
             }
+        }
+    }
+
+    /** Forget the pairing locally because the server no longer knows the device. */
+    private fun clearLocalPairing() {
+        config.clear()
+        keyStore.deleteKeyPair()
+        keyStore.deleteContentKeyPair()
+        manager.setReRegistrationNeeded(false)
+        _status.update {
+            it.copy(
+                message = "This server no longer recognises this device. " +
+                    "Pairing cleared — scan a new pairing code.",
+                registrationKnown = false,
+            )
         }
     }
 

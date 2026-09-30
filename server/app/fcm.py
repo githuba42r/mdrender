@@ -59,10 +59,14 @@ class FcmClient:
         self._token_expiry = now + 3600
         return self._token
 
-    def send(self, data_message: dict, fcm_token: str) -> None:
+    def send(self, data_message: dict, fcm_token: str, *,
+             high_priority: bool = False) -> None:
         access_token = self._get_access_token()
         url = f"{FCM_ENDPOINT}/projects/{self.sa['project_id']}/messages:send"
-        body = json.dumps({"message": {"token": fcm_token, "data": data_message}}).encode()
+        message = {"token": fcm_token, "data": data_message}
+        if high_priority:
+            message["android"] = {"priority": "high"}
+        body = json.dumps({"message": message}).encode()
         req = urllib.request.Request(
             url, data=body, method="POST",
             headers={"Authorization": f"Bearer {access_token}",

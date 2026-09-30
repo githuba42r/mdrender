@@ -5,20 +5,35 @@
 <p class="lede">Scan this code with the MDRender app. The device registers to your account automatically.</p>
 <p>Server URL: <code>{{ server_url }}</code></p>
 <div class="qr">{{ qr_svg | safe }}</div>
+<div id="pair-success" class="callout success" hidden>
+  <svg class="callout-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 14.2-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4-7 7z"/>
+  </svg>
+  <span id="pair-success-text">Device paired successfully.</span>
+</div>
 <p id="pair-status" class="login-msg">Waiting for the device to scan&hellip;</p>
 <p class="lede"><a href="/account/devices">Go to my devices</a></p>
 <script>
   (function () {
     const token = {{ pairing_token | tojson }};
     const status = document.getElementById("pair-status");
+    const success = document.getElementById("pair-success");
+    const successText = document.getElementById("pair-success-text");
     const source = new EventSource(
       "/account/pair/events?token=" + encodeURIComponent(token));
     source.addEventListener("paired", function (evt) {
-      let name = "";
-      try { name = (JSON.parse(evt.data || "{}").device_name) || ""; } catch (e) {}
-      status.textContent = (name ? name + " paired successfully." : "Device paired successfully.");
+      let name = "", model = "";
+      try {
+        const d = JSON.parse(evt.data || "{}");
+        name = d.device_name || "";
+        model = d.device_model || "";
+      } catch (e) {}
+      const who = name ? name + (model ? " (" + model + ")" : "") : "Device";
+      successText.textContent = who + " paired successfully.";
+      success.hidden = false;
+      status.hidden = true;
       source.close();
-      setTimeout(function () { window.location = "/account/devices?paired=1"; }, 900);
+      setTimeout(function () { window.location = "/account/devices?paired=1"; }, 1200);
     });
     source.onerror = function () { /* EventSource retries on its own */ };
   })();

@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS devices (
   device_secret TEXT PRIMARY KEY,
   device_auth TEXT NOT NULL,
   device_name TEXT NOT NULL UNIQUE,
+  device_model TEXT,
   fcm_token TEXT,
   public_key TEXT NOT NULL,
   push_key TEXT NOT NULL,
@@ -269,6 +270,7 @@ class Database:
                 "approved_at": "INTEGER",
                 "content_pubkey": "TEXT",
                 "content_proof": "TEXT",
+                "device_model": "TEXT",
             },
             "pushes": {
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",

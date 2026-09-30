@@ -180,6 +180,25 @@ h2 {
 
 p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
 
+/* ---- Callouts ---- */
+
+.callout {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  margin: 0 0 1.4rem;
+}
+.callout-icon { flex: none; color: var(--muted); }
+.callout.success {
+  background: rgba(46, 160, 67, 0.15);
+  border-color: rgba(46, 160, 67, 0.55);
+  color: #56d364;
+}
+.callout.success .callout-icon { color: #3fb950; }
+
 /* ---- Stat cards ---- */
 
 .stats {

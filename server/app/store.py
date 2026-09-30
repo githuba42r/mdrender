@@ -162,8 +162,9 @@ def list_devices(conn):
 
 def list_account_devices(conn, account_id):
     return conn.execute(
-        "SELECT device_secret, device_name, fcm_token, registered_at, last_seen, approved_at"
-        " FROM devices WHERE account_id = ? ORDER BY registered_at", (account_id,)).fetchall()
+        "SELECT device_secret, device_name, device_model, fcm_token, registered_at,"
+        " last_seen, approved_at FROM devices WHERE account_id = ?"
+        " ORDER BY registered_at", (account_id,)).fetchall()
 
 
 def sweep_stale_devices(conn, ttl_days: int) -> list[str]:

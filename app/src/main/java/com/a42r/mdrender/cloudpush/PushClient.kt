@@ -58,6 +58,7 @@ class PushClient @Inject constructor() {
         pairingToken: String,
         contentPublicKeyB64: String? = null,
         contentProofB64: String? = null,
+        deviceModel: String? = null,
     ): Result<Registered> = call {
         val publicKeyB64 = Base64.getEncoder().encodeToString(publicKeySpkiDer)
         val pushKeyB64 = config.pushKeyB64
@@ -74,6 +75,11 @@ class PushClient @Inject constructor() {
             put("push_key", pushKeyB64)
             put("pairing_token", pairingToken)
             put("sig", crypto.signRegistration(digest))
+            // Display-only (not part of the signed proof): shown on the account's
+            // devices page so the user can tell phones apart.
+            if (!deviceModel.isNullOrBlank()) {
+                put("device_model", deviceModel)
+            }
             // Server-enforced encryption (design §7b): register the content key
             // and the pairing-key proof so clients can seal to it (design §7c).
             if (contentPublicKeyB64 != null) {

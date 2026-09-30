@@ -2,18 +2,26 @@
 {% block title %}Devices &middot; My account{% endblock %}
 {% block content %}
 <h1>Devices</h1>
-{% if request.args.get('paired') %}<p class="login-msg">Device paired successfully.</p>{% endif %}
+{% if just_paired %}
+<div class="callout success">
+  <svg class="callout-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 14.2-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4-7 7z"/>
+  </svg>
+  <span>Device paired successfully: <strong>{{ just_paired.device_name }}</strong>{% if just_paired.device_model %} <span class="empty">({{ just_paired.device_model }})</span>{% endif %}</span>
+</div>
+{% endif %}
 <p class="lede">Phones paired to your account. Removing one makes it re-pair before it can receive pushes again. <a href="/account/pair">Pair a new device</a>.</p>
 {% if devices %}
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Name</th><th>Registered</th><th>Last seen</th><th>Status</th><th></th></tr>
+    <tr><th>Name</th><th>Model</th><th>Registered</th><th>Last seen</th><th>Status</th><th></th></tr>
   </thead>
   <tbody>
     {% for d in devices %}
     <tr>
       <td>{{ d.device_name }}</td>
+      <td>{% if d.device_model %}{{ d.device_model }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{{ d.registered_at | dt }}</td>
       <td>{{ d.last_seen | dt }}</td>
       <td>{% if d.approved_at %}<span class="chip acked">approved</span>{% else %}<span class="chip pending">pending approval</span>{% endif %}</td>

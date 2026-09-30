@@ -22,13 +22,14 @@ def _account(app, email="user@example.com"):
         return c, accounts.get_account_by_email(conn, email)["account_id"]
 
 
-def _seed_device(app, account_id, secret="dev-1", name="Clever Juniper", approved=1):
+def _seed_device(app, account_id, secret="dev-1", name="Clever Juniper", approved=1,
+                 model=None):
     with app.config["_db"].connect() as conn:
         conn.execute(
-            "INSERT INTO devices (device_secret, device_auth, device_name, fcm_token,"
-            " public_key, push_key, registered_at, last_seen, account_id, approved_at)"
-            " VALUES (?, 'auth', ?, 'tok', 'PUB', 'PUSH', 1, 1, ?, ?)",
-            (secret, name, account_id, approved))
+            "INSERT INTO devices (device_secret, device_auth, device_name, device_model,"
+            " fcm_token, public_key, push_key, registered_at, last_seen, account_id,"
+            " approved_at) VALUES (?, 'auth', ?, ?, 'tok', 'PUB', 'PUSH', 1, 1, ?, ?)",
+            (secret, name, model, account_id, approved))
         conn.commit()
 
 
@@ -113,6 +114,36 @@ def test_pushes_and_pending_are_account_scoped(config, db_path):
     assert c.post("/account/pending/push-1/delete").status_code == 303
     with app.config["_db"].connect() as conn:
         assert push_store.get_push_by_id(conn, "push-1") is None
+
+
+class _FakeFcm:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, data, token, **kwargs):
+        self.sent.append((data, token, kwargs))
+
+
+def test_removing_a_device_notifies_the_phone(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_device(app, account_id)  # fcm_token = 'tok'
+    fake = _FakeFcm()
+    app.config["_fcm"] = fake
+
+    assert c.post("/account/devices/dev-1/revoke").status_code == 303
+    assert fake.sent, "expected an FCM unpaired nudge"
+    data, token, kwargs = fake.sent[0]
+    assert data == {"type": "unpaired"} and token == "tok" and kwargs["high_priority"]
+
+
+def test_paired_success_banner_shows_name_and_model(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+    _seed_device(app, account_id, name="Clever Juniper", model="SM-S931B")
+    page = c.get("/account/devices?paired=1").data
+    assert b"paired successfully" in page
+    assert b"Clever Juniper" in page and b"SM-S931B" in page
 
 
 def test_dashboard_shows_stats(config, db_path):
