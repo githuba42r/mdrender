@@ -58,10 +58,16 @@ function friendly(e) {
 async function exchange(user) {
   try {
     const idToken = await user.getIdToken();
+    const params = new URLSearchParams(window.location.search);
+    const affiliate = (
+      (document.getElementById("affiliate-code")?.value || "")
+      || params.get("affiliate") || params.get("affiliate_code") || "").trim();
+    const payload = { id_token: idToken };
+    if (affiliate) payload.affiliate_code = affiliate;
     const resp = await fetch("/auth/oidc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id_token: idToken }),
+      body: JSON.stringify(payload),
     });
     if (resp.ok) {
       const body = await resp.json().catch(() => ({}));

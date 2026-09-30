@@ -108,28 +108,41 @@ def delete_group(conn, group_id) -> bool:
     return cur.rowcount > 0
 
 
-def create_group(conn, name, *, plan_id=None, trial_days=0, next_group_id=None) -> str:
-    """A group can be a trial: members are moved to *next_group_id* after
-    *trial_days* days."""
+def create_group(conn, name, *, plan_id=None, trial_days=0, next_group_id=None,
+                 affiliate_code=None, affiliate_enabled=0) -> str:
+    """A group can be a trial (members move to *next_group_id* after
+    *trial_days*) and/or joinable by an affiliate code."""
     group_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO billing_groups (group_id, name, plan_id, is_default, trial_days,"
-        " next_group_id, created_at) VALUES (?, ?, ?, 0, ?, ?, ?)",
+        " next_group_id, affiliate_code, affiliate_enabled, created_at)"
+        " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)",
         (group_id, name, plan_id, int(trial_days or 0), next_group_id or None,
-         int(time.time())))
+         (affiliate_code or None), 1 if affiliate_enabled else 0, int(time.time())))
     conn.commit()
     return group_id
 
 
 def update_group(conn, group_id, *, name=None, plan_id=None, trial_days=None,
-                 next_group_id=None) -> bool:
-    """Update a non-default group (name, plan, trial). The default is fixed."""
+                 next_group_id=None, affiliate_code=None, affiliate_enabled=0) -> bool:
+    """Update a non-default group (name, plan, trial, affiliate). The default is fixed."""
     cur = conn.execute(
         "UPDATE billing_groups SET name = COALESCE(?, name), plan_id = ?,"
-        " trial_days = ?, next_group_id = ? WHERE group_id = ? AND is_default = 0",
-        (name, plan_id or None, int(trial_days or 0), next_group_id or None, group_id))
+        " trial_days = ?, next_group_id = ?, affiliate_code = ?, affiliate_enabled = ?"
+        " WHERE group_id = ? AND is_default = 0",
+        (name, plan_id or None, int(trial_days or 0), next_group_id or None,
+         (affiliate_code or None), 1 if affiliate_enabled else 0, group_id))
     conn.commit()
     return cur.rowcount > 0
+
+
+def group_by_affiliate(conn, code):
+    """The group whose enabled affiliate code matches *code* (case-insensitive)."""
+    if not code:
+        return None
+    return conn.execute(
+        "SELECT * FROM billing_groups WHERE affiliate_enabled = 1"
+        " AND lower(affiliate_code) = lower(?)", (code.strip(),)).fetchone()
 
 
 def list_groups(conn):

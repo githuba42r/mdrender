@@ -220,6 +220,8 @@ CREATE TABLE IF NOT EXISTS billing_groups (
   is_default INTEGER NOT NULL DEFAULT 0,
   trial_days INTEGER NOT NULL DEFAULT 0,
   next_group_id TEXT,
+  affiliate_code TEXT,
+  affiliate_enabled INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS account_groups (
@@ -312,6 +314,8 @@ class Database:
             "billing_groups": {
                 "trial_days": "INTEGER NOT NULL DEFAULT 0",
                 "next_group_id": "TEXT",
+                "affiliate_code": "TEXT",
+                "affiliate_enabled": "INTEGER NOT NULL DEFAULT 0",
             },
             "account_groups": {
                 "assigned_at": "INTEGER",

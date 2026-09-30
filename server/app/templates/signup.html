@@ -12,6 +12,8 @@
   <p class="lede">Signup is currently closed. Please contact the operator.</p>
   {% elif firebase %}
   <p class="lede">Sign up with an email or phone link, or a social account.</p>
+  <label for="affiliate-code">Affiliate code (optional)</label>
+  <div class="field"><input type="text" id="affiliate-code" value="{{ affiliate }}"></div>
   {% set auth_action = 'signup' %}{% set auth_next = next %}
   {% include "_firebase_auth.html" %}
   <p class="login-foot">Already registered? <a href="/account/login{% if next %}?next={{ next | urlencode }}{% endif %}">Sign in</a>.</p>
@@ -24,6 +26,8 @@
     <div class="field"><input type="text" id="email" name="email" autocomplete="email" autofocus required></div>
     <label for="password">Password</label>
     <div class="field"><input type="password" id="password" name="password" autocomplete="new-password" required></div>
+    <label for="affiliate-code">Affiliate code (optional)</label>
+    <div class="field"><input type="text" id="affiliate-code" name="affiliate_code" value="{{ affiliate }}"></div>
     <button type="submit" class="btn-primary">Create account</button>
   </form>
   {% endif %}

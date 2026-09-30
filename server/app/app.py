@@ -613,9 +613,15 @@ def create_app(config):
         purge_expired_sessions(g.db)
         return _local_login_cookie(make_response(redirect(_return_to("/pushes"))))
 
-    def _assign_signup_group(account_id):
-        """Place a newly created account in the operator's signup group, if set."""
-        group_id = settings.signup_group_id(g.db)
+    def _assign_signup_group(account_id, affiliate_code=None):
+        """Place a new account in a group.
+
+        An enabled affiliate code wins; otherwise the operator's signup group
+        applies. With neither, the account has no group and falls back to the
+        system group.
+        """
+        group = billing.group_by_affiliate(g.db, affiliate_code)
+        group_id = group["group_id"] if group else settings.signup_group_id(g.db)
         if group_id:
             billing.assign_account_group(g.db, billing.SCOPE_ACCOUNT,
                                          account_id, group_id)
@@ -627,7 +633,10 @@ def create_app(config):
         if not settings.signup_enabled(g.db):
             return render_template("signup.html", closed=True, next=nxt), 403
         if request.method == "GET":
-            return render_template("signup.html", next=nxt)
+            return render_template(
+                "signup.html", next=nxt,
+                affiliate=(request.args.get("affiliate")
+                           or request.args.get("affiliate_code") or ""))
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password", "")
         valid_email = "@" in email and "." in email.rsplit("@", 1)[-1]
@@ -639,7 +648,10 @@ def create_app(config):
             return render_template("signup.html",
                                    error="That email is already registered."), 400
         account_id = accounts.create_account(g.db, email, password)
-        _assign_signup_group(account_id)
+        affiliate = (request.form.get("affiliate_code")
+                     or request.args.get("affiliate")
+                     or request.args.get("affiliate_code") or "").strip()
+        _assign_signup_group(account_id, affiliate)
         return render_template("signup.html", done=True)
 
     @app.route("/account/login", methods=["GET", "POST"])
@@ -1424,7 +1436,9 @@ def create_app(config):
                 g.db, name,
                 plan_id=request.form.get("plan_id") or None,
                 trial_days=_opt_int(request.form.get("trial_days")) or 0,
-                next_group_id=request.form.get("next_group_id") or None)
+                next_group_id=request.form.get("next_group_id") or None,
+                affiliate_code=(request.form.get("affiliate_code") or "").strip() or None,
+                affiliate_enabled=1 if request.form.get("affiliate_enabled") else 0)
         return redirect("/billing?tab=groups", 303)
 
     @app.route("/billing/groups/<group_id>/update", methods=["POST"])
@@ -1437,7 +1451,9 @@ def create_app(config):
             name=(request.form.get("name") or "").strip() or None,
             plan_id=request.form.get("plan_id") or None,
             trial_days=_opt_int(request.form.get("trial_days")) or 0,
-            next_group_id=request.form.get("next_group_id") or None)
+            next_group_id=request.form.get("next_group_id") or None,
+            affiliate_code=(request.form.get("affiliate_code") or "").strip() or None,
+            affiliate_enabled=1 if request.form.get("affiliate_enabled") else 0)
         return redirect("/billing?tab=groups", 303)
 
     @app.route("/billing/groups/<group_id>/plan", methods=["POST"])
@@ -1642,10 +1658,10 @@ def create_app(config):
                 return jsonify({"error": "signup disabled"}), 403
             if not accounts.domain_allowed(g.db, email):
                 return jsonify({"error": "email domain not allowed"}), 403
-            account_id = accounts.create_account(g.db, email)
+            account_id =             account_id = accounts.create_account(g.db, email)
             if uid:
                 accounts.set_firebase_uid(g.db, account_id, uid)
-            _assign_signup_group(account_id)
+            _assign_signup_group(account_id, (data.get("affiliate_code") or "").strip())
             account = accounts.get_account(g.db, account_id)
         elif uid and account["firebase_uid"] != uid:
             accounts.set_firebase_uid(g.db, account["account_id"], uid)

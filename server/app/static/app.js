@@ -255,6 +255,8 @@
       newGroupDialog.querySelector('[name="plan_id"]').value = "";
       newGroupDialog.querySelector('[name="trial_days"]').value = "0";
       newGroupDialog.querySelector('[name="next_group_id"]').value = "";
+      newGroupDialog.querySelector('[name="affiliate_code"]').value = "";
+      newGroupDialog.querySelector('[name="affiliate_enabled"]').checked = false;
       newGroupDialog.showModal();
       return;
     }
@@ -269,6 +271,9 @@
       groupDialog.querySelector('[name="plan_id"]').value = editGroup.getAttribute("data-plan-id") || "";
       groupDialog.querySelector('[name="trial_days"]').value = editGroup.getAttribute("data-trial-days") || "0";
       groupDialog.querySelector('[name="next_group_id"]').value = editGroup.getAttribute("data-next-group-id") || "";
+      groupDialog.querySelector('[name="affiliate_code"]').value = editGroup.getAttribute("data-affiliate-code") || "";
+      groupDialog.querySelector('[name="affiliate_enabled"]').checked =
+        editGroup.getAttribute("data-affiliate-enabled") === "1";
       groupDialog.showModal();
     }
   });
