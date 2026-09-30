@@ -140,6 +140,32 @@ master branch build   →  v1.0.10
 
 Bump with `./bump_version.sh [patch|minor|major]`.
 
+### Automated Releases
+
+Every push to `master` runs [`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+1. **Bump** — `scripts/semver-bump.sh` derives the bump from the conventional
+   commits since the last release (`BREAKING CHANGE` / `type!:` → major,
+   `feat` → minor, `fix` / `perf` → patch). A push with only
+   docs/chore/style/test/ci commits releases nothing. It rewrites
+   `version.properties`, syncs the packaging copies via
+   `scripts/sync-version.sh`, writes the announcement to
+   `docs/releases/vX.Y.Z.md`, then commits and tags `vX.Y.Z`.
+2. **Build** — the push-server tests gate the release, then the unsigned APK,
+   the server image (`ghcr.io/<owner>/mdrender-server:X.Y.Z`) and every
+   mdrender-send package (Linux, Arch, Windows, macOS) build in parallel.
+3. **Publish** — all artifacts are attached to one GitHub Release whose notes
+   are the announcement file.
+
+Start it by hand from the Actions tab: choose `bump` (`auto`/`major`/`minor`/
+`patch`), or tick `dry_run` to build everything without committing, tagging or
+publishing.
+
+Local equivalents: `bash scripts/semver-bump.sh --dry-run` (see what the next
+release would be) and `./scripts/sync-version.sh --check` (packaging versions
+match `version.properties`). `./release.sh` and `./bump_version.sh` remain for
+interactive, manual releases.
+
 ## Database
 
 Uses Room with schema versioning. Current version: 7. Migration objects in `AppDatabase.kt`. A one-shot orphan cleanup (on v7+ migration) removes unreferenced disk files from `encrypted/` and `plain/` directories.

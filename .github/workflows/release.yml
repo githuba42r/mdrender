@@ -1,0 +1,225 @@
+name: release
+
+# Cut a release on every push to master that contains something releasable.
+#
+#   plan     -> scripts/semver-bump.sh decides the bump from the conventional
+#               commits since the last release, commits version.properties +
+#               the synced packaging copies + docs/releases/vX.Y.Z.md, tags it
+#   test     -> push-server test suite gates the release
+#   android  -> unsigned release APK
+#   docker   -> push-server image to GHCR
+#   packages -> reusable package.yml (linux, arch, windows, macOS)
+#   release  -> one GitHub Release carrying every artifact, notes from the
+#               announcement file
+#
+# Nothing releasable (docs/chore/style-only commits) => plan reports
+# should_release=false and every other job is skipped.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (auto = derived from the commits)
+        type: choice
+        options: [auto, major, minor, patch]
+        default: auto
+      dry_run:
+        description: Build everything, but do not commit, tag or publish
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+# One release at a time; never cancel a release that is mid-flight.
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.bump.outputs.should_release }}
+      version: ${{ steps.bump.outputs.version }}
+      code: ${{ steps.bump.outputs.code }}
+      tag: ${{ steps.bump.outputs.tag }}
+      sha: ${{ steps.bump.outputs.sha }}
+      dry_run: ${{ steps.bump.outputs.dry_run }}
+    steps:
+      # Always release from master, whatever ref the run was started on.
+      # Full history: the bump script needs the commit that last touched
+      # version.properties, which a shallow checkout would hide.
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Configure the release commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - id: bump
+        name: Bump the version from the commits
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        run: |
+          args=()
+          if [ "$BUMP" != "auto" ]; then args+=("$BUMP"); fi
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          bash scripts/semver-bump.sh "${args[@]}"
+      - name: Summarise
+        env:
+          SHOULD_RELEASE: ${{ steps.bump.outputs.should_release }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          if [ "$SHOULD_RELEASE" = "true" ]; then
+            echo "**Releasing ${TAG}**" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "**No release** - nothing releasable since the last version bump." >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+  test:
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run the push-server test suite
+        run: python -m pytest
+
+  android:
+    needs: [plan, test]
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      # The build reads the branch name to decide whether to show an -rc suffix;
+      # a detached checkout would make master builds look like release candidates.
+      - name: Build as master
+        run: git checkout -B master
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the release APK (unsigned - no keystore in CI)
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Name the APK for the release
+        run: |
+          src=app/build/outputs/apk/release/app-release-unsigned.apk
+          test -f "$src"
+          mkdir -p artifacts
+          cp "$src" "artifacts/mdrender-${VERSION}-release-unsigned.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: artifacts/*.apk
+          if-no-files-found: error
+
+  docker:
+    needs: [plan, test]
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Lowercase the image owner (GHCR requires it)
+        id: owner
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >>"$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: needs.plan.outputs.dry_run != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.owner.outputs.owner }}/mdrender-server
+          tags: |
+            type=raw,value=${{ needs.plan.outputs.version }}
+            type=raw,value=latest
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: ${{ needs.plan.outputs.dry_run != 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Record the digest
+        run: echo "Pushed \`${{ steps.meta.outputs.tags }}\` @ \`${{ steps.build.outputs.digest }}\`" >>"$GITHUB_STEP_SUMMARY"
+
+  packages:
+    needs: [plan, test]
+    if: needs.plan.outputs.should_release == 'true'
+    uses: ./.github/workflows/package.yml
+    with:
+      ref: ${{ needs.plan.outputs.sha }}
+    secrets: inherit
+
+  release:
+    needs: [plan, test, android, docker, packages]
+    if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect the release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          # The two standalone binaries share a filename (dist/mdrender-send):
+          # give them platform-qualified names so neither overwrites the other.
+          while IFS= read -r file; do
+            name=$(basename "$file")
+            case "$file" in
+              *mdrender-send-linux/dist/mdrender-send) name="mdrender-send-${VERSION}-linux-x86_64" ;;
+              *mdrender-send-macos/dist/mdrender-send)  name="mdrender-send-${VERSION}-macos" ;;
+            esac
+            cp "$file" "release-assets/$name"
+          done < <(find artifacts -type f)
+          echo "Assets for ${TAG}:" >>"$GITHUB_STEP_SUMMARY"
+          (cd release-assets && ls -1 | sed 's/^/* /') >>"$GITHUB_STEP_SUMMARY"
+          test -n "$(ls -A release-assets)"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "MDRender ${VERSION}" \
+            --notes-file "docs/releases/${TAG}.md" \
+            release-assets/*

@@ -1,12 +1,27 @@
 name: package
 
-# Builds every mdrender-send package on a version tag (or manually) and uploads
-# them as artifacts. Native OS runners are required: PyInstaller cannot
-# cross-compile, Inno Setup is Windows-only, and pkgbuild is macOS-only.
+# Builds every mdrender-send package and uploads them as artifacts. Native OS
+# runners are required: PyInstaller cannot cross-compile, Inno Setup is
+# Windows-only, and pkgbuild is macOS-only.
+#
+# Called by release.yml after the version bump (pass `ref` to build the release
+# commit); also runnable by hand. It no longer triggers on `v*` tags - release.yml
+# owns tag creation, and a tag trigger here would double-build every release.
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (defaults to the triggering commit)
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build (defaults to HEAD)
+        type: string
+        required: false
+        default: ""
 
 jobs:
   # Standalone binary + .deb/.rpm/.apk
@@ -14,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -48,6 +65,8 @@ jobs:
     steps:
       - run: pacman -Sy --noconfirm base-devel git python sudo
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - name: Build pacman package as a non-root user
         run: |
           useradd -m builder
@@ -63,6 +82,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -91,6 +112,8 @@ jobs:
       MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
