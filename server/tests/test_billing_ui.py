@@ -69,12 +69,15 @@ def test_plan_fields_and_credit_lives_on_the_users_page(config, db_path):
         "name": "Metered", "scope": "account", "price": "10",
         "included_messages": "100", "message_cost": "0.05",
         "storage_cost": "0.02", "storage_grace_days": "30",
-        "max_messages_per_month": "500"})
+        "max_messages_per_month": "500", "pending_mb": "5",
+        "pending_expiry_hours": "48"})
     with app.config["_db"].connect() as conn:
         plan = billing.list_plans(conn)[0]
     assert plan["price_cents"] == 1000 and plan["included_messages"] == 100
     assert plan["message_cents_per_1000"] == 5 and plan["storage_cents_per_mb"] == 2
     assert plan["storage_grace_days"] == 30 and plan["max_messages_per_month"] == 500
+    assert plan["max_pending_bytes"] == 5 * 1048576
+    assert plan["pending_expiry_hours"] == 48
 
     # Plans tab: the new-plan control is a button opening a dialog, and money
     # renders in dollars (no cents when whole).

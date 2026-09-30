@@ -143,6 +143,14 @@ def create_app(config):
             return "0"
         return f"{value:g}"
 
+    @app.template_filter("mb")
+    def _fmt_mb(num_bytes):
+        """Render a byte count as a plain megabytes number (for form values)."""
+        try:
+            return f"{int(num_bytes) / 1048576:g}"
+        except (TypeError, ValueError):
+            return "0"
+
     @app.template_filter("filesize")
     def _fmt_filesize(size):
         """Render a byte count as a short human-readable size."""
@@ -1319,6 +1327,13 @@ def create_app(config):
         except (TypeError, ValueError):
             return None
 
+    def _opt_mb(value):
+        """Megabytes from the form -> bytes (None if not a number)."""
+        try:
+            return int(round(float(value) * 1048576))
+        except (TypeError, ValueError):
+            return None
+
     @app.route("/billing", methods=["GET"])
     def billing_page():
         auth_error = require_page_session()
@@ -1329,10 +1344,11 @@ def create_app(config):
         if tab not in ("plans", "groups"):
             tab = "plans"
         plans = [dict(p) for p in billing.list_plans(g.db)]
+        groups = [dict(gr) for gr in billing.list_groups(g.db)]
         return render_template(
-            "billing.html", tab=tab, plans=plans,
-            groups=[dict(gr) for gr in billing.list_groups(g.db)],
-            plan_names={p["plan_id"]: p["name"] for p in plans})
+            "billing.html", tab=tab, plans=plans, groups=groups,
+            plan_names={p["plan_id"]: p["name"] for p in plans},
+            group_names={gr["group_id"]: gr["name"] for gr in groups})
 
     @app.route("/billing/plans", methods=["POST"])
     def billing_plan_create():
@@ -1350,7 +1366,9 @@ def create_app(config):
                 message_cents_per_1000=_opt_dollars(request.form.get("message_cost")) or 0,
                 storage_cents_per_mb=_opt_dollars(request.form.get("storage_cost")) or 0,
                 storage_grace_days=_opt_int(request.form.get("storage_grace_days")) or 0,
-                max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")) or 0)
+                max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")) or 0,
+                max_pending_bytes=_opt_mb(request.form.get("pending_mb")) or 0,
+                pending_expiry_hours=_opt_int(request.form.get("pending_expiry_hours")) or 0)
         return redirect("/billing?tab=plans", 303)
 
     @app.route("/billing/plans/<plan_id>", methods=["POST"])
@@ -1370,6 +1388,8 @@ def create_app(config):
             message_cents_per_1000=_opt_dollars(request.form.get("message_cost")),
             max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")),
             storage_grace_days=_opt_int(request.form.get("storage_grace_days")),
+            max_pending_bytes=_opt_mb(request.form.get("pending_mb")),
+            pending_expiry_hours=_opt_int(request.form.get("pending_expiry_hours")),
         )
         return redirect("/billing?tab=plans", 303)
 
@@ -1388,7 +1408,24 @@ def create_app(config):
             return auth_error
         name = (request.form.get("name") or "").strip()
         if name:
-            billing.create_group(g.db, name, plan_id=request.form.get("plan_id") or None)
+            billing.create_group(
+                g.db, name,
+                plan_id=request.form.get("plan_id") or None,
+                trial_days=_opt_int(request.form.get("trial_days")) or 0,
+                next_group_id=request.form.get("next_group_id") or None)
+        return redirect("/billing?tab=groups", 303)
+
+    @app.route("/billing/groups/<group_id>/update", methods=["POST"])
+    def billing_group_update(group_id):
+        auth_error = require_form_session("/billing")
+        if auth_error:
+            return auth_error
+        billing.update_group(
+            g.db, group_id,
+            name=(request.form.get("name") or "").strip() or None,
+            plan_id=request.form.get("plan_id") or None,
+            trial_days=_opt_int(request.form.get("trial_days")) or 0,
+            next_group_id=request.form.get("next_group_id") or None)
         return redirect("/billing?tab=groups", 303)
 
     @app.route("/billing/groups/<group_id>/plan", methods=["POST"])
@@ -1865,10 +1902,15 @@ def create_app(config):
         # cannot be redirected between fetching it and importing.
         target_folder = (request.form.get("target_folder") or "").strip()
         conflict = push_store.normalise_conflict(request.form.get("conflict"))
+        account_id = device["account_id"] if "account_id" in device.keys() else None
+        # The plan caps how much pending storage an account may hold; reject a
+        # push that would exceed it (checked here, on the way in).
+        policy = billing.pending_policy(g.db, config, account_id) if account_id else None
+        used = push_store.pending_bytes(g.db, account_id) if policy and policy["max_bytes"] else 0
         push_store.create_push(g.db, push_id, target_device, challenge_key,
-                               target_folder, conflict,
-                               account_id=device["account_id"] if "account_id" in device.keys() else None)
+                               target_folder, conflict, account_id=account_id)
         sent = 0
+        total = 0
         for f in uploads:
             file_id = uuid.uuid4().hex
             retrieval_key = uuid.uuid4().hex
@@ -1878,6 +1920,15 @@ def create_app(config):
             stored_path = os.path.join(stored_dir, name)
             f.save(stored_path)
             size = os.path.getsize(stored_path)
+            total += size
+            if policy and policy["max_bytes"] and used + total > policy["max_bytes"]:
+                push_store.delete_push(g.db, push_id)
+                shutil.rmtree(os.path.join(config.PUSH_STORAGE_DIR, push_id),
+                              ignore_errors=True)
+                return jsonify({
+                    "error": "pending storage limit exceeded",
+                    "detail": f"This account's plan allows at most "
+                              f"{policy['max_bytes']} bytes of pending files."}), 507
             push_store.add_file(g.db, file_id=file_id, push_id=push_id, file_name=name,
                                 file_path="", size=size, retrieval_key=retrieval_key,
                                 stored_path=stored_path, created_at=int(time.time()))

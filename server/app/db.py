@@ -208,6 +208,8 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   message_cents_per_1000 INTEGER NOT NULL DEFAULT 0,
   max_messages_per_month INTEGER NOT NULL DEFAULT 0,
   storage_grace_days INTEGER NOT NULL DEFAULT 0,
+  max_pending_bytes INTEGER NOT NULL DEFAULT 0,
+  pending_expiry_hours INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
@@ -216,12 +218,15 @@ CREATE TABLE IF NOT EXISTS billing_groups (
   name TEXT NOT NULL,
   plan_id TEXT,
   is_default INTEGER NOT NULL DEFAULT 0,
+  trial_days INTEGER NOT NULL DEFAULT 0,
+  next_group_id TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS account_groups (
   account_type TEXT NOT NULL,
   account_id TEXT NOT NULL,
   group_id TEXT NOT NULL,
+  assigned_at INTEGER,
   PRIMARY KEY (account_type, account_id)
 );
 CREATE TABLE IF NOT EXISTS account_plans (
@@ -301,6 +306,15 @@ class Database:
                 "message_cents_per_1000": "INTEGER NOT NULL DEFAULT 0",
                 "max_messages_per_month": "INTEGER NOT NULL DEFAULT 0",
                 "storage_grace_days": "INTEGER NOT NULL DEFAULT 0",
+                "max_pending_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "pending_expiry_hours": "INTEGER NOT NULL DEFAULT 0",
+            },
+            "billing_groups": {
+                "trial_days": "INTEGER NOT NULL DEFAULT 0",
+                "next_group_id": "TEXT",
+            },
+            "account_groups": {
+                "assigned_at": "INTEGER",
             },
             "accounts": {
                 "messages_sent": "INTEGER NOT NULL DEFAULT 0",

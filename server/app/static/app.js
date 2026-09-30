@@ -199,9 +199,9 @@
       newPlanDialog.querySelector(".plan-title").textContent = "New plan";
       newPlanDialog.querySelector('[name="name"]').value = "";
       newPlanDialog.querySelector('[name="scope"]').value = "account";
-      ["price", "included_messages", "message_cost",
-       "storage_cost", "storage_grace_days", "max_messages_per_month"
-      ].forEach(function (f) {
+      ["price", "included_messages", "message_cost", "storage_cost",
+       "storage_grace_days", "max_messages_per_month", "pending_mb",
+       "pending_expiry_hours"].forEach(function (f) {
         newPlanDialog.querySelector('[name="' + f + '"]').value = "";
       });
       newPlanDialog._applyScope && newPlanDialog._applyScope();
@@ -225,6 +225,8 @@
       planDialog.querySelector('[name="storage_cost"]').value = editPlan.getAttribute("data-storage-cost") || "0";
       planDialog.querySelector('[name="storage_grace_days"]').value = editPlan.getAttribute("data-storage-grace") || "0";
       planDialog.querySelector('[name="max_messages_per_month"]').value = editPlan.getAttribute("data-max-messages") || "0";
+      planDialog.querySelector('[name="pending_mb"]').value = editPlan.getAttribute("data-pending-mb") || "0";
+      planDialog.querySelector('[name="pending_expiry_hours"]').value = editPlan.getAttribute("data-pending-expiry") || "0";
       planDialog._applyScope && planDialog._applyScope();
       planDialog.querySelector("form")._validate &&
         planDialog.querySelector("form")._validate();
@@ -247,18 +249,26 @@
     if (newGroup) {
       var newGroupDialog = document.getElementById("group-dialog");
       if (!newGroupDialog) return;
+      newGroupDialog.querySelector("form").setAttribute("action", "/billing/groups");
+      newGroupDialog.querySelector(".group-title").textContent = "New group";
       newGroupDialog.querySelector('[name="name"]').value = "";
       newGroupDialog.querySelector('[name="plan_id"]').value = "";
+      newGroupDialog.querySelector('[name="trial_days"]').value = "0";
+      newGroupDialog.querySelector('[name="next_group_id"]').value = "";
       newGroupDialog.showModal();
       return;
     }
-    var renameGroup = event.target.closest("[data-rename-group]");
-    if (renameGroup) {
-      var groupDialog = document.getElementById("rename-group-dialog");
+    var editGroup = event.target.closest("[data-edit-group]");
+    if (editGroup) {
+      var groupDialog = document.getElementById("group-dialog");
       if (!groupDialog) return;
       groupDialog.querySelector("form").setAttribute(
-        "action", "/billing/groups/" + renameGroup.getAttribute("data-id") + "/rename");
-      groupDialog.querySelector('[name="name"]').value = renameGroup.getAttribute("data-name") || "";
+        "action", "/billing/groups/" + editGroup.getAttribute("data-id") + "/update");
+      groupDialog.querySelector(".group-title").textContent = "Edit group";
+      groupDialog.querySelector('[name="name"]').value = editGroup.getAttribute("data-name") || "";
+      groupDialog.querySelector('[name="plan_id"]').value = editGroup.getAttribute("data-plan-id") || "";
+      groupDialog.querySelector('[name="trial_days"]').value = editGroup.getAttribute("data-trial-days") || "0";
+      groupDialog.querySelector('[name="next_group_id"]').value = editGroup.getAttribute("data-next-group-id") || "";
       groupDialog.showModal();
     }
   });

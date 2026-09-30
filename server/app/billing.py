@@ -19,18 +19,19 @@ SCOPE_ACCOUNT = "account"
 def create_plan(conn, name, scope, *, price_cents=0, currency="AUD",
                 interval="month", included_bytes=0, included_messages=0,
                 storage_cents_per_mb=0, message_cents_per_1000=0,
-                max_messages_per_month=0, storage_grace_days=0) -> str:
+                max_messages_per_month=0, storage_grace_days=0,
+                max_pending_bytes=0, pending_expiry_hours=0) -> str:
     plan_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO billing_plans (plan_id, name, scope, price_cents, currency,"
         " interval, included_bytes, included_messages, storage_cents_per_mb,"
         " message_cents_per_1000, max_messages_per_month, storage_grace_days,"
-        " active, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        " max_pending_bytes, pending_expiry_hours, active, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
         (plan_id, name, scope, price_cents, currency, interval,
          included_bytes, included_messages, storage_cents_per_mb,
          message_cents_per_1000, max_messages_per_month, storage_grace_days,
-         int(time.time())))
+         max_pending_bytes, pending_expiry_hours, int(time.time())))
     conn.commit()
     return plan_id
 
@@ -49,7 +50,8 @@ def update_plan(conn, plan_id, **fields) -> None:
     allowed = ("name", "scope", "price_cents", "currency", "interval",
                "included_bytes", "included_messages", "storage_cents_per_mb",
                "message_cents_per_1000", "max_messages_per_month",
-               "storage_grace_days", "active")
+               "storage_grace_days", "max_pending_bytes", "pending_expiry_hours",
+               "active")
     pairs = [(k, v) for k, v in fields.items() if k in allowed and v is not None]
     if not pairs:
         return
@@ -106,13 +108,28 @@ def delete_group(conn, group_id) -> bool:
     return cur.rowcount > 0
 
 
-def create_group(conn, name, *, plan_id=None) -> str:
+def create_group(conn, name, *, plan_id=None, trial_days=0, next_group_id=None) -> str:
+    """A group can be a trial: members are moved to *next_group_id* after
+    *trial_days* days."""
     group_id = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO billing_groups (group_id, name, plan_id, is_default, created_at)"
-        " VALUES (?, ?, ?, 0, ?)", (group_id, name, plan_id, int(time.time())))
+        "INSERT INTO billing_groups (group_id, name, plan_id, is_default, trial_days,"
+        " next_group_id, created_at) VALUES (?, ?, ?, 0, ?, ?, ?)",
+        (group_id, name, plan_id, int(trial_days or 0), next_group_id or None,
+         int(time.time())))
     conn.commit()
     return group_id
+
+
+def update_group(conn, group_id, *, name=None, plan_id=None, trial_days=None,
+                 next_group_id=None) -> bool:
+    """Update a non-default group (name, plan, trial). The default is fixed."""
+    cur = conn.execute(
+        "UPDATE billing_groups SET name = COALESCE(?, name), plan_id = ?,"
+        " trial_days = ?, next_group_id = ? WHERE group_id = ? AND is_default = 0",
+        (name, plan_id or None, int(trial_days or 0), next_group_id or None, group_id))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def list_groups(conn):
@@ -126,11 +143,46 @@ def set_group_plan(conn, group_id, plan_id) -> None:
 
 
 def assign_account_group(conn, account_type, account_id, group_id) -> None:
+    """Assign an account to a group, stamping when (a trial's clock starts).
+
+    A genuine move resets the stamp so the new group's trial runs afresh; a
+    no-op reassignment keeps the original stamp and does not restart the trial.
+    """
+    now = int(time.time())
     conn.execute(
-        "INSERT INTO account_groups (account_type, account_id, group_id)"
-        " VALUES (?, ?, ?) ON CONFLICT(account_type, account_id) DO UPDATE SET"
-        " group_id = excluded.group_id", (account_type, account_id, group_id))
+        "INSERT INTO account_groups (account_type, account_id, group_id, assigned_at)"
+        " VALUES (?, ?, ?, ?) ON CONFLICT(account_type, account_id) DO UPDATE SET"
+        " group_id = excluded.group_id,"
+        " assigned_at = CASE WHEN account_groups.group_id = excluded.group_id"
+        "   THEN account_groups.assigned_at ELSE excluded.assigned_at END",
+        (account_type, account_id, group_id, now))
     conn.commit()
+
+
+def sweep_trial_groups(conn, now=None) -> int:
+    """Move accounts out of an expired trial group into its next group.
+
+    Returns how many accounts were moved.
+    """
+    now = int(now if now is not None else time.time())
+    rows = conn.execute(
+        "SELECT ag.account_type, ag.account_id, ag.assigned_at,"
+        " g.trial_days, g.next_group_id FROM account_groups ag"
+        " JOIN billing_groups g ON g.group_id = ag.group_id"
+        " WHERE g.trial_days > 0 AND g.next_group_id IS NOT NULL"
+        "   AND g.next_group_id != ag.group_id"
+        "   AND ag.assigned_at IS NOT NULL").fetchall()
+    moved = 0
+    for row in rows:
+        if now - row["assigned_at"] >= row["trial_days"] * 86400:
+            conn.execute(
+                "UPDATE account_groups SET group_id = ?, assigned_at = ?"
+                " WHERE account_type = ? AND account_id = ?",
+                (row["next_group_id"], now, row["account_type"], row["account_id"]))
+            moved += 1
+    if moved:
+        conn.commit()
+    return moved
 
 
 def set_account_plan(conn, account_type, account_id, plan_id) -> None:
@@ -158,6 +210,22 @@ def effective_plan(conn, account_type, account_id):
     if default and default["plan_id"]:
         return get_plan(conn, default["plan_id"])
     return None
+
+
+def pending_policy(conn, config, account_id) -> dict:
+    """Pending-storage cap (bytes) and expiry (hours) for an account.
+
+    Taken from the account's effective plan when it has one, else the configured
+    defaults. A plan expiry of 0 means pending files never expire (None here).
+    """
+    plan = effective_plan(conn, SCOPE_ACCOUNT, account_id)
+    max_bytes = getattr(config, "ACCOUNT_MAX_BYTES", 0) or None
+    expiry = getattr(config, "PUSH_FILE_TTL_HOURS", 0) or None
+    if plan is not None:
+        if plan["max_pending_bytes"]:
+            max_bytes = plan["max_pending_bytes"]
+        expiry = plan["pending_expiry_hours"] or None
+    return {"max_bytes": max_bytes, "expiry_hours": expiry}
 
 
 # ---- Ledger -----------------------------------------------------------------

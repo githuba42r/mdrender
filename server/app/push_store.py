@@ -234,6 +234,29 @@ def _delete_pushes(conn, push_ids) -> list[str]:
     return ids
 
 
+def pending_bytes(conn, account_id) -> int:
+    """Total bytes of pending (unacked) files for an account."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(f.size), 0) AS bytes FROM push_files f"
+        " JOIN pushes p ON p.push_id = f.push_id"
+        " WHERE p.account_id = ? AND f.status = 'pending'", (account_id,)).fetchone()
+    return row["bytes"]
+
+
+def expired_pending_files(conn, account_id, cutoff):
+    """Pending files for an account created before *cutoff* (epoch seconds)."""
+    return conn.execute(
+        "SELECT f.file_id, f.push_id, f.stored_path FROM push_files f"
+        " JOIN pushes p ON p.push_id = f.push_id"
+        " WHERE p.account_id = ? AND f.status = 'pending' AND f.created_at < ?",
+        (account_id, cutoff)).fetchall()
+
+
+def delete_file(conn, file_id) -> None:
+    conn.execute("DELETE FROM push_files WHERE file_id = ?", (file_id,))
+    conn.commit()
+
+
 def purge_all(conn, account_id=None) -> list[str]:
     """Delete every push and file row (optionally one account). Returns the ids."""
     if account_id is None:
