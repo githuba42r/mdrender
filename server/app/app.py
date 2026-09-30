@@ -1315,9 +1315,15 @@ def create_app(config):
         name = (request.form.get("name") or "").strip()
         scope = request.form.get("scope", billing.SCOPE_ACCOUNT)
         if name and scope in (billing.SCOPE_SLAVE, billing.SCOPE_ACCOUNT):
-            billing.create_plan(g.db, name, scope,
-                                price_cents=_opt_int(request.form.get("price_cents")) or 0,
-                                interval=request.form.get("interval", "month"))
+            billing.create_plan(
+                g.db, name, scope,
+                price_cents=_opt_int(request.form.get("price_cents")) or 0,
+                interval=request.form.get("interval", "month"),
+                included_messages=_opt_int(request.form.get("included_messages")) or 0,
+                message_cents_per_1000=_opt_int(request.form.get("message_cents_per_1000")) or 0,
+                storage_cents_per_mb=_opt_int(request.form.get("storage_cents_per_mb")) or 0,
+                storage_grace_days=_opt_int(request.form.get("storage_grace_days")) or 0,
+                max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")) or 0)
         return redirect("/billing?tab=plans", 303)
 
     @app.route("/billing/plans/<plan_id>", methods=["POST"])
@@ -1335,6 +1341,8 @@ def create_app(config):
             included_messages=_opt_int(request.form.get("included_messages")),
             storage_cents_per_mb=_opt_int(request.form.get("storage_cents_per_mb")),
             message_cents_per_1000=_opt_int(request.form.get("message_cents_per_1000")),
+            max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")),
+            storage_grace_days=_opt_int(request.form.get("storage_grace_days")),
         )
         return redirect("/billing?tab=plans", 303)
 

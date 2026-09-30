@@ -18,16 +18,19 @@ SCOPE_ACCOUNT = "account"
 
 def create_plan(conn, name, scope, *, price_cents=0, currency="AUD",
                 interval="month", included_bytes=0, included_messages=0,
-                storage_cents_per_mb=0, message_cents_per_1000=0) -> str:
+                storage_cents_per_mb=0, message_cents_per_1000=0,
+                max_messages_per_month=0, storage_grace_days=0) -> str:
     plan_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO billing_plans (plan_id, name, scope, price_cents, currency,"
         " interval, included_bytes, included_messages, storage_cents_per_mb,"
-        " message_cents_per_1000, active, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        " message_cents_per_1000, max_messages_per_month, storage_grace_days,"
+        " active, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
         (plan_id, name, scope, price_cents, currency, interval,
          included_bytes, included_messages, storage_cents_per_mb,
-         message_cents_per_1000, int(time.time())))
+         message_cents_per_1000, max_messages_per_month, storage_grace_days,
+         int(time.time())))
     conn.commit()
     return plan_id
 
@@ -45,7 +48,8 @@ def update_plan(conn, plan_id, **fields) -> None:
     """Update the given plan columns (only known, non-None fields are applied)."""
     allowed = ("name", "scope", "price_cents", "currency", "interval",
                "included_bytes", "included_messages", "storage_cents_per_mb",
-               "message_cents_per_1000", "active")
+               "message_cents_per_1000", "max_messages_per_month",
+               "storage_grace_days", "active")
     pairs = [(k, v) for k, v in fields.items() if k in allowed and v is not None]
     if not pairs:
         return

@@ -27,6 +27,8 @@
       <td>
         <button type="button" class="inline" data-edit-account data-id="{{ a.account_id }}"
                 data-name="{{ a.name or '' }}" data-email="{{ a.email }}">Edit</button>
+        <button type="button" class="inline" data-add-credit data-id="{{ a.account_id }}"
+                data-email="{{ a.email }}">Add credit</button>
         {% if a.status == 'active' %}
         <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline"
               data-confirm="Deactivate {{ a.email }}? Their devices will stop receiving pushes."
@@ -89,6 +91,22 @@
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
       <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="credit-dialog" class="confirm">
+  <form method="POST" action="/billing/credit">
+    <h2>Add credit <span class="credit-account empty"></span></h2>
+    <input type="hidden" name="account_type" value="account">
+    <input type="hidden" name="account_id" value="">
+    <label for="cr-amount">Amount (cents, negative debits)</label>
+    <div class="field"><input type="text" id="cr-amount" name="amount_cents" value="0" required></div>
+    <label for="cr-reason">Reason</label>
+    <div class="field"><input type="text" id="cr-reason" name="reason" value="manual"></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Add credit</button>
     </div>
   </form>
 </dialog>

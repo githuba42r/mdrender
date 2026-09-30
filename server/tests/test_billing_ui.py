@@ -62,6 +62,29 @@ def test_plan_can_be_edited_and_toggled(config, db_path):
         assert billing.get_plan(conn, plan["plan_id"])["active"] == 1
 
 
+def test_plan_fields_and_credit_lives_on_the_users_page(config, db_path):
+    app = _app(config)
+    c = _admin(app)
+    c.post("/billing/plans", data={
+        "name": "Metered", "scope": "account", "price_cents": "1000",
+        "message_cents_per_1000": "5", "storage_cents_per_mb": "2",
+        "storage_grace_days": "30", "max_messages_per_month": "500"})
+    with app.config["_db"].connect() as conn:
+        plan = billing.list_plans(conn)[0]
+    assert plan["price_cents"] == 1000
+    assert plan["message_cents_per_1000"] == 5 and plan["storage_cents_per_mb"] == 2
+    assert plan["storage_grace_days"] == 30 and plan["max_messages_per_month"] == 500
+
+    # Plans tab: the new-plan control is a button opening a dialog.
+    plans_page = c.get("/billing?tab=plans").data
+    assert b"data-new-plan" in plans_page and b'id="plan-dialog"' in plans_page
+    # Credit is added from a user's row, not a billing section.
+    assert b'action="/billing/credit"' not in c.get("/billing?tab=plans").data
+    c.post("/accounts", data={"email": "user@example.com", "password": "longenough1"})
+    users = c.get("/accounts").data
+    assert b"data-add-credit" in users and b'id="credit-dialog"' in users
+
+
 def test_groups_attach_plans_and_default_group_is_fixed(config, db_path):
     app = _app(config)
     c = _admin(app)

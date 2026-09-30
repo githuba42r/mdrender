@@ -2,7 +2,7 @@
 {% block title %}Billing &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Billing</h1>
-<p class="lede">Plans, groups, and prepaid credits. Every account falls back to the system group; attach a plan to a group, or set a per-account override.</p>
+<p class="lede">Plans and groups. Attach a plan to a group (or set a per-account override). Add credit from a user's row on the <a href="/accounts">Users</a> page.</p>
 
 <nav class="tabs">
   <a href="/billing?tab=plans" class="{{ 'active' if tab == 'plans' else '' }}">Plans</a>
@@ -10,25 +10,30 @@
 </nav>
 
 {% if tab == 'plans' %}
+<p><button type="button" class="btn-primary" data-new-plan>
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>
+  New plan</button></p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Name</th><th>Scope</th><th>Price</th><th>Interval</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>Name</th><th>Type</th><th>Monthly flat fee</th><th>Cost / 1000 msgs</th><th>Storage / MB</th><th>Max msgs / month</th><th>Status</th><th></th></tr></thead>
   <tbody>
     {% for p in plans %}
     <tr>
       <td>{{ p.name }}</td>
-      <td>{{ p.scope }}</td>
+      <td>{{ 'server (host)' if p.scope == 'slave' else 'account' }}</td>
       <td>{{ p.price_cents }} {{ p.currency }}</td>
-      <td>{{ p.interval }}</td>
+      <td>{% if p.scope == 'account' %}{{ p.message_cents_per_1000 }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{% if p.scope == 'account' %}{{ p.storage_cents_per_mb }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{% if p.max_messages_per_month %}{{ p.max_messages_per_month }}{% else %}<span class="empty">unlimited</span>{% endif %}</td>
       <td>{% if p.active %}<span class="chip acked">active</span>{% else %}<span class="chip">inactive</span>{% endif %}</td>
       <td>
         <button type="button" class="inline" data-edit-plan data-id="{{ p.plan_id }}"
                 data-name="{{ p.name }}" data-scope="{{ p.scope }}"
-                data-price="{{ p.price_cents }}" data-interval="{{ p.interval }}"
-                data-included-bytes="{{ p.included_bytes }}"
-                data-included-messages="{{ p.included_messages }}"
+                data-price="{{ p.price_cents }}"
+                data-message-cents="{{ p.message_cents_per_1000 }}"
                 data-storage-cents="{{ p.storage_cents_per_mb }}"
-                data-message-cents="{{ p.message_cents_per_1000 }}">Edit</button>
+                data-storage-grace="{{ p.storage_grace_days }}"
+                data-max-messages="{{ p.max_messages_per_month }}">Edit</button>
         <form method="POST" action="/billing/plans/{{ p.plan_id }}/active" class="inline">
           <input type="hidden" name="active" value="{{ 0 if p.active else 1 }}">
           <button type="submit" class="inline">{{ 'Deactivate' if p.active else 'Activate' }}</button>
@@ -40,21 +45,6 @@
 </table>
 </div>
 {% if not plans %}<p class="empty">No plans yet.</p>{% endif %}
-
-<form method="POST" action="/billing/plans" class="stack">
-  <h2>New plan</h2>
-  <label for="pname">Name</label>
-  <div class="field"><input type="text" id="pname" name="name" required></div>
-  <label for="pscope">Scope</label>
-  <div class="field"><select id="pscope" name="scope">
-    <option value="account">account</option><option value="slave">slave</option></select></div>
-  <label for="pprice">Price (cents)</label>
-  <div class="field"><input type="text" id="pprice" name="price_cents" value="0"></div>
-  <label for="pinterval">Interval</label>
-  <div class="field"><select id="pinterval" name="interval">
-    <option value="month">month</option><option value="year">year</option></select></div>
-  <button type="submit" class="btn-primary">Create plan</button>
-</form>
 
 {% else %}
 
@@ -108,44 +98,30 @@
 </form>
 {% endif %}
 
-<h2>Add credit</h2>
-<form method="POST" action="/billing/credit" class="stack">
-  <label for="atype">Account type</label>
-  <div class="field"><select id="atype" name="account_type">
-    <option value="account">account</option><option value="slave">slave</option></select></div>
-  <label for="aid">Account ID</label>
-  <div class="field"><input type="text" id="aid" name="account_id" required></div>
-  <label for="amt">Amount (cents, negative debits)</label>
-  <div class="field"><input type="text" id="amt" name="amount_cents" value="0"></div>
-  <label for="reason">Reason</label>
-  <div class="field"><input type="text" id="reason" name="reason" value="manual"></div>
-  <button type="submit" class="btn-primary">Add credit</button>
-</form>
-
-<dialog id="edit-plan-dialog" class="confirm">
-  <form method="POST" action="">
-    <h2>Edit plan <span class="edit-plan-name empty"></span></h2>
-    <label for="ep-name">Name</label>
-    <div class="field"><input type="text" id="ep-name" name="name" required></div>
-    <label for="ep-scope">Scope</label>
-    <div class="field"><select id="ep-scope" name="scope">
-      <option value="account">account</option><option value="slave">slave</option></select></div>
-    <label for="ep-price">Price (cents)</label>
-    <div class="field"><input type="text" id="ep-price" name="price_cents"></div>
-    <label for="ep-interval">Interval</label>
-    <div class="field"><select id="ep-interval" name="interval">
-      <option value="month">month</option><option value="year">year</option></select></div>
-    <label for="ep-included-bytes">Included bytes</label>
-    <div class="field"><input type="text" id="ep-included-bytes" name="included_bytes"></div>
-    <label for="ep-included-messages">Included messages</label>
-    <div class="field"><input type="text" id="ep-included-messages" name="included_messages"></div>
-    <label for="ep-storage-cents">Storage cents / MB</label>
-    <div class="field"><input type="text" id="ep-storage-cents" name="storage_cents_per_mb"></div>
-    <label for="ep-message-cents">Message cents / 1000</label>
-    <div class="field"><input type="text" id="ep-message-cents" name="message_cents_per_1000"></div>
+<dialog id="plan-dialog" class="confirm">
+  <form method="POST" action="/billing/plans">
+    <h2><span class="plan-title">New plan</span></h2>
+    <label for="pl-name">Name</label>
+    <div class="field"><input type="text" id="pl-name" name="name" required></div>
+    <label for="pl-scope">Type</label>
+    <div class="field"><select id="pl-scope" name="scope">
+      <option value="account">account</option>
+      <option value="slave">server (host)</option></select></div>
+    <label for="pl-price">Monthly flat fee (cents)</label>
+    <div class="field"><input type="text" id="pl-price" name="price_cents" value="0"></div>
+    <div class="plan-account-only">
+      <label for="pl-message-cents">Cost per 1000 messages (cents)</label>
+      <div class="field"><input type="text" id="pl-message-cents" name="message_cents_per_1000" value="0"></div>
+      <label for="pl-storage-cents">Storage cost per MB (cents)</label>
+      <div class="field"><input type="text" id="pl-storage-cents" name="storage_cents_per_mb" value="0"></div>
+      <label for="pl-storage-grace">Charge storage older than (days)</label>
+      <div class="field"><input type="text" id="pl-storage-grace" name="storage_grace_days" value="0"></div>
+    </div>
+    <label for="pl-max-messages">Max messages per month (0 = unlimited)</label>
+    <div class="field"><input type="text" id="pl-max-messages" name="max_messages_per_month" value="0"></div>
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
-      <button type="submit" class="btn-primary">Save</button>
+      <button type="submit" class="btn-primary">Save plan</button>
     </div>
   </form>
 </dialog>

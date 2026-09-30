@@ -186,22 +186,50 @@
       accountDialog.showModal();
       return;
     }
+    var newPlan = event.target.closest("[data-new-plan]");
+    if (newPlan) {
+      var newPlanDialog = document.getElementById("plan-dialog");
+      if (!newPlanDialog) return;
+      newPlanDialog.querySelector("form").setAttribute("action", "/billing/plans");
+      newPlanDialog.querySelector(".plan-title").textContent = "New plan";
+      newPlanDialog.querySelector('[name="name"]').value = "";
+      newPlanDialog.querySelector('[name="scope"]').value = "account";
+      ["price_cents", "message_cents_per_1000", "storage_cents_per_mb",
+       "storage_grace_days", "max_messages_per_month"].forEach(function (f) {
+        newPlanDialog.querySelector('[name="' + f + '"]').value = "0";
+      });
+      newPlanDialog._applyScope && newPlanDialog._applyScope();
+      newPlanDialog.showModal();
+      return;
+    }
     var editPlan = event.target.closest("[data-edit-plan]");
     if (editPlan) {
-      var planDialog = document.getElementById("edit-plan-dialog");
+      var planDialog = document.getElementById("plan-dialog");
       if (!planDialog) return;
-      var form = planDialog.querySelector("form");
-      form.setAttribute("action", "/billing/plans/" + editPlan.getAttribute("data-id"));
+      planDialog.querySelector("form").setAttribute(
+        "action", "/billing/plans/" + editPlan.getAttribute("data-id"));
+      planDialog.querySelector(".plan-title").textContent = "Edit plan";
       planDialog.querySelector('[name="name"]').value = editPlan.getAttribute("data-name") || "";
       planDialog.querySelector('[name="scope"]').value = editPlan.getAttribute("data-scope") || "account";
       planDialog.querySelector('[name="price_cents"]').value = editPlan.getAttribute("data-price") || "0";
-      planDialog.querySelector('[name="interval"]').value = editPlan.getAttribute("data-interval") || "month";
-      planDialog.querySelector('[name="included_bytes"]').value = editPlan.getAttribute("data-included-bytes") || "0";
-      planDialog.querySelector('[name="included_messages"]').value = editPlan.getAttribute("data-included-messages") || "0";
-      planDialog.querySelector('[name="storage_cents_per_mb"]').value = editPlan.getAttribute("data-storage-cents") || "0";
       planDialog.querySelector('[name="message_cents_per_1000"]').value = editPlan.getAttribute("data-message-cents") || "0";
-      planDialog.querySelector(".edit-plan-name").textContent = editPlan.getAttribute("data-name") || "";
+      planDialog.querySelector('[name="storage_cents_per_mb"]').value = editPlan.getAttribute("data-storage-cents") || "0";
+      planDialog.querySelector('[name="storage_grace_days"]').value = editPlan.getAttribute("data-storage-grace") || "0";
+      planDialog.querySelector('[name="max_messages_per_month"]').value = editPlan.getAttribute("data-max-messages") || "0";
+      planDialog._applyScope && planDialog._applyScope();
       planDialog.showModal();
+      return;
+    }
+    var addCredit = event.target.closest("[data-add-credit]");
+    if (addCredit) {
+      var creditDialog = document.getElementById("credit-dialog");
+      if (!creditDialog) return;
+      creditDialog.querySelector("form").setAttribute("action", "/billing/credit");
+      creditDialog.querySelector('[name="account_id"]').value = addCredit.getAttribute("data-id") || "";
+      creditDialog.querySelector(".credit-account").textContent = addCredit.getAttribute("data-email") || "";
+      creditDialog.querySelector('[name="amount_cents"]').value = "";
+      creditDialog.querySelector('[name="reason"]').value = "manual";
+      creditDialog.showModal();
       return;
     }
     var renameGroup = event.target.closest("[data-rename-group]");
@@ -214,4 +242,18 @@
       groupDialog.showModal();
     }
   });
+
+  // ---- Billing plan dialog: account-only fields depend on the type --------
+
+  var planDialogEl = document.getElementById("plan-dialog");
+  if (planDialogEl) {
+    var scopeSelect = planDialogEl.querySelector('[name="scope"]');
+    planDialogEl._applyScope = function () {
+      var account = scopeSelect.value === "account";
+      planDialogEl.querySelectorAll(".plan-account-only").forEach(function (el) {
+        el.hidden = !account;
+      });
+    };
+    scopeSelect.addEventListener("change", planDialogEl._applyScope);
+  }
 })();

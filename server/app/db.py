@@ -206,6 +206,8 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   included_messages INTEGER NOT NULL DEFAULT 0,
   storage_cents_per_mb INTEGER NOT NULL DEFAULT 0,
   message_cents_per_1000 INTEGER NOT NULL DEFAULT 0,
+  max_messages_per_month INTEGER NOT NULL DEFAULT 0,
+  storage_grace_days INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
@@ -297,6 +299,8 @@ class Database:
             "billing_plans": {
                 "storage_cents_per_mb": "INTEGER NOT NULL DEFAULT 0",
                 "message_cents_per_1000": "INTEGER NOT NULL DEFAULT 0",
+                "max_messages_per_month": "INTEGER NOT NULL DEFAULT 0",
+                "storage_grace_days": "INTEGER NOT NULL DEFAULT 0",
             },
             "accounts": {
                 "messages_sent": "INTEGER NOT NULL DEFAULT 0",
