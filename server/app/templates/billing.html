@@ -92,7 +92,7 @@
 {% endif %}
 
 <dialog id="plan-dialog" class="confirm">
-  <form method="POST" action="/billing/plans">
+  <form method="POST" action="/billing/plans" data-validate>
     <h2><span class="plan-title">New plan</span></h2>
     <label for="pl-name">Name</label>
     <div class="field"><input type="text" id="pl-name" name="name" required></div>
@@ -101,17 +101,17 @@
       <option value="account">account</option>
       <option value="slave">server (host)</option></select></div>
     <label for="pl-price">Monthly flat fee (cents)</label>
-    <div class="field"><input type="text" id="pl-price" name="price_cents" value="0"></div>
+    <div class="field"><input type="text" id="pl-price" name="price_cents" value="" required></div>
     <div class="plan-account-only">
       <label for="pl-message-cents">Cost per 1000 messages (cents)</label>
-      <div class="field"><input type="text" id="pl-message-cents" name="message_cents_per_1000" value="0"></div>
+      <div class="field"><input type="text" id="pl-message-cents" name="message_cents_per_1000" value="" required></div>
       <label for="pl-storage-cents">Storage cost per MB (cents)</label>
-      <div class="field"><input type="text" id="pl-storage-cents" name="storage_cents_per_mb" value="0"></div>
+      <div class="field"><input type="text" id="pl-storage-cents" name="storage_cents_per_mb" value="" required></div>
       <label for="pl-storage-grace">Charge storage older than (days)</label>
-      <div class="field"><input type="text" id="pl-storage-grace" name="storage_grace_days" value="0"></div>
+      <div class="field"><input type="text" id="pl-storage-grace" name="storage_grace_days" value="" required></div>
     </div>
     <label for="pl-max-messages">Max messages per month (0 = unlimited)</label>
-    <div class="field"><input type="text" id="pl-max-messages" name="max_messages_per_month" value="0"></div>
+    <div class="field"><input type="text" id="pl-max-messages" name="max_messages_per_month" value="" required></div>
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
       <button type="submit" class="btn-primary">Save plan</button>

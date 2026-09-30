@@ -103,6 +103,9 @@
     function check() {
       var ok = true;
       form.querySelectorAll("input[required]").forEach(function (input) {
+        // Required fields hidden for this variant (e.g. account-only plan
+        // fields when the type is a server plan) are not demanded.
+        if (input.closest("[hidden]")) return;
         if (!input.value.trim()) ok = false;
       });
       var pw = form.querySelector('input[name="password"]');
@@ -111,6 +114,8 @@
       if (submit) submit.disabled = !ok;
     }
     form.addEventListener("input", check);
+    form.addEventListener("change", check);
+    form._validate = check;
     check();
   });
 
@@ -196,9 +201,11 @@
       newPlanDialog.querySelector('[name="scope"]').value = "account";
       ["price_cents", "message_cents_per_1000", "storage_cents_per_mb",
        "storage_grace_days", "max_messages_per_month"].forEach(function (f) {
-        newPlanDialog.querySelector('[name="' + f + '"]').value = "0";
+        newPlanDialog.querySelector('[name="' + f + '"]').value = "";
       });
       newPlanDialog._applyScope && newPlanDialog._applyScope();
+      newPlanDialog.querySelector("form")._validate &&
+        newPlanDialog.querySelector("form")._validate();
       newPlanDialog.showModal();
       return;
     }
@@ -217,6 +224,8 @@
       planDialog.querySelector('[name="storage_grace_days"]').value = editPlan.getAttribute("data-storage-grace") || "0";
       planDialog.querySelector('[name="max_messages_per_month"]').value = editPlan.getAttribute("data-max-messages") || "0";
       planDialog._applyScope && planDialog._applyScope();
+      planDialog.querySelector("form")._validate &&
+        planDialog.querySelector("form")._validate();
       planDialog.showModal();
       return;
     }
@@ -262,6 +271,8 @@
       planDialogEl.querySelectorAll(".plan-account-only").forEach(function (el) {
         el.hidden = !account;
       });
+      var form = planDialogEl.querySelector("form");
+      form._validate && form._validate();
     };
     scopeSelect.addEventListener("change", planDialogEl._applyScope);
   }
