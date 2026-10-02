@@ -12,6 +12,8 @@
 <div class="callout success">Payment received - your credit balance has been topped up.</div>
 {% elif ok == 'cancelled' %}
 <div class="callout success">Subscription cancelled. Access continues until the end of the paid period.</div>
+{% elif ok == 'discarded' %}
+<div class="callout success">Checkout discarded - nothing was charged.</div>
 {% elif error %}
 <div class="callout error">{{ error }}</div>
 {% elif request.args.get('cancelled') %}
@@ -64,7 +66,13 @@
   </tbody>
 </table>
 </div>
-{% if subscription.status != 'pending' %}
+{% if subscription.status == 'pending' %}
+<form method="POST" action="/account/billing/cancel" class="actions-end"
+      data-confirm="Discard this checkout? Nothing has been charged and you can start again afterwards."
+      data-confirm-ok="Discard checkout">
+  <button type="submit" class="btn btn-danger">Discard checkout</button>
+</form>
+{% else %}
 <form method="POST" action="/account/billing/cancel" class="actions-end"
       data-confirm="Cancel this subscription? Access continues until the end of the paid period."
       data-confirm-ok="Cancel subscription">

@@ -287,6 +287,50 @@ def test_cancel_subscription_calls_gateway_and_keeps_access(app_, gateway):
                                              _account_id(app_))
 
 
+def test_pending_checkout_can_be_discarded_and_retried(app_, gateway):
+    plan_id = _paid_plan(app_, billing.SCOPE_ACCOUNT)
+    c = _account_client(app_)
+    c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    with app_.config["_db"].connect() as conn:
+        sub_id = billing.latest_subscription(conn, billing.SCOPE_ACCOUNT,
+                                             _account_id(app_))["subscription_id"]
+
+    # The pending row blocks a fresh checkout until it is discarded.
+    resp = c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    assert "already have" in unquote(resp.headers["Location"])
+    assert b"Discard checkout" in c.get("/account/billing").data
+
+    resp = c.post("/account/billing/cancel")
+    assert resp.headers["Location"] == "/account/billing?ok=discarded"
+    assert gateway.cancelled == ["I-0001"]   # provider approval dropped too
+    with app_.config["_db"].connect() as conn:
+        assert billing.get_subscription(conn, sub_id) is None
+        assert billing.live_subscription(conn, billing.SCOPE_ACCOUNT,
+                                         _account_id(app_)) is None
+
+    # A fresh checkout starts cleanly with a new provider id.
+    c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    with app_.config["_db"].connect() as conn:
+        sub = billing.latest_subscription(conn, billing.SCOPE_ACCOUNT,
+                                          _account_id(app_))
+    assert sub["provider_subscription_id"] == "I-0002"
+    assert sub["status"] == "pending"
+
+
+def test_cancelling_a_never_activated_subscription_grants_nothing(app_, gateway):
+    plan_id = _paid_plan(app_, billing.SCOPE_ACCOUNT)
+    c = _account_client(app_)
+    c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    with app_.config["_db"].connect() as conn:
+        sub_id = billing.latest_subscription(conn, billing.SCOPE_ACCOUNT,
+                                             _account_id(app_))["subscription_id"]
+        # A webhook can cancel a row that never reached activation; grace
+        # must not hand out free access for it.
+        billing.mark_subscription(conn, sub_id, "cancelled")
+        assert not billing.subscription_entitled(
+            conn, billing.SCOPE_ACCOUNT, _account_id(app_))
+
+
 def test_account_page_and_nav_expose_billing(app_, gateway):
     c = _account_client(app_)
     page = c.get("/account/billing")

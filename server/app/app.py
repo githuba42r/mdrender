@@ -1261,6 +1261,19 @@ def create_app(config):
         sub = billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
         if sub is None:
             return redirect("/account/billing", 303)
+        if sub["status"] == "pending":
+            # Abandoned checkout - nothing was paid. Drop the local row so a
+            # fresh checkout can start; the provider-side cancel is best
+            # effort (an already-expired approval must not block the retry).
+            if sub["provider_subscription_id"] and paypal.enabled(config):
+                try:
+                    paypal.client(config).cancel_subscription(
+                        sub["provider_subscription_id"],
+                        "Checkout abandoned")
+                except paypal.PaypalError:
+                    pass
+            billing.delete_subscription(g.db, sub["subscription_id"])
+            return redirect("/account/billing?ok=discarded", 303)
         if (sub["provider_subscription_id"] and paypal.enabled(config)
                 and sub["status"] in ("active", "suspended")):
             try:

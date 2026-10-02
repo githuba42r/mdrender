@@ -548,6 +548,7 @@ def subscription_entitled(conn, account_type, account_id, *, now=None,
       * suspended   - dunning: keep serving for the grace window from whichever
                       is later, the period end or the suspension timestamp;
       * cancelled   - access is retained until the paid period ends (+grace);
+                      a row that never reached activation grants nothing;
       * pending     - checkout not completed: no access;
       * expired     - no access.
 
@@ -571,7 +572,11 @@ def _within_grace(row, now, grace_days) -> bool:
     grace = grace_days * 86400
     anchor = row["current_period_end"] or 0
     if status in ("suspended", "cancelled"):
-        anchor = max(anchor or 0, row["updated_at"] or 0)
+        if not anchor:
+            # Never activated (e.g. an abandoned checkout swept by a webhook):
+            # there is no paid period to honour, so no grace either.
+            return False
+        anchor = max(anchor, row["updated_at"] or 0)
     if status == "active" and not anchor:
         return True
     return anchor + grace >= now
