@@ -197,6 +197,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          # The docker job's GHA cache rides along as an artifact of this run
+          # (githuba42r~mdrender~*.dockerbuild); take only the real payloads
+          # or the collect step would attach cache tarballs to the release.
+          pattern: '{android-apk,mdrender-send-*}'
       - name: Collect the release assets
         run: |
           set -euo pipefail
