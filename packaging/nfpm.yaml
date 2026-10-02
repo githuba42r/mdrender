@@ -6,7 +6,7 @@
 name: mdrender-send
 arch: all
 platform: linux
-version: "1.0.19"
+version: "1.1.0"
 section: utils
 priority: optional
 maintainer: Phil Gersekowski <philg@aspedia.net>
