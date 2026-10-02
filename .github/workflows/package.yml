@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - run: pacman -Sy --noconfirm base-devel git python sudo
+      - run: pacman -Sy --noconfirm base-devel git python python-cryptography sudo
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
