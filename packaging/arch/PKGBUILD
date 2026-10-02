@@ -2,7 +2,7 @@
 # Local package. build.sh stages the tool source beside this file, then runs
 # makepkg; for an AUR package, replace `source` with the repo tarball URL.
 pkgname=mdrender-send
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="Send files to MDRender (or any LocalSend receiver) from the command line"
 arch=('any')
