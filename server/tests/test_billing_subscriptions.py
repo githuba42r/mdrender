@@ -42,7 +42,8 @@ class FakeGateway:
         cache[1](product_id)
         return product_id
 
-    def create_billing_plan(self, *, name, price_cents, currency, interval):
+    def create_billing_plan(self, *, product_id, name, price_cents, currency,
+                            interval):
         self._plan_n += 1
         return f"PP-PLAN-{self._plan_n}"
 

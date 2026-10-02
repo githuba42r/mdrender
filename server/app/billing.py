@@ -384,6 +384,7 @@ def provision_plan(conn, config, plan_id, *, force=False) -> str:
     if not product_id:
         raise paypal.PaypalError("could not create the PayPal product")
     paypal_plan_id = client.create_billing_plan(
+        product_id=product_id,
         name=plan["name"], price_cents=plan["price_cents"],
         currency=plan["currency"] or config.PAYPAL_CURRENCY,
         interval=plan["interval"])

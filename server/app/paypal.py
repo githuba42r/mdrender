@@ -167,40 +167,49 @@ class PaypalClient:
         })
         return data.get("id", "")
 
-    def create_billing_plan(self, *, name, price_cents, currency, interval) -> str:
-        """Create (DRAFT) a PayPal billing plan for a local plan row.
+    def create_billing_plan(self, *, product_id, name, price_cents, currency,
+                            interval) -> str:
+        """Create a PayPal billing plan for a local plan row.
 
         *interval* is 'month' or 'year'; price 0 never reaches here - free
-        plans are entitled without a gateway.
+        plans are entitled without a gateway. Cycles and payment preferences
+        sit at the top level of the request (the current API no longer nests
+        them under ``billing_info``), and ``product_id`` is mandatory.
         """
-        frequency = "YEAR" if str(interval).lower().startswith("year") else "MONTH"
+        unit = "YEAR" if str(interval).lower().startswith("year") else "MONTH"
         data = self.request("POST", "/v1/billing/plans", json_body={
-            "name": name[:120],
-            "description": name[:240],
-            "billing_info": {
-                "billing_cycles": [{
-                    "frequency": frequency,
-                    "tenure": "REGULAR",
-                    "interval_count": 1,
-                    "total_cycles": 0,
-                    "pricing_scheme": {
-                        "fixed_price": {"value": money(price_cents),
-                                        "currency_code": currency},
-                    },
-                }],
-                "payment_preferences": {
-                    "auto_bill_outstanding": True,
-                    "setup_fee": {"value": "0.00", "currency_code": currency},
-                    "payment_failure_threshold": 3,
-                },
-                "taxes": {"percentage": "0", "inclusive": False},
+            "product_id": product_id,
+            "name": name[:127],
+            "description": name[:127],
+            "billing_cycles": [{
+                "frequency": {"interval_unit": unit, "interval_count": 1},
+                "tenure_type": "REGULAR",
+                "sequence": 1,
+                "total_cycles": 0,
+                "pricing_scheme": {"fixed_price": {"value": money(price_cents),
+                                                   "currency_code": currency}},
+            }],
+            "payment_preferences": {
+                "auto_bill_outstanding": True,
+                "setup_fee": {"value": "0.00", "currency_code": currency},
+                "setup_fee_failure_action": "CONTINUE",
+                "payment_failure_threshold": 3,
             },
+            "taxes": {"percentage": "0", "inclusive": False},
         })
         return data.get("id", "")
 
     def activate_plan(self, plan_id: str) -> None:
-        self.request("POST", f"/v1/billing/plans/{plan_id}/activate",
-                     json_body={})
+        try:
+            self.request("POST", f"/v1/billing/plans/{plan_id}/activate",
+                         json_body={})
+        except PaypalError as exc:
+            # Plans are born ACTIVE on the current API; activate then 422s
+            # with PLAN_STATUS_INVALID - that is a successful no-op for us.
+            if exc.status == 422 and "PLAN_STATUS_INVALID" in str(
+                    exc.body or ""):
+                return
+            raise
 
     def ensure_product(self, cache) -> str:
         """Return the catalog product id held in *cache*, creating it once.

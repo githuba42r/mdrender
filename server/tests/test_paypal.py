@@ -182,9 +182,14 @@ def test_provision_plan_creates_product_and_plan_once(db_path, monkeypatch):
             if url.endswith("/v1/catalogs/products"):
                 return _Resp(201, {"id": "PROD-1"})
             if url.endswith("/v1/billing/plans"):
-                assert json["billing_info"]["billing_cycles"][0][
-                    "pricing_scheme"]["fixed_price"] == {"value": "20.00",
-                                                         "currency_code": "AUD"}
+                assert json["product_id"] == "PROD-1"
+                cycle = json["billing_cycles"][0]
+                assert cycle["frequency"] == {"interval_unit": "MONTH",
+                                              "interval_count": 1}
+                assert cycle["tenure_type"] == "REGULAR"
+                assert cycle["pricing_scheme"]["fixed_price"] == {
+                    "value": "20.00", "currency_code": "AUD"}
+                assert json["payment_preferences"]["payment_failure_threshold"] == 3
                 return _Resp(201, {"id": "PP-PLAN-1"})
             if url.endswith("/activate"):
                 return _Resp(204, {}, raw="")
@@ -217,3 +222,21 @@ def test_provision_rejects_free_and_unconfigured(db_path):
             billing.provision_plan(conn, load_config(), free)
         with pytest.raises(ValueError):
             billing.provision_plan(conn, load_config(), paid)
+
+
+def test_activate_plan_tolerates_an_already_active_plan(monkeypatch):
+    monkeypatch.setattr(paypal.requests, "post",
+                        lambda *a, **kw: _Resp(200, {"access_token": "t",
+                                                     "expires_in": 100}))
+    # Plans are born ACTIVE: activate answers 422 PLAN_STATUS_INVALID.
+    monkeypatch.setattr(paypal.requests, "request",
+                        lambda *a, **kw: _Resp(422, {"details": [
+                            {"issue": "PLAN_STATUS_INVALID"}]}))
+    _client().activate_plan("PP-1")
+
+    # Any other failure still surfaces.
+    monkeypatch.setattr(paypal.requests, "request",
+                        lambda *a, **kw: _Resp(422, {"details": [
+                            {"issue": "SOMETHING_ELSE"}]}))
+    with pytest.raises(paypal.PaypalError):
+        _client().activate_plan("PP-1")
