@@ -189,9 +189,11 @@ def create_app(config):
             value = int(cents)
         except (TypeError, ValueError):
             return "$0"
+        sign = "-" if value < 0 else ""
+        value = abs(value)
         if value % 100 == 0:
-            return f"${value // 100}"
-        return f"${value / 100:.2f}"
+            return f"{sign}${value // 100}"
+        return f"{sign}${value / 100:.2f}"
 
     @app.template_filter("dollars")
     def _fmt_dollars(cents):
@@ -851,7 +853,9 @@ def create_app(config):
             "account.html", account=account,
             stats=accounts.stats(g.db, principal["id"]),
             usage=storage.usage(g.db, principal["id"]),
-            quota=storage.effective_quota(g.db, principal["id"], config))
+            quota=storage.effective_quota(g.db, principal["id"], config),
+            balance=billing.balance(g.db, billing.SCOPE_ACCOUNT,
+                                    principal["id"]))
 
     @app.route("/account/pair", methods=["GET"])
     def account_pair():
@@ -1568,7 +1572,13 @@ def create_app(config):
         if auth_error:
             return auth_error
         rows = accounts.list_accounts(g.db)
-        items = [{**dict(r), "device_count": accounts.device_count(g.db, r["account_id"])}
+        balances = {r["account_id"]: r["bal"] for r in g.db.execute(
+            "SELECT account_id, SUM(amount_cents) AS bal FROM billing_ledger"
+            " WHERE account_type = ? GROUP BY account_id",
+            (billing.SCOPE_ACCOUNT,)).fetchall()}
+        items = [{**dict(r),
+                  "device_count": accounts.device_count(g.db, r["account_id"]),
+                  "balance": balances.get(r["account_id"], 0)}
                  for r in rows]
         return render_template(
             "accounts.html", accounts=items,
@@ -1668,6 +1678,44 @@ def create_app(config):
         accounts.delete_account(g.db, account_id)
         return redirect("/accounts", 303)
 
+    @app.route("/accounts/<account_id>/cancel-subscription", methods=["POST"])
+    def accounts_cancel_subscription(account_id):
+        """Cancel (or discard) a user's PayPal subscription from the admin UI.
+
+        Mirrors the self-serve semantics: a pending checkout is discarded so
+        the user can start again, a live subscription is cancelled at the
+        provider and keeps access until the end of the paid period.
+        """
+        default = f"/accounts/{account_id}"
+        auth_error = require_form_session(default)
+        if auth_error:
+            return auth_error
+        nxt = _return_to(default)
+        sub = billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
+        if sub is None:
+            return redirect(nxt, 303)
+        if sub["status"] == "pending":
+            # Abandoned checkout - nothing was paid. Drop the local row so a
+            # fresh checkout can start; the provider-side cancel is best
+            # effort (an already-expired approval must not block the retry).
+            if sub["provider_subscription_id"] and paypal.enabled(config):
+                try:
+                    paypal.client(config).cancel_subscription(
+                        sub["provider_subscription_id"], "Checkout abandoned")
+                except paypal.PaypalError:
+                    pass
+            billing.delete_subscription(g.db, sub["subscription_id"])
+            return redirect(nxt + "?notice=discarded", 303)
+        if (sub["provider_subscription_id"] and paypal.enabled(config)
+                and sub["status"] in ("active", "suspended")):
+            try:
+                paypal.client(config).cancel_subscription(
+                    sub["provider_subscription_id"], "Cancelled by operator")
+            except paypal.PaypalError as exc:
+                return _fail_landing(nxt, exc)
+        billing.mark_subscription(g.db, sub["subscription_id"], "cancelled")
+        return redirect(nxt + "?notice=cancelled", 303)
+
     @app.route("/accounts/<account_id>", methods=["GET"])
     def account_detail(account_id):
         """One user's devices, clients and pushes, with block/remove controls.
@@ -1682,6 +1730,11 @@ def create_app(config):
         if account is None:
             return redirect(
                 "/accounts?error=" + urllib.parse.quote("Unknown account."), 303)
+        sub = (billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
+               or billing.latest_subscription(g.db, billing.SCOPE_ACCOUNT,
+                                              account_id))
+        sub_plan = (billing.get_plan(g.db, sub["plan_id"])
+                    if sub and sub["plan_id"] else None)
         return render_template(
             "account_detail.html",
             account=dict(account),
@@ -1690,6 +1743,10 @@ def create_app(config):
             pushes=push_store.list_pushes(g.db, account_id),
             pending=push_store.list_pending_pushes(g.db, account_id),
             stats=accounts.stats(g.db, account_id),
+            balance=billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id),
+            subscription=sub,
+            sub_plan=sub_plan,
+            notice=request.args.get("notice", ""),
             error=request.args.get("error", ""))
 
     @app.route("/accounts/<account_id>/devices/<device_secret>/block",

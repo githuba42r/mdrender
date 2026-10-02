@@ -6,12 +6,34 @@
 <h1>{{ account.email }}</h1>
 {% if account.name %}<p class="empty">{{ account.name }}</p>{% endif %}
 {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
+{% if notice == 'cancelled' %}
+<div class="callout success">Subscription cancelled - the user keeps access until the end of the paid period.</div>
+{% elif notice == 'discarded' %}
+<div class="callout success">Pending checkout discarded - nothing was charged and the user can start a new checkout.</div>
+{% endif %}
+<div class="stats">
+  <div class="stat">
+    <span class="stat-label">Balance</span>
+    <span class="stat-value">{{ balance | money }}
+      {%- if balance > 0 %} <span class="chip acked">credit</span>
+      {%- elif balance < 0 %} <span class="chip failed">debit &middot; owing</span>
+      {%- else %} <span class="chip pending">even</span>{% endif %}
+    </span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Subscription</span>
+    <span class="stat-value">
+      {% if subscription %}
+        <span class="chip {{ 'acked' if subscription.status == 'active' else ('failed' if subscription.status in ('suspended', 'expired') else 'pending') }}">{{ subscription.status }}</span>
+      {% else %}<span class="empty">none</span>{% endif %}
+    </span>
+  </div>
+</div>
 <p class="lede">
   {% if account.status == 'active' %}<span class="chip acked">active</span>
   {% elif account.status == 'banned' %}<span class="chip failed">banned</span>
   {% else %}<span class="chip pending">{{ account.status }}</span>{% endif %}
   <span class="empty">{{ account.host }}</span>
-  &middot; Balance: {{ account.balance }}
   &middot; Created: {{ account.created_at | dt }}
   &middot; Last login: {% if account.last_login_at %}{{ account.last_login_at | dt }}{% else %}<span class="empty">never</span>{% endif %}
   &middot; Devices: {{ devices | length }}
@@ -44,6 +66,41 @@
   </form>
   {% endif %}
 </p>
+
+<h2>Subscription</h2>
+{% if subscription %}
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr><th>Plan</th><td>{% if sub_plan %}{{ sub_plan.name }}{% else %}{{ subscription.plan_id or '-' }}{% endif %}</td></tr>
+    <tr><th>Status</th><td><span class="chip {{ 'acked' if subscription.status == 'active' else ('failed' if subscription.status in ('suspended', 'expired') else 'pending') }}">{{ subscription.status }}</span></td></tr>
+    <tr><th>Started</th><td>{{ subscription.created_at | dt }}</td></tr>
+    <tr><th>{% if subscription.status == 'pending' %}Awaiting approval{% elif subscription.status == 'active' %}Next billing{% else %}Period end{% endif %}</th>
+        <td>{% if subscription.current_period_end %}{{ subscription.current_period_end | dt }}{% else %}<span class="empty">-</span>{% endif %}</td></tr>
+    {% if subscription.provider_subscription_id %}
+    <tr><th>PayPal reference</th><td><code>{{ subscription.provider_subscription_id }}</code></td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+{% if subscription.status == 'pending' %}
+<form method="POST" action="/accounts/{{ account.account_id }}/cancel-subscription" class="actions-end"
+      data-confirm="Discard this pending checkout? Nothing has been charged and the user can start again afterwards."
+      data-confirm-ok="Discard checkout">
+  <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+  <button type="submit" class="btn btn-danger">Discard checkout</button>
+</form>
+{% elif subscription.status in ('active', 'suspended') %}
+<form method="POST" action="/accounts/{{ account.account_id }}/cancel-subscription" class="actions-end"
+      data-confirm="Cancel this subscription? The user keeps access until the end of the paid period."
+      data-confirm-ok="Cancel subscription">
+  <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+  <button type="submit" class="btn btn-danger">Cancel subscription</button>
+</form>
+{% endif %}
+{% else %}
+<p class="empty">No subscription - the user has no PayPal checkout or plan purchase in progress.</p>
+{% endif %}
 
 <h2>Devices</h2>
 {% if devices %}

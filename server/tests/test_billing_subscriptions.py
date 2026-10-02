@@ -639,3 +639,113 @@ def test_sweep_expires_lapsed_subscriptions(app_, gateway):
         # The plan override bought with it is gone.
         assert billing.effective_plan(conn, billing.SCOPE_ACCOUNT,
                                       account_id) is None
+
+
+# ---- Balance + subscription on the user pages ------------------------------
+
+def _activate_account_sub(app, plan_id, provider_id="I-7777", days=30):
+    account_id = _account_id(app)
+    with app.config["_db"].connect() as conn:
+        sub = billing.latest_subscription(conn, billing.SCOPE_ACCOUNT, account_id)
+        billing.activate_subscription(
+            conn, sub["subscription_id"], provider_subscription_id=provider_id,
+            period_start=int(time.time()),
+            period_end=int(time.time()) + days * 86400)
+    return account_id
+
+
+def test_account_home_shows_balance_and_topup_link(app_, gateway):
+    c = _account_client(app_)
+    account_id = _account_id(app_)
+    with app_.config["_db"].connect() as conn:
+        billing.add_credit(conn, billing.SCOPE_ACCOUNT, account_id, 750,
+                           reason="topup")
+    page = c.get("/account")
+    assert page.status_code == 200
+    assert b"$7.50" in page.data
+    assert b"credit" in page.data
+    assert b'href="/account/billing"' in page.data
+
+
+def test_account_home_shows_debit_balance(app_, gateway):
+    c = _account_client(app_)
+    account_id = _account_id(app_)
+    with app_.config["_db"].connect() as conn:
+        billing.debit(conn, billing.SCOPE_ACCOUNT, account_id, 250,
+                      reason="messages")
+    page = c.get("/account")
+    assert b"-$2.50" in page.data
+    assert b"debit" in page.data
+
+
+def test_admin_user_detail_shows_subscription_and_debit_balance(app_, gateway):
+    plan_id = _paid_plan(app_, billing.SCOPE_ACCOUNT, name="Pro")
+    c = _account_client(app_)
+    c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    account_id = _activate_account_sub(app_, plan_id)
+    with app_.config["_db"].connect() as conn:
+        billing.debit(conn, billing.SCOPE_ACCOUNT, account_id, 250,
+                      reason="messages")
+    page = _admin_client(app_).get(f"/accounts/{account_id}")
+    assert page.status_code == 200
+    assert b"-$2.50" in page.data
+    assert b"debit" in page.data
+    assert b"I-7777" in page.data          # PayPal reference
+    assert b"Pro" in page.data             # plan name
+    assert b"Cancel subscription" in page.data
+
+
+def test_admin_user_detail_with_no_subscription(app_, gateway):
+    _account_client(app_)
+    account_id = _account_id(app_)
+    page = _admin_client(app_).get(f"/accounts/{account_id}")
+    assert page.status_code == 200
+    assert b"No subscription" in page.data
+    assert b"$0" in page.data
+
+
+def test_admin_cancels_user_subscription(app_, gateway):
+    plan_id = _paid_plan(app_, billing.SCOPE_ACCOUNT)
+    c = _account_client(app_)
+    c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    account_id = _activate_account_sub(app_, plan_id)
+    admin = _admin_client(app_)
+    r = admin.post(f"/accounts/{account_id}/cancel-subscription",
+                   data={"next": f"/accounts/{account_id}"})
+    assert r.status_code == 303
+    assert r.headers["Location"].endswith("notice=cancelled")
+    assert gateway.cancelled == ["I-7777"]
+    with app_.config["_db"].connect() as conn:
+        row = billing.latest_subscription(conn, billing.SCOPE_ACCOUNT, account_id)
+        assert row["status"] == "cancelled"
+        # access keeps running to the end of the paid period
+        assert billing.subscription_entitled(conn, billing.SCOPE_ACCOUNT,
+                                             account_id) is True
+    assert b"Subscription cancelled" in admin.get(
+        f"/accounts/{account_id}?notice=cancelled").data
+
+
+def test_admin_discards_user_pending_checkout(app_, gateway):
+    plan_id = _paid_plan(app_, billing.SCOPE_ACCOUNT)
+    c = _account_client(app_)
+    c.post("/account/billing/checkout", data={"plan_id": plan_id})
+    account_id = _account_id(app_)
+    admin = _admin_client(app_)
+    r = admin.post(f"/accounts/{account_id}/cancel-subscription",
+                   data={"next": f"/accounts/{account_id}"})
+    assert r.status_code == 303
+    assert r.headers["Location"].endswith("notice=discarded")
+    assert gateway.cancelled == ["I-0001"]  # best-effort provider cancel
+    with app_.config["_db"].connect() as conn:
+        assert billing.latest_subscription(
+            conn, billing.SCOPE_ACCOUNT, account_id) is None
+    assert b"discarded" in admin.get(
+        f"/accounts/{account_id}?notice=discarded").data
+
+
+def test_admin_cancel_subscription_requires_admin(app_, gateway):
+    _account_client(app_)
+    account_id = _account_id(app_)
+    r = app_.test_client().post(f"/accounts/{account_id}/cancel-subscription")
+    assert r.status_code == 303
+    assert "/admin-login" in r.headers["Location"]

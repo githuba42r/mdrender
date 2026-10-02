@@ -38,7 +38,7 @@
         {% elif a.status == 'banned' %}<span class="chip failed">banned</span>
         {% else %}<span class="chip pending">{{ a.status }}</span>{% endif %}
       </td>
-      <td>{{ a.balance }}</td>
+      <td>{{ a.balance | money }}</td>
       <td>
         <button type="button" class="inline icon-btn"
                 title="Open" onclick="location.href='/accounts/{{ a.account_id }}'">{{ icons.eye() }}</button>
