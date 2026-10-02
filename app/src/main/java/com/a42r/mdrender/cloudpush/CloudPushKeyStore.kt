@@ -55,18 +55,32 @@ class CloudPushKeyStore @Inject constructor() {
     fun getContentPublicKeySpkiDer(): ByteArray =
         getOrCreateContentKeyPair().public.encoded
 
-    /** Unwrap a client-sealed blob (RSA-OAEP, MGF1-SHA256). Null on failure. */
+    /** Unwrap a client-sealed blob (RSA-OAEP SHA-256 / MGF1-SHA-1). Null on failure. */
     fun decryptOaep(ciphertext: ByteArray): ByteArray? = try {
+        val aliasPresent = keyStore.containsAlias(CONTENT_ALIAS)
+        val pair = getOrCreateContentKeyPair()
+        val fp = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(pair.public.encoded)
+            .joinToString("") { "%02x".format(it) }
+        android.util.Log.d(
+            "CloudPushDecrypt",
+            "decryptOaep alias=$aliasPresent fresh=${!aliasPresent} pub=$fp len=${ciphertext.size}",
+        )
         val cipher = Cipher.getInstance("RSA/ECB/OAEPPadding")
         cipher.init(
             Cipher.DECRYPT_MODE,
-            getOrCreateContentKeyPair().private,
+            pair.private,
+            // Message digest SHA-256 + MGF1 SHA-1: Android Keystore's OAEP
+            // profile (what "RSA/ECB/OAEPWithSHA-256AndMGF1Padding" maps to).
+            // MGF1-SHA256 is refused by Keymaster/KeyMint as an incompatible
+            // MGF digest even when the key itself is fine.
             OAEPParameterSpec(
-                "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT
+                "SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT
             ),
         )
         cipher.doFinal(ciphertext)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        android.util.Log.w("CloudPushDecrypt", "decryptOaep failed: $e")
         null
     }
 

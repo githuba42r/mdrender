@@ -21,6 +21,10 @@ from server.app.auth import hash_secret, verify_secret
 
 SIGNATURE_WINDOW_SECONDS = 300
 NONCE_TTL_SECONDS = 600
+# Cloudflare rejects urllib's default "Python-urllib/x.y" signature with error
+# 1010, which breaks every callback once a server sits behind a CF-proxied
+# hostname (federated.z42z.com, md.z42z.com). Send a normal UA on both legs.
+USER_AGENT = "MDRender/1.0"
 
 
 # ---- Signing ----------------------------------------------------------------
@@ -106,23 +110,33 @@ def list_servers(conn):
     return conn.execute("SELECT * FROM federated_servers ORDER BY created_at").fetchall()
 
 
-def register_active(conn, *, server_id, hostname, base_url, public_key_b64):
+def register_active(conn, *, server_id, hostname, base_url, public_key_b64,
+                    plan_id=None):
     """Record a verified slave and issue its federation secret.
 
     Returns the plaintext secret (only the hash is stored). The caller returns it
-    to the slave exactly once.
+    to the slave exactly once. ``plan_id`` is the billing plan the server runs
+    under (design §7); the caller resolves it - an already-assigned plan is
+    carried across re-enrolments, otherwise the master's default applies.
     """
     secret = uuid.uuid4().hex
     conn.execute(
         "INSERT OR REPLACE INTO federated_servers"
         " (server_id, hostname, base_url, public_key, secret_hash, status,"
-        "  created_at, last_seen)"
-        " VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+        "  created_at, last_seen, plan_id)"
+        " VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)",
         (server_id, hostname, base_url, public_key_b64, hash_secret(secret),
-         int(time.time()), int(time.time())),
+         int(time.time()), int(time.time()), plan_id),
     )
     conn.commit()
     return secret
+
+
+def set_plan(conn, server_id, plan_id):
+    """Assign (plan_id) or clear (None) the billing plan of a slave server."""
+    conn.execute("UPDATE federated_servers SET plan_id = ? WHERE server_id = ?",
+                 (plan_id, server_id))
+    conn.commit()
 
 
 def check_bearer(conn, token: str | None):
@@ -202,7 +216,8 @@ def verify_slave_callback(base_url: str, challenge: str, *, timeout: int = 10) -
     url = base_url.rstrip("/") + "/api/federation/verify"
     data = json.dumps({"challenge": challenge}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read()).get("signature", "")
 
@@ -215,6 +230,121 @@ def verify_callback_signature(public_key_b64: str, challenge: str, signature_b64
         return False
 
 
+# ---- Operator consent handshake (design §5) --------------------------------
+#
+# A slave never enrols by itself. Its operator is sent to the master, which
+# shows what is being accepted (billing, terms); approving mints a single-use
+# code bound to that exact slave, which the slave exchanges during enrolment.
+# Enrolling without a code only works when the master already consented to
+# this server_id with the same base URL and key and has not revoked it.
+
+CONNECT_TTL_SECONDS = 600
+CONNECT_CODE_TTL_SECONDS = 600
+# Statuses that count as previously consented; revoked/banned/deactivated and
+# changed identity all require a fresh approval.
+_CONSENTED_STATUSES = ("active", "down")
+
+
+def connect_canonical(server_id, hostname, base_url, public_key_b64, state,
+                      ts) -> bytes:
+    """Bytes a slave signs to request a consent page (browser GET, no body)."""
+    return "\n".join(["connect", server_id, hostname, base_url, public_key_b64,
+                      state, str(ts)]).encode()
+
+
+def verify_connect_signature(public_key_b64: str, signature_b64: str, *,
+                             server_id: str, hostname: str, base_url: str,
+                             state: str, ts) -> bool:
+    # verify_callback_signature takes the challenge as str (it encodes).
+    return verify_callback_signature(
+        public_key_b64,
+        connect_canonical(server_id, hostname, base_url, public_key_b64,
+                          state, ts).decode(),
+        signature_b64)
+
+
+def open_connect(conn, *, server_id, hostname, base_url, public_key_b64,
+                 state, now=None) -> str:
+    """Record a signed connect request; returns the id the browser is shown."""
+    now = int(now if now is not None else time.time())
+    connect_id = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO federation_connects"
+        " (id, server_id, hostname, base_url, public_key, state, created_at,"
+        "  expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (connect_id, server_id, hostname, base_url, public_key_b64, state,
+         now, now + CONNECT_TTL_SECONDS))
+    conn.commit()
+    return connect_id
+
+
+def get_connect(conn, connect_id):
+    return conn.execute("SELECT * FROM federation_connects WHERE id = ?",
+                        (connect_id,)).fetchone()
+
+
+def approve_connect(conn, connect_id, now=None) -> str | None:
+    """Issue the single-use consent code; None if it cannot be approved."""
+    now = int(now if now is not None else time.time())
+    row = get_connect(conn, connect_id)
+    if (row is None or row["consumed_at"] or row["declined_at"]
+            or row["expires_at"] < now or row["code"]):
+        return None
+    code = uuid.uuid4().hex
+    conn.execute("UPDATE federation_connects SET code = ?, expires_at = ?"
+                 " WHERE id = ?",
+                 (code, now + CONNECT_CODE_TTL_SECONDS, connect_id))
+    conn.commit()
+    return code
+
+
+def decline_connect(conn, connect_id, now=None) -> bool:
+    now = int(now if now is not None else time.time())
+    cur = conn.execute(
+        "UPDATE federation_connects SET declined_at = ? WHERE id = ?"
+        " AND consumed_at IS NULL AND declined_at IS NULL",
+        (now, connect_id))
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def find_connect_by_code(conn, code, now=None):
+    """The live consent record for *code*, or None (expired/used/declined)."""
+    if not code:
+        return None
+    now = int(now if now is not None else time.time())
+    row = conn.execute("SELECT * FROM federation_connects WHERE code = ?",
+                       (code,)).fetchone()
+    if row is None or row["consumed_at"] or row["declined_at"]:
+        return None
+    if row["expires_at"] < now:
+        return None
+    return row
+
+
+def mark_connect_consumed(conn, code, now=None) -> bool:
+    """Consume a code atomically, so it can only ever authorise one enrolment."""
+    now = int(now if now is not None else time.time())
+    cur = conn.execute(
+        "UPDATE federation_connects SET consumed_at = ? WHERE code = ?"
+        " AND consumed_at IS NULL AND declined_at IS NULL",
+        (now, code))
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def consent_not_required(conn, *, server_id, base_url, public_key_b64) -> bool:
+    """True when this exact slave was consented to earlier and not revoked.
+
+    Identity is the triple (server_id, base_url, public_key): any change -
+    a re-keyed slave, a new URL behind the same id - needs approval again.
+    """
+    row = get_server(conn, server_id)
+    return (row is not None and row["status"] in _CONSENTED_STATUSES
+            and row["base_url"] == base_url
+            and row["public_key"] == public_key_b64)
+
+
 def probe_server(server_row, *, timeout: int = 10) -> bool:
     """Master→slave liveness probe: challenge the slave and verify the reply."""
     challenge = new_challenge()
@@ -222,7 +352,8 @@ def probe_server(server_row, *, timeout: int = 10) -> bool:
         url = server_row["base_url"].rstrip("/") + "/api/federation/probe"
         data = json.dumps({"challenge": challenge}).encode()
         req = urllib.request.Request(url, data=data, method="POST",
-                                     headers={"Content-Type": "application/json"})
+                                     headers={"Content-Type": "application/json",
+                                              "User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             reply = json.loads(resp.read())
     except Exception:  # noqa: BLE001 - unreachable/failed == down

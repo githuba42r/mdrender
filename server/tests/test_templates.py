@@ -11,6 +11,7 @@ import os
 import re
 import time
 
+from server.app import accounts
 from server.app.app import create_app
 from server.app.crypto import generate_rsa_keypair, public_to_spki_der, sign
 
@@ -51,11 +52,11 @@ def test_browser_pages_render(config, db_path):
     for page in ("/pair", "/devices", "/clients", "/pushes", "/pending"):
         anon = client.get(page)
         assert anon.status_code == 303, page
-        assert anon.headers["Location"] == f"/login?next={page}", page
+        assert anon.headers["Location"] == f"/admin-login?next={page}", page
 
     # Wrong password -> 401; correct password -> 302 + session cookie
-    assert client.post("/login", data={"username": "admin", "password": "wrong"}).status_code == 401
-    assert client.post("/login", data={"username": "admin", "password": "testpass"}).status_code == 302
+    assert client.post("/admin-login", data={"username": "admin", "password": "wrong"}).status_code == 401
+    assert client.post("/admin-login", data={"username": "admin", "password": "testpass"}).status_code == 302
 
     # Pairing page renders the QR as inline SVG and sets the token hook
     pair = client.get("/pair")
@@ -124,26 +125,44 @@ def test_pairing_qr_carries_only_the_url_and_token():
     assert json.loads(qr_text) == payload
 
 
-def test_root_shows_login_when_anonymous_and_menu_is_hidden(config, db_path):
+def test_root_serves_the_user_login_when_anonymous_and_menu_is_hidden(config, db_path):
     config.PUSH_STORAGE_DIR = os.path.join(os.path.dirname(config.DB_PATH), "push")
     config.PUSH_PUBLIC_URL = "https://push.example.com"
     app = create_app(config)
     app.config["TESTING"] = True
     client = app.test_client()
 
-    # No root route existed before, so this used to be a 404.
+    # `/` is the public face: anonymous visitors are handed to the *user*
+    # login, never shown the operator console.
     root = client.get("/")
-    assert root.status_code == 200
-    assert b"<form" in root.data
-    assert b'name="password"' in root.data
+    assert root.status_code == 302 and root.headers["Location"] == "/login"
 
-    # An anonymous visitor must not be offered the admin menu, on the landing
-    # page or on the login page itself.
-    for page in (root.data, client.get("/login").data):
+    login = client.get("/login").data
+    assert b"<form" in login
+    assert b'name="password"' in login
+    assert b'action="/admin-login"' not in login
+
+    # An anonymous visitor must not be offered the admin menu, on the page
+    # it lands on or the one it came from.
+    for page in (login,):
         assert b'href="/devices"' not in page
         assert b'href="/clients"' not in page
         assert b'href="/pair"' not in page
         assert b'href="/pending"' not in page
+
+
+def test_root_sends_an_account_session_to_the_portal(config, db_path):
+    config.PUSH_STORAGE_DIR = os.path.join(os.path.dirname(config.DB_PATH), "push")
+    config.PUSH_PUBLIC_URL = "https://push.example.com"
+    app = create_app(config)
+    app.config["TESTING"] = True
+    with app.config["_db"].connect() as conn:
+        accounts.create_account(conn, "user@example.com", "longenough1")
+    client = app.test_client()
+    assert client.post("/login", data={"email": "user@example.com",
+                                       "password": "longenough1"}).status_code == 302
+    root = client.get("/")
+    assert root.status_code == 302 and root.headers["Location"] == "/account"
 
 
 def test_root_redirects_to_pushes_once_logged_in(config, db_path):
@@ -153,7 +172,7 @@ def test_root_redirects_to_pushes_once_logged_in(config, db_path):
     app.config["TESTING"] = True
     client = app.test_client()
 
-    assert client.post("/login", data={"username": "admin", "password": "testpass"}).status_code == 302
+    assert client.post("/admin-login", data={"username": "admin", "password": "testpass"}).status_code == 302
     root = client.get("/")
     assert root.status_code == 302
     assert root.headers["Location"] == "/pushes"
@@ -174,7 +193,7 @@ def test_session_survives_a_restart_and_logout_revokes_it(config, db_path):
     app = create_app(config)
     app.config["TESTING"] = True
     client = app.test_client()
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
 
     # The cookie is only meaningful alongside a server-side row, so a brand new
     # app over the same database must still honour it.
@@ -219,9 +238,9 @@ def test_pushes_page_removes_a_push_and_its_stored_files(config, db_path):
 
     bounced = app.test_client().post("/pushes/push-gone/delete")
     assert bounced.status_code == 303
-    assert bounced.headers["Location"] == "/login?next=/pushes"
+    assert bounced.headers["Location"] == "/admin-login?next=/pushes"
 
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
     # The button exists on the row.
     assert b"/pushes/push-gone/delete" in client.get("/pushes").data
 
@@ -241,7 +260,7 @@ def test_pending_groups_files_under_their_push_and_deletes_the_whole_push(config
     app = create_app(config)
     app.config["TESTING"] = True
     client = app.test_client()
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
 
     _seed_push(app, "push-a", "Sunny Falcon", ["a1.md", "a2.md"], created_at=2000)
     _seed_push(app, "push-b", "Clever Juniper", ["b1.md"], created_at=1000)
@@ -269,7 +288,7 @@ def test_delete_refuses_an_offsite_next_and_falls_back_to_pushes(config, db_path
     app = create_app(config)
     app.config["TESTING"] = True
     client = app.test_client()
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
 
     for hostile in ("https://evil.example.com", "//evil.example.com", "evil"):
         _seed_push(app, "push-x", "Sunny Falcon", ["x.md"])
@@ -293,7 +312,7 @@ def _logged_in_client(config, db_path):
     app = create_app(config)
     app.config["TESTING"] = True
     client = app.test_client()
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
     return app, client
 
 
@@ -359,7 +378,7 @@ def test_clients_pages_are_session_gated(config, db_path):
     assert client.get("/clients").status_code == 303
     revoke = client.post("/clients/anything/revoke")
     assert revoke.status_code == 303
-    assert revoke.headers["Location"] == "/login?next=/clients"
+    assert revoke.headers["Location"] == "/admin-login?next=/clients"
 
 
 def test_login_round_trips_back_to_the_requested_page(config, db_path):
@@ -385,7 +404,7 @@ def test_login_round_trips_back_to_the_requested_page(config, db_path):
     assert f'name="next" value="/enrol/{eid}"'.encode() in form.data
 
     # ...and a successful login lands back on the enrol page with its key.
-    landed = client.post("/login", data={"username": "admin", "password": "testpass",
+    landed = client.post("/admin-login", data={"username": "admin", "password": "testpass",
                                          "next": f"/enrol/{eid}"})
     assert landed.status_code == 302
     assert landed.headers["Location"] == f"/enrol/{eid}"
@@ -403,7 +422,7 @@ def test_login_ignores_an_offsite_next(config, db_path):
     client = app.test_client()
 
     for hostile in ("https://evil.example.com", "//evil.example.com", "evil"):
-        resp = client.post("/login", data={"username": "admin", "password": "testpass", "next": hostile})
+        resp = client.post("/admin-login", data={"username": "admin", "password": "testpass", "next": hostile})
         assert resp.status_code == 302
         assert resp.headers["Location"] == "/pushes", hostile
 
@@ -429,7 +448,7 @@ def test_browser_approval_completes_the_enrolment(config, db_path):
     assert anon.status_code == 303
     assert anon.headers["Location"] == f"/login?next=/enrol/{eid}"
 
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
     approved = client.post(f"/enrol/{eid}/approve")
     assert approved.status_code == 200
     assert b"Enrolment complete" in approved.data
@@ -471,7 +490,7 @@ def test_api_devices_lists_registered_targets_for_bearer_clients(config, db_path
     # Bearer-gated, like /api/push.
     assert client.get("/api/devices").status_code == 401
 
-    client.post("/login", data={"username": "admin", "password": "testpass"})
+    client.post("/admin-login", data={"username": "admin", "password": "testpass"})
     client.get("/pair")  # sets the pairing-token test hook
     _register_device(app, client)  # "Test Dev"
 

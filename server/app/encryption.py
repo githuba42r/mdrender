@@ -9,6 +9,12 @@ open it. The Android app change (a decryption-capable Keystore key) is Phase J.
 import time
 
 
+def requires_encryption(config) -> bool:
+    """Server setting: on = clients must encrypt (design §7b)."""
+    mode = (getattr(config, "ENCRYPTION_MODE", "off") or "off").strip().lower()
+    return mode in ("on", "true", "1", "yes", "required")
+
+
 def set_account_public_key(conn, account_id, public_key_b64) -> None:
     conn.execute(
         "INSERT INTO account_keys (account_id, public_key, created_at) VALUES (?, ?, ?)"

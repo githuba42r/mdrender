@@ -9,7 +9,11 @@ body = urllib.parse.urlencode({
     "grant_type": "client_credentials",
     "client_id": c["client_id"],
     "client_secret": c["client_secret"]}).encode()
-r = urllib.request.urlopen(c["server_url"] + "/oauth/token", data=body)
+r = urllib.request.urlopen(urllib.request.Request(
+    c["server_url"] + "/oauth/token", data=body,
+    # Cloudflare fronts both servers and rejects urllib's default Python
+    # user-agent (error 1010); send the same one the federation client uses.
+    headers={"User-Agent": "MDRender/1.0"}))
 print(json.load(r)["access_token"])
 PY
 )"

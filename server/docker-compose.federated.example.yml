@@ -1,0 +1,49 @@
+# Example: a second push server running as a federation **slave** on
+# federated.z42z.com, registering with the master at md.z42z.com.
+#
+#   cp docker-compose.federated.example.yml docker-compose.federated.yml
+#   docker compose -f docker-compose.federated.yml up -d --build
+#
+# First boot has no admin and no master: /setup creates the first admin, and
+# /federation is where an operator Connects to a master (consent handshake).
+# Set SERVER_PASSWORD only if you want an admin pre-created at startup instead.
+#
+# `name:` gives the stack its own project, so it can never reconcile against
+# the md.z42z.com stack in docker-compose.yml (both files live here). Data is
+# separate too: ./data-federated, never the master's ./data.
+#
+# Cloudflare: /etc/cloudflared/config.yml already routes
+# federated.z42z.com -> http://127.0.0.1:18082, the port published below. The
+# DNS record has to be proxied (orange cloud), otherwise the master cannot
+# call back to https://federated.z42z.com to verify the enrolment.
+#
+# MASTER_URL / PUSH_PUBLIC_URL default to the production URLs and can be
+# overridden from the environment for a local run, e.g.:
+#   MASTER_URL=http://127.0.0.1:18081 PUSH_PUBLIC_URL=http://127.0.0.1:18082 \
+#     docker compose -f docker-compose.federated.yml up -d --build
+name: mdrender-federated
+services:
+  push:
+    build: .
+    # Or run a published release instead of building from source:
+    #   image: ghcr.io/githuba42r/mdrender-server:latest
+    container_name: mdrender-federated
+    restart: unless-stopped
+    ports:
+      - "18082:8080"
+    environment:
+      ROLE: "slave"
+      MASTER_URL: "${MASTER_URL:-https://md.z42z.com}"
+      PUSH_PUBLIC_URL: "${PUSH_PUBLIC_URL:-https://federated.z42z.com}"
+      LISTEN_ADDR: "0.0.0.0:8080"
+      # Local accounts keep this example self-contained (no Firebase config).
+      IDENTITY_PROVIDER: "local"
+      # Same policy as the master, so clients negotiate one encryption mode.
+      ENCRYPTION_MODE: "off"
+      # Name shown in the master's server list. Empty = the host of
+      # PUSH_PUBLIC_URL; set it only if you pair via an IP or bare hostname.
+      SERVER_HOSTNAME: ""
+      # No FCM_SERVER_KEY on purpose: a slave cannot send pushes itself, it
+      # relays doorbells through the master.
+    volumes:
+      - ./data-federated:/data/push

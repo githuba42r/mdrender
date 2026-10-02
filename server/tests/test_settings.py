@@ -6,6 +6,7 @@ import unittest.mock as mock
 
 from server.app import accounts, billing, crypto, federation, settings
 from server.app.app import create_app
+from conftest import consent_code
 
 
 def _app(config):
@@ -18,7 +19,7 @@ def _app(config):
 
 def _login(app):
     c = app.test_client()
-    c.post("/login", data={"username": "admin", "password": "testpass"})
+    c.post("/admin-login", data={"username": "admin", "password": "testpass"})
     return c
 
 
@@ -26,12 +27,14 @@ def _enrol(app, server_id="srv-1"):
     priv, pub = crypto.generate_rsa_keypair()
     priv_pem = crypto.private_to_pem(priv).decode()
     pub_b64 = base64.b64encode(crypto.public_to_spki_der(pub)).decode()
+    code = consent_code(app, server_id=server_id, hostname="h",
+                        base_url="https://h", public_key=pub_b64)
     with mock.patch.object(federation, "verify_slave_callback",
                            lambda base_url, challenge, timeout=10:
                            federation.sign_bytes(priv_pem, challenge.encode())):
         return app.test_client().post("/api/federation/enrol", json={
             "server_id": server_id, "hostname": "h",
-            "base_url": "https://h", "public_key": pub_b64})
+            "base_url": "https://h", "public_key": pub_b64, "code": code})
 
 
 def test_settings_page_is_session_gated(config, db_path):
@@ -97,3 +100,51 @@ def test_signup_toggle_closes_signup(config, db_path):
     # The admin can still create users directly.
     with app.config["_db"].connect() as conn:
         assert accounts.create_account(conn, "x@example.com", "longenough1")
+
+
+def test_default_server_plan_is_offered_and_applied_on_enrolment(config, db_path):
+    app = _app(config)
+    c = _login(app)
+    with app.config["_db"].connect() as conn:
+        host_plan = billing.create_plan(conn, "Host", billing.SCOPE_SLAVE,
+                                        price_cents=2000)
+        billing.create_plan(conn, "Starter", billing.SCOPE_ACCOUNT, price_cents=500)
+
+    # Only server (host) plans are offered as the default.
+    page = c.get("/settings").data
+    assert b"default_server_plan_id" in page
+    assert b"Host" in page and b"Starter" not in page
+
+    c.post("/settings", data={"signup_enabled": "on", "accept_new_slaves": "on",
+                              "default_server_plan_id": host_plan})
+    with app.config["_db"].connect() as conn:
+        assert settings.default_server_plan_id(conn) == host_plan
+
+    # A server that registers takes the default...
+    assert _enrol(app, "srv-def").status_code == 200
+    with app.config["_db"].connect() as conn:
+        assert federation.get_server(conn, "srv-def")["plan_id"] == host_plan
+
+
+def test_the_default_server_plan_must_be_a_server_plan(config, db_path):
+    app = _app(config)
+    c = _login(app)
+    with app.config["_db"].connect() as conn:
+        account_plan = billing.create_plan(conn, "Starter", billing.SCOPE_ACCOUNT)
+        host_plan = billing.create_plan(conn, "Host", billing.SCOPE_SLAVE)
+
+    # An account plan posted straight at the endpoint is ignored.
+    c.post("/settings", data={"signup_enabled": "on",
+                              "default_server_plan_id": account_plan})
+    with app.config["_db"].connect() as conn:
+        assert settings.default_server_plan_id(conn) is None
+
+    # Setting and then clearing works.
+    c.post("/settings", data={"signup_enabled": "on",
+                              "default_server_plan_id": host_plan})
+    with app.config["_db"].connect() as conn:
+        assert settings.default_server_plan_id(conn) == host_plan
+    c.post("/settings", data={"signup_enabled": "on",
+                              "default_server_plan_id": ""})
+    with app.config["_db"].connect() as conn:
+        assert settings.default_server_plan_id(conn) is None

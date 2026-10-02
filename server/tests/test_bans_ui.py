@@ -18,7 +18,7 @@ def test_bans_page_add_and_remove(config, db_path):
     app = _app(config)
     c = app.test_client()
     assert c.get("/bans").status_code == 303  # session-gated
-    c.post("/login", data={"username": "admin", "password": "testpass"})
+    c.post("/admin-login", data={"username": "admin", "password": "testpass"})
     assert c.get("/bans").status_code == 200
 
     c.post("/bans", data={"kind": "cidr", "value": "203.0.113.0/24", "reason": "spam"})

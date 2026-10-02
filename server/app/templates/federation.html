@@ -1,40 +1,141 @@
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 {% block title %}Federation &middot; Cloud Push Server{% endblock %}
 {% block content %}
 <h1>Federation</h1>
-<p class="lede">Slave push servers enrolled with this master. Deactivate to suspend, revoke to invalidate credentials, or remove entirely.</p>
-{% if master_url %}
-<p>This server's master: <code>{{ master_url }}</code></p>
+
+{% if slave_view %}
+<p class="lede">This server runs as a <strong>slave</strong>: it hosts its own
+accounts and devices, and connects to a master, which relays its doorbells to
+the devices it cannot reach.</p>
+
+{% if register_ok %}
+<div class="callout success">Connected to <code>{{ master_host }}</code>.</div>
+{% elif register_error %}
+<div class="callout error">{{ register_error }}</div>
 {% endif %}
+{% if disconnected %}
+<div class="callout success">Disconnected from <code>{{ master_host }}</code>.{% if not notified %} The master could not be reached - if it still lists this server, remove it from the master's Federation page.{% endif %}</div>
+{% endif %}
+
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr>
+      <th>Master</th>
+      <td>{% if master_url %}<code>{{ master_url }}</code>{% else %}<span class="empty">(none yet)</span>{% endif %}</td>
+    </tr>
+    <tr>
+      <th>Connection</th>
+      <td>
+        {%- if registered -%}
+          <span class="chip acked">connected</span>
+        {%- elif master_url -%}
+          <span class="chip failed">not connected</span>
+        {%- else -%}
+          <span class="empty">no master chosen</span>
+        {%- endif -%}
+      </td>
+    </tr>
+    <tr>
+      <th>Last heartbeat</th>
+      <td>{% if registered and last_heartbeat %}{{ last_heartbeat | dt }}{% else %}<span class="empty">-</span>{% endif %}</td>
+    </tr>
+    <tr>
+      <th>Billing plan</th>
+      <td>
+        {%- if not registered -%}
+          <span class="empty">-</span>
+        {%- elif plan_state == 'ok' and plan -%}
+          {{ plan.name }}{% if not plan.active %} <span class="chip">inactive</span>{% endif %}{% if plan.is_default %} <span class="empty">(default)</span>{% endif %}
+          <span class="empty">&middot; {{ plan.price_cents | money }}/mo &middot; {{ plan.included_messages }} messages included &middot; {% if plan.max_messages_per_month %}{{ plan.max_messages_per_month }} messages max{% else %}unlimited messages{% endif %}</span>
+        {%- elif plan_state == 'ok' -%}
+          <span class="empty">no plan assigned</span>
+        {%- else -%}
+          <span class="empty">unavailable (master unreachable)</span>
+        {%- endif -%}
+      </td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+{% if registered %}
+<form method="POST" action="/federation/disconnect" class="actions-end"
+      data-confirm="Disconnect from {{ master_host }}? Doorbell relay stops until you connect again."
+      data-confirm-ok="Disconnect">
+  <button type="submit" class="btn btn-danger">Disconnect from master</button>
+</form>
+{% endif %}
+
+{% if not registered %}
+<form method="POST" action="/federation/connect">
+  <label for="master-url">Master URL</label>
+  <input type="text" id="master-url" name="master_url" value="{{ master_url }}"
+         placeholder="https://md.example.com" required spellcheck="false"
+         autocomplete="off">
+  <button type="submit" class="btn btn-primary">Connect to a master</button>
+</form>
+<p class="empty">Connect opens this master's approval page in your browser -
+you review what connecting grants and approve it there, then land back on the
+push list.</p>
+{% endif %}
+
+{% else %}
+<p class="lede">Slave push servers enrolled with this master. Deactivate to suspend, revoke to invalidate credentials, or remove entirely.</p>
+
+{% if error %}<div class="callout error">{{ error }}</div>{% endif %}
 
 {% if servers %}
 <div class="table-wrap">
 <table>
-  <thead>
-    <tr><th>Hostname</th><th>Server ID</th><th>Status</th><th>Last seen</th><th></th></tr>
-  </thead>
+  <thead><tr><th>Hostname</th><th>Server ID</th><th>Plan</th><th>Status</th><th>Last seen</th><th></th></tr></thead>
   <tbody>
     {% for s in servers %}
     <tr>
       <td>{{ s.hostname }}</td>
       <td><code>{{ s.server_id }}</code></td>
+      <td>
+        {%- set ep = plans_by_id.get(s.plan_id) if s.plan_id else default_plan -%}
+        {%- if s.plan_id and not ep -%}
+          <span class="empty">(removed)</span>
+        {%- elif ep -%}
+          {{ ep.name }}{% if not s.plan_id and default_plan %} <span class="empty">(default)</span>{% endif %}
+          <button type="button" class="inline icon-btn" data-plan-details title="Plan details"
+                  data-plan-name="{{ ep.name }}"
+                  data-plan-type="server (host)"
+                  data-plan-fee="{{ ep.price_cents | money }}"
+                  data-plan-included="{{ ep.included_messages }}"
+                  data-plan-overage="{{ ep.message_cents_per_1000 | money }}"
+                  data-plan-storage=""
+                  data-plan-grace=""
+                  data-plan-max="{{ ep.max_messages_per_month if ep.max_messages_per_month else 'unlimited' }}"
+                  data-plan-pending=""
+                  data-plan-expiry="">{{ icons.info() }}</button>
+        {%- else -%}
+          <span class="empty">-</span>
+        {%- endif -%}
+      </td>
       <td><span class="chip {{ 'failed' if s.status in ('down','revoked','banned') else ('acked' if s.status == 'active' else '') }}">{{ s.status }}</span></td>
       <td>{{ s.last_seen | dt }}</td>
       <td>
+        <button type="button" class="inline icon-btn" data-edit-server-plan
+                data-server-id="{{ s.server_id }}" data-hostname="{{ s.hostname }}"
+                data-plan="{{ s.plan_id or '' }}" title="Edit plan">{{ icons.edit() }}</button>
         {% if s.status == 'active' %}
         <form method="POST" action="/federation/{{ s.server_id }}/deactivate" class="inline"
               data-confirm="Deactivate '{{ s.hostname }}'? Its pushes will pause until reactivated."
-              data-confirm-ok="Deactivate"><button type="submit">Deactivate</button></form>
+              data-confirm-ok="Deactivate"><button type="submit" class="icon-btn" title="Deactivate">{{ icons.pause() }}</button></form>
         {% elif s.status == 'deactivated' %}
         <form method="POST" action="/federation/{{ s.server_id }}/activate" class="inline">
-          <button type="submit">Activate</button></form>
+          <button type="submit" class="icon-btn" title="Activate">{{ icons.check() }}</button></form>
         {% endif %}
         <form method="POST" action="/federation/{{ s.server_id }}/revoke" class="inline"
               data-confirm="Revoke '{{ s.hostname }}'? Its credentials stop working immediately."
-              data-confirm-ok="Revoke"><button type="submit" class="btn-danger">Revoke</button></form>
+              data-confirm-ok="Revoke"><button type="submit" class="icon-btn" title="Revoke">{{ icons.revoke() }}</button></form>
         <form method="POST" action="/federation/{{ s.server_id }}/delete" class="inline"
               data-confirm="Remove '{{ s.hostname }}' and its queued messages?"
-              data-confirm-ok="Remove"><button type="submit" class="btn-danger">Remove</button></form>
+              data-confirm-ok="Remove"><button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button></form>
       </td>
     </tr>
     {% endfor %}
@@ -43,5 +144,47 @@
 </div>
 {% else %}
 <p class="empty">No slave servers enrolled yet.</p>
+{% endif %}
+
+<dialog id="server-plan-dialog" class="confirm">
+  <form method="POST" action="">
+    <h2>Plan for <span class="sp-hostname"></span></h2>
+    <label for="sp-plan">Billing plan</label>
+    <div class="field">
+      <select id="sp-plan" name="plan_id">
+        <option value="">{% if default_plan_name %}(default: {{ default_plan_name }}){% else %}(no plan){% endif %}</option>
+        {% for p in server_plans %}
+        <option value="{{ p.plan_id }}">{{ p.name }}{% if not p.active %} (inactive){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <p class="lede">The default plan from Settings is used until a server has
+      its own. Clear this selection to fall back to the default.</p>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Save plan</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="plan-details-dialog" class="confirm">
+  <form method="dialog">
+    <h2>Plan: <span class="pd-name"></span></h2>
+    <dl class="details">
+      <dt>Type</dt><dd class="pd-type"></dd>
+      <dt>Monthly fee</dt><dd class="pd-fee"></dd>
+      <dt>Included messages</dt><dd class="pd-included"></dd>
+      <dt>Cost / 1000 messages</dt><dd class="pd-overage"></dd>
+      <dt class="pd-hide-for-server">Storage / MB / month</dt><dd class="pd-storage pd-hide-for-server"></dd>
+      <dt class="pd-hide-for-server">Storage grace</dt><dd class="pd-grace pd-hide-for-server"></dd>
+      <dt>Max messages / month</dt><dd class="pd-max"></dd>
+      <dt class="pd-hide-for-server">Max pending storage</dt><dd class="pd-pending pd-hide-for-server"></dd>
+      <dt class="pd-hide-for-server">Pending expiry (hours)</dt><dd class="pd-expiry pd-hide-for-server"></dd>
+    </dl>
+    <div class="confirm-actions">
+      <button value="close" class="btn-primary">Close</button>
+    </div>
+  </form>
+</dialog>
 {% endif %}
 {% endblock %}

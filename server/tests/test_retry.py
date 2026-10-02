@@ -12,8 +12,8 @@ class FakeFcm:
     def __init__(self):
         self.sent = []
 
-    def send(self, data_message, fcm_token):
-        self.sent.append((data_message, fcm_token))
+    def send(self, data_message, fcm_token, **kwargs):
+        self.sent.append((data_message, fcm_token, kwargs))
 
 
 def _register(conn, name="Sunny Falcon", token="tok-1", push_key=b"\x05" * 32):
@@ -104,7 +104,9 @@ def test_retry_rerings_the_same_doorbell_byte_for_byte(config, db_path):
     assert fcm.sent[0][0] == fcm.sent[1][0]
 
 
-def test_retry_does_nothing_without_an_fcm_client(config, db_path):
+def test_retry_does_nothing_without_an_fcm_client_or_a_master(config, db_path):
+    """No FCM key and no master to relay through => there is nothing to send with."""
+
     db = Database(db_path)
     with db.connect() as conn:
         db.init_schema(conn)

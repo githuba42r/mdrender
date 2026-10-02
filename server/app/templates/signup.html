@@ -16,7 +16,7 @@
   <div class="field"><input type="text" id="affiliate-code" value="{{ affiliate }}"></div>
   {% set auth_action = 'signup' %}{% set auth_next = next %}
   {% include "_firebase_auth.html" %}
-  <p class="login-foot">Already registered? <a href="/account/login{% if next %}?next={{ next | urlencode }}{% endif %}">Sign in</a>.</p>
+  <p class="login-foot">Already registered? <a href="/login{% if next %}?next={{ next | urlencode }}{% endif %}">Sign in</a>.</p>
   {% else %}
   <p class="lede">Sign up with your email to send files to your devices.</p>
   {% if error %}<p class="lede" style="color: var(--danger)">{{ error }}</p>{% endif %}

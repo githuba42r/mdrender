@@ -10,6 +10,7 @@ import re
 import secrets
 import shutil
 import time
+import urllib.error
 import urllib.parse
 import uuid
 
@@ -32,7 +33,7 @@ from server.app.auth import (LoginGate, create_session, delete_session,
                              validate_access_token, verify_secret, verify_session)
 from server.app.db import Database
 from server.app.deployment import (detect_role, get_or_create_identity,
-                                   probe_fcm)
+                                   probe_fcm, public_hostname)
 from server.app.identity import (count_admins, create_admin, get_admin,
                                  get_admin_by_email,
                                  get_admin_by_firebase_email,
@@ -45,7 +46,8 @@ from server.app.store import (check_device, create_client, delete_device,
                               get_device_by_secret,
                               get_or_create_server_keypair, list_account_devices,
                               list_clients, list_devices, revoke_client,
-                              session_secret_from_pem, set_device_content_pubkey,
+                              session_secret_from_pem, set_client_blocked,
+                              set_device_blocked, set_device_content_pubkey,
                               touch_last_seen, update_device_name,
                               update_device_push_key, update_device_token)
 
@@ -55,6 +57,31 @@ SESSION_COOKIE = "mdrender_session"
 # beside it in this header. Keeping them separate is what lets the phone verify
 # the exact bytes it received instead of re-serialising a parsed object.
 MANIFEST_SIGNATURE_HEADER = "X-Push-Manifest-Signature"
+
+# The terms an operator accepts on the master's consent page (design §5).
+# Inline so the text that ships with the code is the text the approval covers.
+_CONSENT_TERMS = """\
+Approving connects this server to the master as a federated push relay.
+
+What this grants:
+  - The slave receives federated account, device and push routing rows for
+    devices the master's accounts have paired with it, so pushes queued on
+    either side can be delivered across the link.
+  - The master stores the slave's server id, hostname, public key, last-seen
+    time and status. It never receives file contents or encryption keys: only
+    routing tuples and sealed doorbell payloads travel over the link.
+
+What it does not grant:
+  - No credentials for this master are handed to the slave. The slave gets a
+    per-server API secret that the master can revoke at any time from its
+    Federation page, which stops the slave from sending anything further.
+
+Ongoing terms:
+  - This master may suspend or revoke the connection at any time, and the
+    slave operator may disconnect it from the slave's own Federation page.
+  - Each side keeps its own data: pushing, retention and deletion stay the
+    responsibility of the server that holds them.
+"""
 
 
 def make_fcm_client(config):
@@ -79,6 +106,11 @@ def _get_file(conn, file_id):
     ).fetchone()
 
 
+def encryption_required(config) -> bool:
+    """Server setting: on = clients must encrypt (design §7b)."""
+    return encryption.requires_encryption(config)
+
+
 def create_app(config):
     app = Flask(__name__)
 
@@ -90,9 +122,35 @@ def create_app(config):
         # keeps a working login until the operator sets up a named admin.
         if count_admins(conn) == 0 and getattr(config, "SERVER_PASSWORD", ""):
             create_admin(conn, "admin", config.SERVER_PASSWORD)
-        server_identity = get_or_create_identity(conn)
+        server_identity = get_or_create_identity(conn,
+                                                 hostname=public_hostname(config))
         # The default billing group always exists (accounts fall back to it).
         billing.ensure_default_group(conn)
+        if encryption_required(config):
+            # An encryption-on server must hold no plaintext push metadata
+            # (§7b/D13): scrub legacy rows on every boot. Content bytes are
+            # the client's responsibility; metadata is the server's.
+            conn.execute("UPDATE pushes SET target_folder = ''"
+                         " WHERE target_folder != ''")
+            conn.execute("UPDATE push_files SET file_name = file_id"
+                         " WHERE file_name != file_id")
+            conn.execute("UPDATE push_files SET file_path = ''"
+                         " WHERE file_path != ''")
+            # Legacy files were stored under their plaintext name; rename them
+            # so the directory listing carries no metadata either.
+            for row in conn.execute(
+                    "SELECT file_id, stored_path FROM push_files").fetchall():
+                sp = row["stored_path"]
+                if sp and os.path.basename(sp) != row["file_id"]:
+                    new_sp = os.path.join(os.path.dirname(sp), row["file_id"])
+                    try:
+                        os.replace(sp, new_sp)
+                        conn.execute(
+                            "UPDATE push_files SET stored_path = ?"
+                            " WHERE file_id = ?", (new_sp, row["file_id"]))
+                    except OSError:
+                        pass  # content already gone; nothing left to hide
+            conn.commit()
 
     # The server keypair is stable per database; the session secret derives from it.
     config.session_secret = session_secret_from_pem(server_pem)
@@ -101,6 +159,7 @@ def create_app(config):
     app.config["_server_pem"] = server_pem
     app.config["_server_pk_b64"] = server_pk_b64
     app.config["_enrol_keys"] = {}          # enrolment_id -> {"key", "expires"}
+    app.config["_pending_connects"] = {}    # state -> {"ts", "master_url"}
     app.config["_login_gate"] = LoginGate(config)
     app.config["_identity"] = get_identity_provider(config)
     app.config["_server_identity"] = server_identity
@@ -221,7 +280,7 @@ def create_app(config):
         if _is_admin():
             return None
         nxt = urllib.parse.quote(request.path, safe="/")
-        return redirect(f"/login?next={nxt}", 303)
+        return redirect(f"/admin-login?next={nxt}", 303)
 
     def require_account_session():
         """Gate an account (tenant) page on a live account session."""
@@ -260,7 +319,7 @@ def create_app(config):
         if _is_admin():
             return None
         nxt = urllib.parse.quote(_return_to(default), safe="/")
-        return redirect(f"/login?next={nxt}", 303)
+        return redirect(f"/admin-login?next={nxt}", 303)
 
     def client_denied():
         """None when the bearer client is valid and active, else a 401 response.
@@ -283,6 +342,10 @@ def create_app(config):
             return jsonify({"error": "client_revoked", "detail":
                             "This client was removed from the server. "
                             "Re-register it with --enrol."}), 401
+        if row["blocked_at"] is not None:
+            return jsonify({"error": "client_blocked", "detail":
+                            "This client has been blocked by an administrator. "
+                            "Ask them to unblock it."}), 401
         return None
 
     def _new_code() -> str:
@@ -375,21 +438,22 @@ def create_app(config):
         account_id = device.get("account_id")
         if not account_id:
             return
-        account = accounts.get_account(g.db, account_id)
-        host = account["host"] if account else "master"
-        if host == "master":
-            # Hosted here: keep the local no-PII routing registry current.
-            accounts.upsert_device(g.db, account_id=account_id,
-                                   device_id=device["device_secret"],
-                                   server_id="master",
-                                   fcm_token=device.get("fcm_token") or "")
-        elif federation_client.get_state(g.db) is not None:
+        # A slave owns no FCM project: the master resolves the token and relays
+        # the doorbell (§7B), so the tuple belongs in the master's registry -
+        # keyed by this slave's server_id. A master (or a slave that has not
+        # enrolled yet, and so has nowhere to sync to) keeps its own locally.
+        if app.config["_server_role"] == "slave" and federation_client.get_state(g.db) is not None:
             try:
                 federation_client.sync_device(
                     config, g.db, app.config["_server_identity"], account_id,
                     device["device_secret"], device.get("fcm_token") or "")
-            except Exception:  # noqa: BLE001 - the worker will resync
+            except Exception:  # noqa: BLE001 - ring_via_master republishes it
                 pass
+            return
+        accounts.upsert_device(g.db, account_id=account_id,
+                               device_id=device["device_secret"],
+                               server_id="master",
+                               fcm_token=device.get("fcm_token") or "")
 
     def _notify_unpaired(device) -> None:
         """Best-effort FCM nudge telling a device it has been unpaired.
@@ -423,6 +487,8 @@ def create_app(config):
         """
         if not device["push_key"]:
             return False
+        if "blocked_at" in device.keys() and device["blocked_at"] is not None:
+            return False  # blocked devices are not rung (no FCM, no relay)
         if _encryption_required() and encryption.get_sealed_cek(
                 g.db, device["device_secret"]) is None:
             return False  # client/app must negotiate encryption first (§7b)
@@ -433,15 +499,19 @@ def create_app(config):
         account_id = device["account_id"] if "account_id" in device.keys() else None
         fcm = app.config["_fcm"]
         if fcm is not None and device["fcm_token"]:
-            fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
+            # High priority so the FCM message temp-allowlists the app to start
+            # its download service even from the background — normal-priority
+            # doorbells are dropped with ForegroundServiceStartNotAllowed
+            # on Android 12+ and burn a retry.
+            fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"],
+                     high_priority=True)
             if account_id:
                 accounts.increment_messages(g.db, account_id)  # metering (D5)
             return True
         if account_id and federation_client.get_state(g.db) is not None:
             try:
                 federation_client.ring_via_master(
-                    config, g.db, app.config["_server_identity"], account_id,
-                    device["device_secret"], sealed)
+                    config, g.db, app.config["_server_identity"], device, sealed)
                 return True
             except Exception:  # noqa: BLE001 - retry worker will retry
                 return False
@@ -506,19 +576,26 @@ def create_app(config):
 
     @app.route("/")
     def index():
-        """Landing page: setup on a fresh server, else login, else the push list."""
+        """Landing: setup on a fresh server, else the user login, else home.
+
+        `/` is the public face of the site, so an anonymous visitor gets the
+        *account* sign-in (`/login`); the operator console is `/admin-login`
+        and is reached directly or by bouncing from an admin-only page.
+        """
         if not session_is_valid(g.db, config.session_secret,
                                 request.cookies.get(SESSION_COOKIE), config):
             if count_admins(g.db) == 0:
                 return redirect("/setup")
-            return render_template("login.html")
-        return redirect("/pushes")
+            return redirect("/login")
+        # Signed in: accounts get the portal, admins get the console.
+        return redirect("/account" if not _is_admin()
+                        else _post_login_target())
 
     @app.route("/setup", methods=["GET"])
     def setup_page():
         """First-run admin creation; only while no admin exists."""
         if count_admins(g.db) > 0:
-            return redirect("/login")
+            return redirect("/admin-login")
         return render_template("setup.html")
 
     @app.route("/setup", methods=["POST"])
@@ -528,15 +605,25 @@ def create_app(config):
         if count_admins(g.db) > 0:
             return jsonify({"error": "already_configured"}), 409
         username = (request.form.get("username") or "").strip()
+        email = (request.form.get("email") or "").strip()
         password = request.form.get("password", "")
+        confirm = request.form.get("password_confirm", "")
+
+        def _reject(message):
+            return render_template("setup.html", error=message), 400
+
         if len(username) < 3 or len(password) < 8:
-            return render_template(
-                "setup.html",
-                error="Choose a username of 3+ characters and a password of 8+."), 400
-        create_admin(g.db, username, password)
+            return _reject("Choose a username of 3+ characters and a "
+                           "password of 8+.")
+        if not ("@" in email and "." in email.rsplit("@", 1)[-1]):
+            return _reject("Enter a valid email address for this admin.")
+        if password != confirm:
+            return _reject("The passwords do not match.")
+        create_admin(g.db, username, password, email=email)
         purge_expired_sessions(g.db)
         token = create_session(g.db, config.session_secret, config)
-        resp = make_response(redirect("/pushes"))
+        # Fresh slave: step 2 -> step 3, the Connect screen, not the push list.
+        resp = make_response(redirect(_post_login_target()))
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
                         secure=config.PUSH_PUBLIC_URL.startswith("https"))
         return resp
@@ -558,6 +645,56 @@ def create_app(config):
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
                         secure=config.PUSH_PUBLIC_URL.startswith("https"))
         return resp
+
+    def _effective_master_url():
+        """The master this slave will Connect to: operator override, else env."""
+        override = settings.get(g.db, "federation_master_url") or ""
+        if override:
+            return override.rstrip("/")
+        return (getattr(config, "MASTER_URL", "") or "").rstrip("/")
+
+    def _clean_master_url(raw):
+        """Accept only a plain http(s) origin the browser can be sent to."""
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        if "://" not in raw:
+            raw = "https://" + raw
+        parts = urllib.parse.urlparse(raw.strip())
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            return None
+        if parts.username or parts.password or parts.fragment or parts.query:
+            return None
+        try:
+            parts.port  # noqa: B018 - rejects netloc like "host:not-a-port"
+        except ValueError:
+            return None
+        if not parts.hostname:
+            return None
+        path = (parts.path or "").rstrip("/")
+        return urllib.parse.urlunparse((parts.scheme, parts.netloc, path, "", "", ""))
+
+    def _needs_master_registration():
+        """A slave with a master to connect to that has not enrolled yet."""
+        return (app.config["_server_role"] == "slave"
+                and bool(_effective_master_url())
+                and federation_client.get_state(g.db) is None)
+
+    def _post_login_target(default="/pushes"):
+        """Where an admin lands after signing in.
+
+        An explicit `next` always wins - the CLI tool-enrolment flow depends on
+        bouncing straight back to the enrol URL. Otherwise a slave that has
+        never registered with its master goes to the Federation page, which
+        offers to register it.
+        """
+        nxt = request.form.get("next", "")
+        if nxt.startswith("/") and not nxt.startswith("//"):
+            return nxt
+        return "/federation" if _needs_master_registration() else default
+
+    def _master_host(master_url):
+        return urllib.parse.urlparse(master_url or "").netloc or (master_url or "")
 
     def _identity_owned_by_admin(email=None, phone=None):
         """A verified email/phone that belongs to an admin's login identity."""
@@ -587,31 +724,73 @@ def create_app(config):
                 return "this phone number is already linked to another admin"
         return None
 
-    @app.route("/login", methods=["GET"])
-    def login_page():
+    @app.route("/login", methods=["GET", "POST"])
+    @app.route("/account/login", methods=["GET", "POST"])
+    def account_login():
+        """User (account) sign-in.
+
+        `/login` is the human URL (the tool-enrolment flow and the apps link
+        here); `/account/login` is the original path kept as an alias so old
+        links, logout, and bookmarks keep working.
+        """
+        if request.method == "GET":
+            # A server with no admin yet has nothing to sign in to: finish setup.
+            if request.path == "/login" and count_admins(g.db) == 0:
+                return redirect("/setup")
+            return render_template("account_login.html",
+                                   next=request.args.get("next", ""))
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password", "")
+        account_id = accounts.verify_account_password(g.db, email, password)
+        if account_id is None:
+            return render_template("account_login.html",
+                                   error="Invalid email or password.",
+                                   next=request.form.get("next", "")), 401
+        accounts.touch_login(g.db, account_id)
+        token = create_session(g.db, config.session_secret, config,
+                               principal_type="account", principal_id=account_id)
+        resp = make_response(redirect(_return_to("/account")))
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
+        return resp
+
+    @app.route("/admin-login", methods=["GET"])
+    def admin_login_page():
+        """Administrator sign-in: local password, or Firebase when configured."""
         if count_admins(g.db) == 0:
             return redirect("/setup")
         return render_template("login.html", next=request.args.get("next", ""))
 
-    @app.route("/admin-login", methods=["GET"])
-    def admin_login_page():
-        """Local-only admin sign-in — the break-glass fallback (design §4a)."""
-        if count_admins(g.db) == 0:
-            return redirect("/setup")
-        return render_template("admin_login.html", next=request.args.get("next", ""))
-
     @app.route("/admin-login", methods=["POST"])
     def admin_login():
+        # Fresh server: the first login *is* the account creation step, so a
+        # posted form (autofill, saved bookmark) goes to /setup, not to a
+        # credentials error for an account that cannot exist yet.
+        if count_admins(g.db) == 0:
+            return redirect("/setup")
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password", "")
+        nxt = request.form.get("next", "")
         ok, retry = _check_local_credentials(username, password)
         if not ok:
+            # An email that belongs to a *user* account is on the wrong form -
+            # this is the operator sign-in. Say so instead of "invalid
+            # credentials", which sends people back to the same wrong page.
+            if ("@" in username
+                    and accounts.get_account_by_email(g.db, username) is not None):
+                return render_template("login.html", account_login_hint=True,
+                                       username=username, next=nxt), 401
             error = ("Too many attempts. Try again shortly." if retry
                      else "Invalid username or password.")
-            return render_template("admin_login.html", error=error,
-                                   next=request.form.get("next", "")), 401
+            return render_template("login.html", error=error, username=username,
+                                   next=nxt), 401
+        # Opportunistic cleanup so a long-lived server does not accumulate rows
+        # for sessions nobody is holding any more.
         purge_expired_sessions(g.db)
-        return _local_login_cookie(make_response(redirect(_return_to("/pushes"))))
+        # Honour the page the visitor was originally headed for (e.g. the enrol
+        # URL a CLI just opened); off-site targets are rejected, and a slave
+        # that has never registered with its master is sent there instead.
+        return _local_login_cookie(make_response(redirect(_post_login_target())))
 
     def _assign_signup_group(account_id, affiliate_code=None):
         """Place a new account in a group.
@@ -653,25 +832,6 @@ def create_app(config):
                      or request.args.get("affiliate_code") or "").strip()
         _assign_signup_group(account_id, affiliate)
         return render_template("signup.html", done=True)
-
-    @app.route("/account/login", methods=["GET", "POST"])
-    def account_login():
-        if request.method == "GET":
-            return render_template("account_login.html",
-                                   next=request.args.get("next", ""))
-        email = (request.form.get("email") or "").strip()
-        password = request.form.get("password", "")
-        account_id = accounts.verify_account_password(g.db, email, password)
-        if account_id is None:
-            return render_template("account_login.html",
-                                   error="Invalid email or password."), 401
-        accounts.touch_login(g.db, account_id)
-        token = create_session(g.db, config.session_secret, config,
-                               principal_type="account", principal_id=account_id)
-        resp = make_response(redirect(_return_to("/account")))
-        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
-                        secure=config.PUSH_PUBLIC_URL.startswith("https"))
-        return resp
 
     @app.route("/account/logout", methods=["POST"])
     def account_logout():
@@ -839,6 +999,9 @@ def create_app(config):
             error = "That phone number is already in use."
         if error is None and password and len(password) < 8:
             error = "Choose a password of 8+ characters."
+        if error is None and password and password != request.form.get(
+                "password_confirm", ""):
+            error = "The passwords do not match."
         if error:
             return render_template("account_profile.html", account=account,
                                    error=error), 400
@@ -873,6 +1036,49 @@ def create_app(config):
             g.db, account_id, name=name, email=email, phone=phone,
             password=password if password else None)
         return redirect("/account/profile", 303)
+
+    @app.route("/account/link", methods=["POST"])
+    def account_link():
+        """Bind the signed-in account to the Firebase identity in an ID token.
+
+        The browser runs a Firebase sign-in (magic link, password, or a social
+        provider) and posts the ID token here; the account is bound by `sub`
+        (uid), so a later email change cannot re-target it. An identity already
+        bound elsewhere - another account, or an administrator - is refused,
+        and a token that merely *matches* this account's email is still bound
+        only by its uid.
+        """
+        principal = _principal()
+        if principal is None or principal["type"] != "account":
+            return jsonify({"error": "unauthorized"}), 401
+        data = request.get_json(silent=True) or {}
+        claims = oidc.verify_firebase_id_token(config, data.get("id_token", ""))
+        if claims is None:
+            return jsonify({"error": "invalid token"}), 401
+        uid = claims.get("sub") or claims.get("user_id")
+        if not uid:
+            return jsonify({"error": "token has no subject"}), 400
+        account_id = principal["id"]
+        account = accounts.get_account(g.db, account_id)
+        if account is None:
+            return jsonify({"error": "unknown account"}), 404
+        email = (claims.get("email") or "").strip().lower() or None
+        if email and not claims.get("email_verified", False):
+            email = None
+        phone = (claims.get("phone_number") or "").strip() or None
+        other = accounts.get_account_by_firebase_uid(g.db, uid)
+        if other is not None and other["account_id"] != account_id:
+            return jsonify({"error": "that sign-in is linked to another account"}), 409
+        if get_admin_by_firebase_uid(g.db, uid) is not None:
+            return jsonify({"error": "that sign-in belongs to an administrator"}), 409
+        if (email or phone) and _identity_owned_by_admin(email, phone):
+            return jsonify({"error": "that sign-in belongs to an administrator"}), 409
+        if email:
+            other = accounts.get_account_by_email(g.db, email)
+            if other is not None and other["account_id"] != account_id:
+                return jsonify({"error": "that email belongs to another account"}), 409
+        accounts.set_firebase_uid(g.db, account_id, uid)
+        return jsonify({"ok": True, "uid": uid})
 
     @app.route("/account/pushes", methods=["GET"])
     def account_pushes():
@@ -1016,21 +1222,6 @@ def create_app(config):
         encryption.set_sealed_cek(g.db, device_id, sealed,
                                   alg=data.get("alg", "rsa-oaep-sha256"))
         return jsonify({"ok": True})
-
-    @app.route("/login", methods=["POST"])
-    def login():
-        username = (request.form.get("username") or "").strip()
-        password = request.form.get("password", "")
-        ok, retry = _check_local_credentials(username, password)
-        if not ok:
-            return jsonify({"error": "locked" if retry else "invalid_credentials",
-                            "retry_after": retry}), 401
-        # Opportunistic cleanup so a long-lived server does not accumulate rows
-        # for sessions nobody is holding any more.
-        purge_expired_sessions(g.db)
-        # Honour the page the visitor was originally headed for (e.g. the enrol
-        # URL a CLI just opened); _return_to rejects off-site targets.
-        return _local_login_cookie(make_response(redirect(_return_to("/pushes"))))
 
     @app.route("/logout", methods=["POST"])
     def logout():
@@ -1195,7 +1386,10 @@ def create_app(config):
         rows = accounts.list_accounts(g.db)
         items = [{**dict(r), "device_count": accounts.device_count(g.db, r["account_id"])}
                  for r in rows]
-        return render_template("accounts.html", accounts=items)
+        return render_template(
+            "accounts.html", accounts=items,
+            can_sync=identity_admin.available(config),
+            error=request.args.get("error", ""))
 
     @app.route("/accounts", methods=["POST"])
     def accounts_create():
@@ -1221,6 +1415,56 @@ def create_app(config):
             password=request.form.get("password") or None)
         return redirect("/accounts", 303)
 
+    @app.route("/accounts/<account_id>/sync-firebase", methods=["POST"])
+    def accounts_sync_firebase(account_id):
+        """Create (or adopt) the Firebase Auth user behind a local account.
+
+        An email that already exists in Firebase is bound to that user;
+        otherwise the user is created (with no password - they sign in by
+        link, social, or a reset). Either way the account records the uid so
+        the next sign-in resolves to it. A uid bound to anyone else - another
+        account or an administrator - is refused.
+        """
+        auth_error = require_form_session("/accounts")
+        if auth_error:
+            return auth_error
+
+        def _fail(message):
+            return redirect("/accounts?error=" + urllib.parse.quote(message), 303)
+
+        if not identity_admin.available(config):
+            return _fail("Firebase Admin credentials unavailable.")
+        account = accounts.get_account(g.db, account_id)
+        if account is None:
+            return _fail("Unknown account.")
+        if account["firebase_uid"]:
+            return redirect("/accounts", 303)
+        email = (account["email"] or "").strip().lower()
+        if not email:
+            return _fail("This account has no email address to link.")
+        if _identity_owned_by_admin(email, None):
+            return _fail("That email belongs to an administrator.")
+        user, error = identity_admin.get_user_by_email(config, email)
+        if error:
+            return _fail("Could not reach the identity provider: " + error)
+        if user is not None:
+            uid = user.get("localId")
+            if not uid:
+                return _fail("The identity provider returned no user id.")
+            other = accounts.get_account_by_firebase_uid(g.db, uid)
+            if other is not None and other["account_id"] != account_id:
+                return _fail("That Firebase user is already linked to another account.")
+            if get_admin_by_firebase_uid(g.db, uid) is not None:
+                return _fail("That Firebase user belongs to an administrator.")
+            accounts.set_firebase_uid(g.db, account_id, uid)
+            return redirect("/accounts", 303)
+        uid, error = identity_admin.create_user(
+            config, email=email, display_name=account["name"])
+        if error:
+            return _fail("Could not create the Firebase user: " + str(error))
+        accounts.set_firebase_uid(g.db, account_id, uid)
+        return redirect("/accounts", 303)
+
     @app.route("/accounts/<account_id>/status", methods=["POST"])
     def accounts_status(account_id):
         """Activate / deactivate (block) / ban a user."""
@@ -1230,7 +1474,7 @@ def create_app(config):
         status = request.form.get("status", "")
         if status in (accounts.ACTIVE, accounts.BLOCKED, accounts.BANNED):
             accounts.set_account_status(g.db, account_id, status)
-        return redirect("/accounts", 303)
+        return redirect(_return_to("/accounts"), 303)
 
     @app.route("/accounts/<account_id>/delete", methods=["POST"])
     def accounts_delete(account_id):
@@ -1239,6 +1483,112 @@ def create_app(config):
             return auth_error
         accounts.delete_account(g.db, account_id)
         return redirect("/accounts", 303)
+
+    @app.route("/accounts/<account_id>", methods=["GET"])
+    def account_detail(account_id):
+        """One user's devices, clients and pushes, with block/remove controls.
+
+        The Users list links here; every action posts back to this page via a
+        hidden `next` field (design §9).
+        """
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        account = accounts.get_account(g.db, account_id)
+        if account is None:
+            return redirect(
+                "/accounts?error=" + urllib.parse.quote("Unknown account."), 303)
+        return render_template(
+            "account_detail.html",
+            account=dict(account),
+            devices=[dict(r) for r in list_account_devices(g.db, account_id)],
+            clients=[dict(r) for r in list_clients(g.db, account_id)],
+            pushes=push_store.list_pushes(g.db, account_id),
+            pending=push_store.list_pending_pushes(g.db, account_id),
+            stats=accounts.stats(g.db, account_id),
+            error=request.args.get("error", ""))
+
+    @app.route("/accounts/<account_id>/devices/<device_secret>/block",
+               methods=["POST"])
+    def account_detail_device_block(account_id, device_secret):
+        """Block or unblock a device without unpairing it."""
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        device = get_device_by_secret(g.db, device_secret)
+        if device is None or device["account_id"] != account_id:
+            return redirect(f"/accounts/{account_id}", 303)
+        set_device_blocked(g.db, device_secret,
+                           request.form.get("blocked", "") == "1")
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/devices/<device_secret>/revoke",
+               methods=["POST"])
+    def account_detail_device_revoke(account_id, device_secret):
+        """Unpair a device (design §9): it must re-pair before receiving pushes."""
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        device = get_device_by_secret(g.db, device_secret)
+        if device is None or device["account_id"] != account_id:
+            return redirect(f"/accounts/{account_id}", 303)
+        _notify_unpaired(dict(device))
+        delete_device(g.db, device_secret)
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/clients/<client_id>/block", methods=["POST"])
+    def account_detail_client_block(account_id, client_id):
+        """Block or unblock a CLI client; unlike revoke, this is reversible."""
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        client = get_client(g.db, client_id)
+        if client is None or client["account_id"] != account_id:
+            return redirect(f"/accounts/{account_id}", 303)
+        set_client_blocked(g.db, client_id, request.form.get("blocked", "") == "1")
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/clients/<client_id>/revoke", methods=["POST"])
+    def account_detail_client_revoke(account_id, client_id):
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        client = get_client(g.db, client_id)
+        if client is None or client["account_id"] != account_id:
+            return redirect(f"/accounts/{account_id}", 303)
+        revoke_client(g.db, client_id)
+        revoke_access_tokens(client_id)
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/pushes/<push_id>/delete", methods=["POST"])
+    def account_detail_push_delete(account_id, push_id):
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        push = push_store.get_push_by_id(g.db, push_id)
+        if push is None or push["account_id"] != account_id:
+            return redirect(f"/accounts/{account_id}", 303)
+        push_store.delete_push(g.db, push_id)
+        _purge_push_dirs([push_id])
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/pushes/purge", methods=["POST"])
+    def account_detail_pushes_purge(account_id):
+        """Delete every push (and its stored files) belonging to this account."""
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        _purge_push_dirs(push_store.purge_all(g.db, account_id))
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/pending/purge", methods=["POST"])
+    def account_detail_pending_purge(account_id):
+        """Delete this account's still-pending pushes (free their storage)."""
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        _purge_push_dirs(push_store.purge_pending(g.db, account_id))
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
 
     @app.route("/status", methods=["GET"])
     def status():
@@ -1269,6 +1619,9 @@ def create_app(config):
             signup_enabled=settings.signup_enabled(g.db),
             signup_group_id=settings.signup_group_id(g.db),
             groups=[dict(gr) for gr in billing.list_groups(g.db)],
+            server_plans=[dict(p) for p in billing.list_plans(g.db)
+                          if p["scope"] == billing.SCOPE_SLAVE],
+            default_server_plan_id=settings.default_server_plan_id(g.db),
         )
 
     @app.route("/settings", methods=["POST"])
@@ -1282,6 +1635,15 @@ def create_app(config):
                            "on" if request.form.get("signup_enabled") else "off")
         settings.set_value(g.db, "signup_group_id",
                            (request.form.get("signup_group_id") or "").strip())
+        # Only a real server plan may be the default; anything else is ignored
+        # (the stored value stands) so a forged post cannot set nonsense.
+        plan_id = (request.form.get("default_server_plan_id") or "").strip()
+        if not plan_id:
+            settings.set_value(g.db, "default_server_plan_id", "")
+        else:
+            plan = billing.get_plan(g.db, plan_id)
+            if plan is not None and plan["scope"] == billing.SCOPE_SLAVE:
+                settings.set_value(g.db, "default_server_plan_id", plan_id)
         return redirect("/settings", 303)
 
     @app.route("/federation", methods=["GET"])
@@ -1289,9 +1651,184 @@ def create_app(config):
         auth_error = require_page_session()
         if auth_error:
             return auth_error
-        return render_template("federation.html",
-                               servers=[dict(r) for r in federation.list_servers(g.db)],
-                               master_url=getattr(config, "MASTER_URL", ""))
+        master_url = _effective_master_url() if app.config[
+            "_server_role"] == "slave" else getattr(config, "MASTER_URL", "")
+        reg = federation_client.get_state(g.db)
+        # A slave always gets the Connect panel (even before it has picked a
+        # master); everything else (including a master that lists its slaves)
+        # keeps the enrolment table.
+        slave_view = app.config["_server_role"] == "slave"
+        plans_by_id = {p["plan_id"]: dict(p)
+                       for p in billing.list_plans(g.db)
+                       if p["scope"] == billing.SCOPE_SLAVE}
+        default_plan = plans_by_id.get(settings.default_server_plan_id(g.db))
+        # A slave shows the plan the master has for it: fetched live over the
+        # signed link (design §7) so the page reflects the master's current view.
+        plan_state, plan = "none", None
+        if slave_view and reg is not None:
+            try:
+                reply = federation_client.fetch_plan(
+                    config, g.db, app.config["_server_identity"], timeout=4)
+                plan = reply.get("plan")
+                plan_state = "ok"
+            except Exception:  # noqa: BLE001 - master unreachable/offline
+                plan_state = "unavailable"
+        return render_template(
+            "federation.html",
+            slave_view=slave_view,
+            servers=[dict(r) for r in federation.list_servers(g.db)],
+            server_plans=sorted(plans_by_id.values(),
+                                key=lambda p: p["name"].lower()),
+            plans_by_id=plans_by_id,
+            default_plan=default_plan,
+            default_plan_id=default_plan["plan_id"] if default_plan else None,
+            default_plan_name=default_plan["name"] if default_plan else None,
+            error=request.args.get("error", ""),
+            master_url=master_url,
+            master_host=_master_host(master_url),
+            registered=reg is not None,
+            last_heartbeat=reg["last_heartbeat"] if reg else None,
+            register_ok=bool(request.args.get("registered")),
+            register_error=request.args.get("error", ""),
+            plan=plan,
+            plan_state=plan_state,
+            disconnected=bool(request.args.get("disconnected")),
+            notified=request.args.get("notified", "1") == "1")
+
+    @app.route("/federation/connect", methods=["POST"])
+    def federation_connect_start():
+        """Step 3->4: send the operator to the master to approve this slave.
+
+        The master page is opened as a signed, stateless GET; the slave keeps
+        the state so that only the matching callback can finish the enrolment.
+        """
+        auth_error = require_form_session("/federation")
+        if auth_error:
+            return auth_error
+        if app.config["_server_role"] != "slave":
+            return redirect("/federation", 303)
+
+        def _fail(message):
+            return redirect("/federation?error=" +
+                            urllib.parse.quote(message[:160]), 303)
+
+        master_url = _clean_master_url(request.form.get("master_url"))
+        if not master_url:
+            return _fail("Enter a master URL, e.g. https://md.example.com")
+        if _master_host(master_url) == _master_host(config.PUSH_PUBLIC_URL):
+            return _fail("That is this server - a slave connects to a master, "
+                         "not to itself")
+        settings.set_value(g.db, "federation_master_url", master_url)
+
+        ident = app.config["_server_identity"]
+        state = uuid.uuid4().hex
+        ts = int(time.time())
+        try:
+            signature = federation.sign_bytes(
+                ident["private_key_pem"],
+                federation.connect_canonical(
+                    ident["server_id"], ident["hostname"],
+                    config.PUSH_PUBLIC_URL, ident["public_key"], state, ts))
+        except Exception as exc:  # noqa: BLE001 - unusable identity key
+            return _fail(str(exc))
+        app.config["_pending_connects"][state] = {"ts": ts,
+                                                  "master_url": master_url}
+        query = urllib.parse.urlencode({
+            "server_id": ident["server_id"],
+            "hostname": ident["hostname"],
+            "base_url": config.PUSH_PUBLIC_URL,
+            "public_key": ident["public_key"],
+            "state": state,
+            "ts": ts,
+            "sig": signature,
+        })
+        return redirect(f"{master_url}/federation/connect?{query}", 302)
+
+    @app.route("/federation/disconnect", methods=["POST"])
+    def disconnect_from_master():
+        """Terminate the master connection from the slave (consent terms §5).
+
+        The master is notified over the signed link when it is reachable; the
+        local registration is cleared either way, so the button never strands
+        the operator. The callout reports whether the master was notified.
+        """
+        auth_error = require_form_session("/federation")
+        if auth_error:
+            return auth_error
+        if app.config["_server_role"] != "slave":
+            return redirect("/federation", 303)
+        if federation_client.get_state(g.db) is None:
+            return redirect("/federation", 303)
+        notified = federation_client.disconnect(
+            config, g.db, app.config["_server_identity"])
+        return redirect(f"/federation?disconnected=1&notified="
+                        f"{'1' if notified else '0'}", 303)
+
+    @app.route("/federation/callback", methods=["GET"])
+    def federation_callback():
+        """Step 5: the master approved us; exchange the code, then go live."""
+        if not _is_admin():
+            nxt = request.path
+            if request.query_string:
+                nxt = request.full_path
+            return redirect("/admin-login?next=" +
+                            urllib.parse.quote(nxt, safe="/"), 303)
+        if app.config["_server_role"] != "slave":
+            return redirect("/federation", 303)
+
+        def _fail(message):
+            return redirect("/federation?error=" +
+                            urllib.parse.quote(message[:160]), 303)
+
+        state = request.args.get("state", "")
+        code = request.args.get("code", "")
+        pending = app.config["_pending_connects"].pop(state, None)
+        if pending is None or int(time.time()) - pending["ts"] > \
+                federation.CONNECT_TTL_SECONDS:
+            return _fail("The connection request expired or was already used - "
+                         "press Connect again")
+        if not code:
+            return _fail("The master declined the connection or issued no code")
+        try:
+            federation_client.enrol(config, g.db,
+                                    app.config["_server_identity"],
+                                    master_url=pending["master_url"],
+                                    code=code)
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = json.loads(exc.read().decode() or "{}")
+                message = detail.get("detail") or detail.get("error") or ""
+            except Exception:  # noqa: BLE001 - non-JSON error body
+                message = ""
+            return _fail(f"master rejected the enrolment ({exc.code})"
+                         + (f": {message}" if message else ""))
+        except Exception as exc:  # noqa: BLE001 - master unreachable, DNS, ...
+            return _fail(str(exc))
+        return redirect("/pushes", 303)
+
+    @app.route("/federation/<server_id>/plan", methods=["POST"])
+    def federation_server_plan(server_id):
+        """Set (or clear) the billing plan for one federated server.
+
+        The stored plan wins over the master's default; an empty selection
+        hands the server back to the default.
+        """
+        auth_error = require_form_session("/federation")
+        if auth_error:
+            return auth_error
+
+        def _fail(message):
+            return redirect("/federation?error=" + urllib.parse.quote(message), 303)
+
+        if federation.get_server(g.db, server_id) is None:
+            return _fail("That server is no longer enrolled.")
+        plan_id = (request.form.get("plan_id") or "").strip()
+        if plan_id:
+            plan = billing.get_plan(g.db, plan_id)
+            if plan is None or plan["scope"] != billing.SCOPE_SLAVE:
+                return _fail("Choose a plan for federated servers.")
+        federation.set_plan(g.db, server_id, plan_id or None)
+        return redirect("/federation", 303)
 
     @app.route("/federation/<server_id>/<action>", methods=["POST"])
     def federation_action(server_id, action):
@@ -1307,6 +1844,107 @@ def create_app(config):
         elif action == "delete":
             federation.delete_server(g.db, server_id)
         return redirect("/federation", 303)
+
+    # ---- Master: operator consent for a slave (design §5) ------------------
+
+    def _consent_blocked():
+        """Why this master cannot show a consent page, else None."""
+        if app.config["_server_role"] != "master":
+            return "This server is not a master - it cannot accept slaves.", 404
+        if not bool(getattr(config, "FEDERATION_ENABLED", True)):
+            return "Federation is disabled on this server.", 403
+        if not settings.accept_new_slaves(g.db):
+            return "This master is not accepting new slaves.", 403
+        return None
+
+    @app.route("/federation/connect", methods=["GET"])
+    def federation_consent():
+        """Consent page a slave's operator is sent to before it can enrol.
+
+        Reached by browser redirect from the slave, carrying the slave's own
+        signed request - so it is public, shows only what the approval would
+        grant, and never returns a secret other than the single-use code that
+        goes straight back to that slave.
+        """
+        blocked = _consent_blocked()
+        if blocked:
+            message, status = blocked
+            return render_template("federation_connect.html",
+                                   error=message), status
+
+        def _reject(message, status=400):
+            return render_template("federation_connect.html",
+                                   error=message), status
+
+        server_id = request.args.get("server_id", "")
+        hostname = request.args.get("hostname", "")
+        base_url = _clean_master_url(request.args.get("base_url", ""))
+        public_key = request.args.get("public_key", "")
+        state = request.args.get("state", "")
+        ts = request.args.get("ts", "")
+        sig = request.args.get("sig", "")
+        if not all([server_id, hostname, base_url, public_key, state, ts, sig]):
+            return _reject("This connection request is incomplete - open the "
+                           "Connect link on the slave again.")
+        try:
+            ts_int = int(ts)
+        except ValueError:
+            return _reject("This connection request has an invalid timestamp.")
+        if abs(int(time.time()) - ts_int) > federation.SIGNATURE_WINDOW_SECONDS:
+            return _reject("This connection request has expired - open the "
+                           "Connect link on the slave again.", 410)
+        if not federation.verify_connect_signature(
+                public_key, sig, server_id=server_id, hostname=hostname,
+                base_url=base_url, state=state, ts=ts_int):
+            return _reject("This connection request could not be verified.",
+                           403)
+        if _master_host(base_url) == _master_host(config.PUSH_PUBLIC_URL):
+            return _reject("That server is this master - a slave connects to "
+                           "a master, not to itself.")
+        try:
+            connect_id = federation.open_connect(
+                g.db, server_id=server_id, hostname=hostname,
+                base_url=base_url, public_key_b64=public_key, state=state)
+        except Exception as exc:  # noqa: BLE001 - duplicate/invalid row
+            return _reject(f"Could not record the request ({exc})")
+        return render_template(
+            "federation_connect.html",
+            connect_id=connect_id,
+            hostname=hostname,
+            server_id=server_id,
+            base_url=base_url,
+            plans=[dict(p) for p in billing.list_plans(g.db)
+                   if p["active"] and p["scope"] == billing.SCOPE_SLAVE],
+            terms=_CONSENT_TERMS)
+
+    @app.route("/federation/connect/<connect_id>/approve", methods=["POST"])
+    def federation_connect_approve(connect_id):
+        blocked = _consent_blocked()
+        if blocked:
+            message, status = blocked
+            return render_template("federation_connect.html",
+                                   error=message), status
+        code = federation.approve_connect(g.db, connect_id)
+        if code is None:
+            return render_template(
+                "federation_connect.html",
+                error="This connection request has expired or was already "
+                      "handled - ask the server to press Connect again."), 410
+        row = federation.get_connect(g.db, connect_id)
+        query = urllib.parse.urlencode({"code": code, "state": row["state"]})
+        return redirect(f"{row['base_url'].rstrip('/')}/federation/callback?"
+                        f"{query}", 302)
+
+    @app.route("/federation/connect/<connect_id>/decline", methods=["POST"])
+    def federation_connect_decline(connect_id):
+        blocked = _consent_blocked()
+        if blocked:
+            message, status = blocked
+            return render_template("federation_connect.html",
+                                   error=message), status
+        federation.decline_connect(g.db, connect_id)
+        return render_template("federation_connect.html",
+                               declined=True), 200
 
     @app.route("/bans", methods=["GET"])
     def bans_page():
@@ -1595,8 +2233,17 @@ def create_app(config):
 
     def _encryption_required() -> bool:
         """Server setting: on = clients must encrypt (design §7b)."""
-        mode = (getattr(config, "ENCRYPTION_MODE", "off") or "off").strip().lower()
-        return mode in ("on", "true", "1", "yes", "required")
+        return encryption_required(config)
+
+    @app.context_processor
+    def _inject_policy():
+        """Let templates conceal push metadata an encrypted server never keeps.
+
+        With encryption on, the server stores opaque ids only (§7b/D13), so
+        every folder/name/path cell renders as "(encrypted)" rather than
+        showing values that should not exist.
+        """
+        return {"encryption_on": _encryption_required()}
 
     @app.route("/api/health", methods=["GET"])
     def health():
@@ -1636,7 +2283,7 @@ def create_app(config):
             admin = get_admin_by_firebase_uid(g.db, uid)
             if admin is not None and admin["disabled_at"] is None:
                 token = create_session(g.db, config.session_secret, config)
-                resp = jsonify({"ok": True, "redirect": "/pushes"})
+                resp = jsonify({"ok": True, "redirect": _post_login_target()})
                 resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
                                 secure=config.PUSH_PUBLIC_URL.startswith("https"))
                 return resp
@@ -1683,13 +2330,37 @@ def create_app(config):
         header = request.headers.get("Authorization", "")
         return header[7:] if header.startswith("Bearer ") else None
 
+    def _resolved_plan(conn, row):
+        """The server's billing plan: its assignment, else the default (§7).
+
+        Returns a JSON-safe dict (plan_id renamed to id) or None when the
+        server has no plan and no default is configured.
+        """
+        plans = {p["plan_id"]: p for p in billing.list_plans(conn)
+                 if p["scope"] == billing.SCOPE_SLAVE}
+        plan_id = row["plan_id"] or settings.default_server_plan_id(conn)
+        plan = plans.get(plan_id)
+        if plan is None:
+            return None
+        return {"id": plan["plan_id"], "name": plan["name"],
+                "price_cents": plan["price_cents"],
+                "included_messages": plan["included_messages"],
+                "message_cents_per_1000": plan["message_cents_per_1000"],
+                "max_messages_per_month": plan["max_messages_per_month"],
+                "active": bool(plan["active"]),
+                "is_default": not row["plan_id"]}
+
     @app.route("/api/federation/enrol", methods=["POST"])
     def federation_enrol():
-        """A slave enrols: verify it via the signed callback, then activate.
+        """A slave enrols: prove consent, verify it via callback, then activate.
 
-        Automatic (D2) — no operator approval; bans/revocation still apply.
-        Gated by the master's federation settings (design §8): the feature must
-        be enabled by env, and the admin must be accepting new slaves.
+        Consent (design §5) - this master never accepts a slave by itself.
+        An unknown/changed server_id must carry a single-use code minted when
+        an operator approved it on /federation/connect; a server_id already
+        consented to with the same URL and key (not revoked) may re-enrol
+        code-less, so heartbeats can recover from a wipe. Gated by the
+        master's federation settings (design §8) as well: the feature must be
+        enabled by env, and the admin must be accepting new slaves.
         """
         if not bool(getattr(config, "FEDERATION_ENABLED", True)):
             return jsonify({"error": "federation disabled"}), 403
@@ -1703,6 +2374,21 @@ def create_app(config):
         if not all([server_id, hostname, base_url, public_key_b64]):
             return jsonify({"error": "server_id, hostname, base_url and public_key"
                                      " are required"}), 400
+        code = data.get("code") or ""
+        consented = federation.consent_not_required(
+            g.db, server_id=server_id, base_url=base_url,
+            public_key_b64=public_key_b64)
+        connect_row = None
+        if not consented:
+            connect_row = federation.find_connect_by_code(g.db, code)
+            if (connect_row is None or connect_row["server_id"] != server_id
+                    or connect_row["base_url"] != base_url
+                    or connect_row["public_key"] != public_key_b64):
+                return jsonify({"error": "consent required",
+                                "detail": "no operator approval covers this "
+                                          "slave - open the master's connect "
+                                          "link on the slave and approve it "
+                                          "first"}), 403
         challenge = federation.new_challenge()
         try:
             signature = federation.verify_slave_callback(base_url, challenge)
@@ -1710,9 +2396,20 @@ def create_app(config):
             return jsonify({"error": "callback failed", "detail": str(exc)[:120]}), 400
         if not federation.verify_callback_signature(public_key_b64, challenge, signature):
             return jsonify({"error": "callback signature invalid"}), 400
+        if connect_row is not None and not federation.mark_connect_consumed(
+                g.db, code):
+            return jsonify({"error": "consent code already used"}), 403
+        # The plan a server registers with: one already assigned survives a
+        # re-enrol (INSERT OR REPLACE would otherwise drop it); a new or
+        # plan-less server takes the master's default (design §7).
+        existing = federation.get_server(g.db, server_id)
+        plan_id = (existing["plan_id"] if existing is not None
+                   and existing["plan_id"] else None)
+        if not plan_id:
+            plan_id = settings.default_server_plan_id(g.db)
         secret = federation.register_active(
             g.db, server_id=server_id, hostname=hostname, base_url=base_url,
-            public_key_b64=public_key_b64)
+            public_key_b64=public_key_b64, plan_id=plan_id)
         return jsonify({"server_id": server_id, "server_secret": secret,
                         "status": "active"})
 
@@ -1741,11 +2438,33 @@ def create_app(config):
 
     @app.route("/api/federation/whoami", methods=["GET"])
     def federation_whoami():
+        """Signed identity check (design §5a/§7): the slave learns who it is on
+        this master and the billing plan it is running under."""
         row = federation.check_bearer(g.db, _federation_token())
         if row is None:
             return jsonify({"error": "unauthorized"}), 401
+        body = request.get_data() or b""
+        if not federation.verify_request(g.db, row, request.method, request.path,
+                                         body, request.headers):
+            return jsonify({"error": "bad signature"}), 401
         return jsonify({"server_id": row["server_id"], "hostname": row["hostname"],
-                        "status": row["status"]})
+                        "status": row["status"],
+                        "plan": _resolved_plan(g.db, row)})
+
+    @app.route("/api/federation/disconnect", methods=["POST"])
+    def federation_disconnect():
+        """A slave terminates its own connection (consent terms §5): the row and
+        its queued messages are removed, so a later re-enrol needs a fresh
+        operator consent code."""
+        row = federation.check_bearer(g.db, _federation_token())
+        if row is None:
+            return jsonify({"error": "unauthorized"}), 401
+        body = request.get_data() or b""
+        if not federation.verify_request(g.db, row, request.method, request.path,
+                                         body, request.headers):
+            return jsonify({"error": "bad signature"}), 401
+        federation.delete_server(g.db, row["server_id"])
+        return jsonify({"ok": True})
 
     @app.route("/api/federation/accounts/<account_id>/devices/<device_id>",
                methods=["PUT", "DELETE"])
@@ -1803,7 +2522,8 @@ def create_app(config):
         if fcm is None or not device["fcm_token"]:
             return jsonify({"error": "fcm unavailable"}), 503
         try:
-            fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"])
+            fcm.send({"p": sealed["c"], "i": sealed["i"]}, device["fcm_token"],
+                     high_priority=True)
         except Exception:  # noqa: BLE001 - report, the slave's retry worker will retry
             return jsonify({"error": "fcm send failed"}), 502
         accounts.increment_messages(g.db, account_id)  # metering (D5)
@@ -1910,6 +2630,32 @@ def create_app(config):
         return jsonify({"access_token": token, "token_type": "Bearer",
                         "expires_in": config.ACCESS_TOKEN_TTL_SECONDS})
 
+    @app.route("/api/push/content-key", methods=["GET"])
+    def api_push_content_key():
+        """The target device's content public key, for sealing the CEK (§7a).
+
+        A push client fetches this before an encrypted push, verifies the
+        pairing-key proof, pins the key (TOFU) and seals the content key to
+        it. Only public material travels here — the server relays keys it
+        can never open.
+        """
+        denied = client_denied()
+        if denied is not None:
+            return denied
+        device = get_device_by_name(g.db, request.args.get("device", ""))
+        if device is None:
+            return jsonify({"error": "device not found"}), 404
+        if not device["content_pubkey"]:
+            return jsonify({"error": "no content key", "detail":
+                            "This device has no content public key: pair it"
+                            " with a current app version."}), 404
+        # Same shape as the account-scoped route: the key, its pairing-key
+        # proof, and the pairing public key to verify that proof against
+        # (design §7c).
+        return jsonify({"content_pubkey": device["content_pubkey"],
+                        "content_proof": device["content_proof"],
+                        "device_public_key": device["public_key"]})
+
     @app.route("/api/push", methods=["POST"])
     def api_push():
         denied = client_denied()
@@ -1921,6 +2667,38 @@ def create_app(config):
         device = get_device_by_name(g.db, target_device)
         if device is None:
             return jsonify({"error": "device not found"}), 400
+        if "blocked_at" in device.keys() and device["blocked_at"] is not None:
+            return jsonify({"error": "device blocked", "detail":
+                            "This device has been blocked by an administrator."}), 403
+        # §7b: an encryption-on server accepts no plaintext. Uploads must carry
+        # encryption metadata (like /api/account/upload), and the destination
+        # folder is metadata the server must not see or store (D13) — it
+        # belongs in the encrypted payload until the app/client carry it there.
+        encrypted = _encryption_required()
+        if encrypted and not (request.form.get("alg") and request.form.get("nonce")):
+            return jsonify({"error": "encryption required"}), 422
+        target_folder = (request.form.get("target_folder") or "").strip()
+        if encrypted and target_folder:
+            return jsonify({"error": "target folder not permitted", "detail":
+                            "When encryption is on the destination folder must"
+                            " travel inside the encrypted payload, not as"
+                            " plaintext metadata."}), 400
+        # §7a: "any client" may seal the content key in the same request, and
+        # an encryption-on server refuses a push the app could never open —
+        # without a sealed CEK the doorbell would never ring and the files
+        # would sit pending forever (§7b). Fail fast instead (428).
+        if encrypted:
+            sealed = request.form.get("sealed_cek")
+            if sealed:
+                encryption.set_sealed_cek(g.db, device["device_secret"], sealed)
+            elif encryption.get_sealed_cek(
+                    g.db, device["device_secret"]) is None:
+                return jsonify({"error": "seal required", "detail":
+                                "This device has no sealed content key: fetch"
+                                " GET /api/push/content-key?device=<name>,"
+                                " verify and pin the key, seal the content key"
+                                " to it, and resend with sealed_cek"
+                                " (design §7a)."}), 428
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files uploaded"}), 400
@@ -1930,7 +2708,6 @@ def create_app(config):
         # already taken. Both are per-push options, mirroring the LocalSend
         # "mds" options, and are carried in the signed manifest so the device
         # cannot be redirected between fetching it and importing.
-        target_folder = (request.form.get("target_folder") or "").strip()
         conflict = push_store.normalise_conflict(request.form.get("conflict"))
         account_id = device["account_id"] if "account_id" in device.keys() else None
         # The plan caps how much pending storage an account may hold; reject a
@@ -1944,7 +2721,10 @@ def create_app(config):
         for f in uploads:
             file_id = uuid.uuid4().hex
             retrieval_key = uuid.uuid4().hex
-            name = os.path.basename(f.filename) or "file"
+            # With encryption on, the multipart filename is plaintext metadata
+            # the server must not keep: the opaque file_id stands in for it,
+            # in the database and on disk alike (§7a step 2, D13).
+            name = file_id if encrypted else (os.path.basename(f.filename) or "file")
             stored_dir = os.path.join(config.PUSH_STORAGE_DIR, push_id, file_id)
             os.makedirs(stored_dir, exist_ok=True)
             stored_path = os.path.join(stored_dir, name)
@@ -2014,6 +2794,10 @@ def create_app(config):
         if not device_secret or not device_auth:
             return jsonify({"error": "device_secret and device_auth required"}), 400
         ok = True
+        if data.get("fcm_token") or data.get("device_name") or data.get("push_key"):
+            # A blocked device may not rotate its token, name or push key.
+            if not check_device(g.db, device_secret, device_auth):
+                return jsonify({"error": "unauthorized"}), 401
         if data.get("fcm_token"):
             ok = update_device_token(g.db, device_secret, device_auth,
                                      data["fcm_token"]) and ok
@@ -2051,6 +2835,11 @@ def create_app(config):
             return jsonify({"error": "forbidden"}), 403
         if data["challenge_key"] != push_row["challenge_key"]:
             return jsonify({"error": "forbidden"}), 403
+        target = get_device_by_name(g.db, push_row["target_device"])
+        if target is not None and "blocked_at" in target.keys() \
+                and target["blocked_at"] is not None:
+            return jsonify({"error": "forbidden", "detail":
+                            "This device has been blocked by an administrator."}), 403
         manifest = trigger.build_manifest(
             push_id,
             datetime.datetime.fromtimestamp(

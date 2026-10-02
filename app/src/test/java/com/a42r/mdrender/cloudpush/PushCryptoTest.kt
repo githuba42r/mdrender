@@ -181,6 +181,101 @@ class PushCryptoTest {
     private fun rsaKeyPair(): KeyPair =
         KeyPairGenerator.getInstance("RSA").apply { initialize(3072) }.generateKeyPair()
 
+    // --- envelope (design §7a): name and folder live inside the ciphertext ---
+
+    private fun envelope(name: String, path: String, body: ByteArray): ByteArray {
+        val header = """{"name":"$name","path":"$path"}""".toByteArray(Charsets.UTF_8)
+        val out = java.io.ByteArrayOutputStream()
+        out.write(byteArrayOf(
+            (header.size ushr 24).toByte(), (header.size ushr 16).toByte(),
+            (header.size ushr 8).toByte(), header.size.toByte(),
+        ))
+        out.write(header)
+        out.write(body)
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `parseEnvelope recovers the real name, folder, and body`() {
+        val plain = envelope("review9.md", "Docs/2026", "hello".toByteArray())
+
+        val env = crypto.parseEnvelope(plain)
+
+        assertNotNull(env)
+        assertEquals("review9.md", env!!.name)
+        assertEquals("Docs/2026", env.path)
+        assertEquals("hello", String(env.bytes))
+    }
+
+    @Test
+    fun `parseEnvelope tolerates a blank name so the downloader can fall back`() {
+        val env = crypto.parseEnvelope(envelope("", "", "x".toByteArray()))
+
+        assertNotNull(env)
+        assertEquals("", env!!.name)
+        assertEquals("", env.path)
+    }
+
+    @Test
+    fun `parseEnvelope rejects a truncated or out-of-bounds header`() {
+        assertNull(crypto.parseEnvelope(byteArrayOf()))
+        assertNull(crypto.parseEnvelope(byteArrayOf(0, 0)))
+        // 4-byte length claims a header larger than the remaining bytes.
+        assertNull(crypto.parseEnvelope(byteArrayOf(0, 0, 0, 50, '{'.code.toByte())))
+        // Negative (high bit set) length must not wrap into a valid range.
+        assertNull(crypto.parseEnvelope(byteArrayOf(-1, -1, -1, -1, 0, 0)))
+    }
+
+    @Test
+    fun `parseEnvelope rejects an unparseable header`() {
+        // Corrupt the JSON but keep the length prefix consistent.
+        val corrupted = envelope("a.md", "", "x".toByteArray()).copyOf()
+        corrupted[5] = 'z'.code.toByte()
+        assertNull(crypto.parseEnvelope(corrupted))
+
+        // Header length matches the bytes, but the bytes are not JSON.
+        val header = "not-json".toByteArray()
+        val plain = byteArrayOf(
+            (header.size ushr 24).toByte(), (header.size ushr 16).toByte(),
+            (header.size ushr 8).toByte(), header.size.toByte(),
+        ) + header + "x".toByteArray()
+        assertNull(crypto.parseEnvelope(plain))
+    }
+
+    @Test
+    fun `decryptFile and parseEnvelope round-trip a sealed envelope`() {
+        val cek = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val plain = envelope("review9.md", "Docs/2026", "file body".toByteArray())
+        val ct = Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.ENCRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(128, nonce))
+            doFinal(plain)
+        }
+        val blob = nonce + ct
+
+        val decrypted = crypto.decryptFile(blob, cek)
+
+        assertNotNull(decrypted)
+        val env = crypto.parseEnvelope(decrypted!!)
+        assertNotNull(env)
+        assertEquals("review9.md", env!!.name)
+        assertEquals("Docs/2026", env.path)
+        assertEquals("file body", String(env.bytes))
+    }
+
+    @Test
+    fun `decryptFile rejects a blob encrypted under a different key`() {
+        val cek = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val other = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val ct = Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.ENCRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(128, nonce))
+            doFinal(envelope("a.md", "", "x".toByteArray()))
+        }
+
+        assertNull(crypto.decryptFile(nonce + ct, other))
+    }
+
     private fun sign(kp: KeyPair, body: String): String {
         val sig = Signature.getInstance("SHA256withRSA").run {
             initSign(kp.private)

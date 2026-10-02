@@ -4,19 +4,33 @@
 {% block content %}
 <h1>Users</h1>
 <p class="lede">Accounts (customers) and the devices related to them. Users sign in with their email; devices are paired to a user.</p>
+{% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
 <p><button type="button" class="btn-primary" data-open-dialog="#add-account-dialog">Add user</button></p>
 
 {% if accounts %}
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Email</th><th>Name</th><th>Host</th><th>Devices</th><th>Status</th><th>Balance</th><th></th></tr>
+    <tr><th>Email</th><th>Name</th>{% if firebase %}<th>Sign-in</th>{% endif %}<th>Host</th><th>Devices</th><th>Status</th><th>Balance</th><th></th></tr>
   </thead>
   <tbody>
     {% for a in accounts %}
     <tr>
       <td>{{ a.email }}</td>
       <td>{% if a.name %}{{ a.name }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      {% if firebase %}
+      <td>
+        {% if a.firebase_uid %}<span class="chip acked">linked</span>
+        {% else %}
+        <span class="chip pending">not linked</span>
+        {% if can_sync %}
+        <form method="POST" action="/accounts/{{ a.account_id }}/sync-firebase" class="inline">
+          <button type="submit" title="Create the Firebase user for this account and link it">Sync to Firebase</button>
+        </form>
+        {% endif %}
+        {% endif %}
+      </td>
+      {% endif %}
       <td>{{ a.host }}</td>
       <td>{{ a.device_count }}</td>
       <td>
@@ -26,6 +40,8 @@
       </td>
       <td>{{ a.balance }}</td>
       <td>
+        <button type="button" class="inline icon-btn"
+                title="Open" onclick="location.href='/accounts/{{ a.account_id }}'">{{ icons.eye() }}</button>
         <button type="button" class="inline icon-btn" data-edit-account data-id="{{ a.account_id }}"
                 data-name="{{ a.name or '' }}" data-email="{{ a.email }}" title="Edit">{{ icons.edit() }}</button>
         <button type="button" class="inline icon-btn" data-add-credit data-id="{{ a.account_id }}"

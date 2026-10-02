@@ -6,7 +6,7 @@
 name: mdrender-send
 arch: all
 platform: linux
-version: "1.0.15"
+version: "1.0.19"
 section: utils
 priority: optional
 maintainer: Phil Gersekowski <philg@aspedia.net>
@@ -16,6 +16,7 @@ description: |
 license: Proprietary
 depends:
   - python3
+  - python3-cryptography
 contents:
   - src: tools/localsend-send/localsend-send.py
     dst: /usr/bin/mdrender-send

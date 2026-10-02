@@ -12,6 +12,20 @@
     <input type="checkbox" name="accept_new_slaves" {% if accept_new_slaves %}checked{% endif %}>
     Accept new slave servers
   </label>
+  <label for="default-server-plan">Default plan for servers that register</label>
+  <div class="field">
+    <select id="default-server-plan" name="default_server_plan_id">
+      <option value="">(no default plan)</option>
+      {% for p in server_plans %}
+      <option value="{{ p.plan_id }}"{% if default_server_plan_id == p.plan_id %} selected{% endif %}>{{ p.name }}{% if not p.active %} (inactive){% endif %}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <p class="lede">A slave server takes this plan when it registers. To put one
+    server on a different plan, edit it on the <a href="/federation">Federation</a>
+    page. {% if not server_plans %}No server plans exist yet - create one under
+    <a href="/billing?tab=plans">Billing &rarr; Plans</a> (type
+    <em>server (host)</em>).{% endif %}</p>
   {% else %}
   <p class="lede">Federation is disabled on this server by configuration
     (<code>FEDERATION_ENABLED=0</code>). Enrolment is refused.</p>

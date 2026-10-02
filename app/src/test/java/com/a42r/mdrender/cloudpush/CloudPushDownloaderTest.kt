@@ -20,7 +20,11 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verifyBlocking
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.file.Files
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class CloudPushDownloaderTest {
 
@@ -77,7 +81,10 @@ class CloudPushDownloaderTest {
     }
 
     private fun newDownloader(files: FileRepository = fileRepository) =
-        CloudPushDownloader(manager, PushClient(), config, files, folderRepository, pushHistory)
+        CloudPushDownloader(
+            manager, PushClient(), config, PushCrypto(mock()), files,
+            folderRepository, pushHistory,
+        )
 
     private fun file(id: String, path: String = "") = PushCrypto.ManifestFile(
         fileId = id, name = "$id.md", path = path, size = 0, retrievalKey = "rk-$id"
@@ -98,6 +105,41 @@ class CloudPushDownloaderTest {
         files = files.toList(),
     )
 
+    /** Seal an envelope exactly as the client does: nonce(12) || AES-GCM(envelope). */
+    private fun encryptedBlob(cek: ByteArray, name: String, path: String, body: String): ByteArray {
+        val header = """{"name":"$name","path":"$path"}""".toByteArray(Charsets.UTF_8)
+        val plain = ByteBuffer.allocate(4 + header.size + body.length)
+            .putInt(header.size).put(header).put(body.toByteArray()).array()
+        val nonce = ByteArray(12) { (it + 1).toByte() }
+        val ct = Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.ENCRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(128, nonce))
+            doFinal(plain)
+        }
+        return nonce + ct
+    }
+
+    /**
+     * A downloader in encryption-on mode: the sealed key it fetches unwraps to
+     * [cek], and file `enc`'s download serves [blob].
+     */
+    private fun encryptedDownloader(
+        cek: ByteArray,
+        blob: ByteArray,
+        files: FileRepository = fileRepository,
+    ): CloudPushDownloader {
+        config.encryptionMode = "on"
+        server.on("/api/device/content-key") {
+            TestHttpServer.Resp(200, """{"sealed_cek":"c2VhbA=="}""")
+        }
+        server.on("/api/push/enc/download") { TestHttpServer.Resp(200, blob) }
+        server.on("/api/push/enc/received") { TestHttpServer.Resp(200, "{}") }
+        val keyStore = mock<CloudPushKeyStore> { on { decryptOaep(any()) } doReturn cek }
+        return CloudPushDownloader(
+            manager, PushClient(), config, PushCrypto(keyStore), files,
+            folderRepository, pushHistory,
+        )
+    }
+
     @Test
     fun `downloads a file, imports it, acks it, and records history`() = runBlocking {
         manager.enqueue(doorbell(), manifest(file("f1")))
@@ -111,7 +153,7 @@ class CloudPushDownloaderTest {
         verifyBlocking(fileRepository) {
             importFileFromTemp(any(), eq("f1.md"), eq("text/markdown"), eq(7L))
         }
-        verifyBlocking(pushHistory) { record("Cloud Push", "f1.md", 11L, 7L) }
+        verifyBlocking(pushHistory) { record(CloudPushDownloader.ROOT_FOLDER, "f1.md", 11L, 7L) }
     }
 
     @Test
@@ -122,7 +164,7 @@ class CloudPushDownloaderTest {
 
         // importFileFromTemp consumes and deletes the temp file, so the size has
         // to be read before the import or every entry would log zero bytes.
-        verifyBlocking(pushHistory) { record("Cloud Push", "f2.md", 16L, 7L) }
+        verifyBlocking(pushHistory) { record(CloudPushDownloader.ROOT_FOLDER, "f2.md", 16L, 7L) }
     }
 
     @Test
@@ -137,7 +179,7 @@ class CloudPushDownloaderTest {
         verifyBlocking(folderRepository) { findOrCreateFolder("notes", null) }
         verifyBlocking(folderRepository) { findOrCreateFolder("2026", 7L) }
         verifyBlocking(folderRepository) { findOrCreateFolder("aug", 7L) }
-        verifyBlocking(folderRepository, never()) { findOrCreateFolder("Cloud Push", null) }
+        verifyBlocking(folderRepository, never()) { findOrCreateFolder(CloudPushDownloader.ROOT_FOLDER, null) }
     }
 
     @Test
@@ -261,7 +303,7 @@ class CloudPushDownloaderTest {
         // it lands where they will actually look for it.
         verifyBlocking(folderRepository) { findOrCreateFolder("Story", null) }
         verifyBlocking(folderRepository) { findOrCreateFolder("cloud-send-images", 7L) }
-        verifyBlocking(folderRepository, never()) { findOrCreateFolder("Cloud Push", null) }
+        verifyBlocking(folderRepository, never()) { findOrCreateFolder(CloudPushDownloader.ROOT_FOLDER, null) }
     }
 
     @Test
@@ -270,7 +312,7 @@ class CloudPushDownloaderTest {
 
         downloader.drain("push-1", tempDir) { }
 
-        verifyBlocking(folderRepository) { findOrCreateFolder("Cloud Push", null) }
+        verifyBlocking(folderRepository) { findOrCreateFolder(CloudPushDownloader.ROOT_FOLDER, null) }
     }
 
     @Test
@@ -357,6 +399,83 @@ class CloudPushDownloaderTest {
 
         verifyBlocking(files) { importFileFromTemp(any(), eq("f1.md"), eq("text/markdown"), eq(7L)) }
         verifyBlocking(files, never()) { replaceFileFromTemp(any(), anyOrNull(), anyOrNull(), anyOrNull(), any(), anyOrNull()) }
+    }
+
+    // --- encrypted pushes (design §7a): name and folder come from the envelope ---
+
+    @Test
+    fun `an encrypted push imports by the envelope's name and folder`() = runBlocking {
+        val cek = ByteArray(32) { it.toByte() }
+        val d = encryptedDownloader(cek, encryptedBlob(cek, "real-name.md", "Secret/Folder", "secret body"))
+        manager.enqueue(doorbell(), manifest(file("enc")))
+
+        val imported = d.drain("push-1", tempDir) { started += it }
+
+        assertEquals(1, imported)
+        // The manifest's name is the opaque file id; the envelope carries the truth.
+        assertEquals(listOf("encrypted file"), started)
+        assertEquals(listOf("enc"), ackedFileIds())
+        verifyBlocking(folderRepository) { findOrCreateFolder("Secret", null) }
+        verifyBlocking(folderRepository) { findOrCreateFolder("Folder", 7L) }
+        verifyBlocking(fileRepository) {
+            importFileFromTemp(any(), eq("real-name.md"), eq("text/markdown"), eq(7L))
+        }
+        verifyBlocking(pushHistory) { record(CloudPushDownloader.ROOT_FOLDER, "real-name.md", 11L, 7L) }
+        // The sealed key came from the server; the downloader cannot decrypt without it.
+        assertTrue(server.requests.any { it.path == "/api/device/content-key" })
+    }
+
+    @Test
+    fun `an encrypted push falls back to the manifest name when the envelope name is blank`() = runBlocking {
+        val cek = ByteArray(32) { it.toByte() }
+        val d = encryptedDownloader(cek, encryptedBlob(cek, "", "", "secret body"))
+        manager.enqueue(doorbell(), manifest(file("enc")))
+
+        assertEquals(1, d.drain("push-1", tempDir) { started += it })
+
+        verifyBlocking(fileRepository) {
+            importFileFromTemp(any(), eq("enc.md"), eq("text/markdown"), eq(7L))
+        }
+    }
+
+    @Test
+    fun `an encrypted push that fails to decrypt is not acked`() = runBlocking {
+        val cek = ByteArray(32) { it.toByte() }
+        // Well-formed envelope under the wrong key: authentication fails.
+        val blob = encryptedBlob(ByteArray(32) { (it + 1).toByte() }, "real-name.md", "", "body")
+        val d = encryptedDownloader(cek, blob)
+        manager.enqueue(doorbell(), manifest(file("enc")))
+
+        val imported = d.drain("push-1", tempDir) { started += it }
+
+        assertEquals(0, imported)
+        assertEquals(CloudPushManager.Status.FAILED, manager.state.value.single().status)
+        assertTrue("a failed decrypt must never ack", ackedFileIds().isEmpty())
+        verifyBlocking(fileRepository, never()) {
+            importFileFromTemp(any(), anyOrNull(), anyOrNull(), anyOrNull())
+        }
+    }
+
+    @Test
+    fun `an encrypted skip acks without importing when the envelope name is taken`() = runBlocking {
+        val cek = ByteArray(32) { it.toByte() }
+        val existing = FileMetadata(id = 42L, name = "real-name.md", mimeType = "text/markdown", fileSize = 11L)
+        val files = mock<FileRepository> {
+            onBlocking { mimeTypeFromExtension(any()) } doReturn "text/markdown"
+            onBlocking { findByName(7L, "real-name.md") } doReturn existing
+        }
+        val d = encryptedDownloader(cek, encryptedBlob(cek, "real-name.md", "Secret", "secret body"), files)
+        manager.enqueue(doorbell(), manifest(file("enc"), conflict = "skip"))
+
+        assertEquals(0, d.drain("push-1", tempDir) { started += it })
+
+        // Encrypted mode cannot pre-check the name: it downloads, decrypts, then
+        // decides — and must still ack so the server stops offering the file.
+        assertEquals(listOf("enc"), ackedFileIds())
+        verifyBlocking(files, never()) {
+            importFileFromTemp(any(), anyOrNull(), anyOrNull(), anyOrNull())
+        }
+        assertEquals(CloudPushManager.Status.DONE, manager.state.value.single().status)
     }
 
     private class FakeSharedPreferences : android.content.SharedPreferences {

@@ -169,6 +169,45 @@ class PushCrypto @Inject constructor(private val keyStore: CloudPushKeyStore) {
         null
     }
 
+    /** Metadata header of a decrypted push payload (design §7a/D13). */
+    @Serializable
+    data class EnvelopeHeader(val name: String, val path: String = "")
+
+    /** A decrypted push payload: the real filename, folder, and file bytes. */
+    data class PushEnvelope(val name: String, val path: String, val bytes: ByteArray)
+
+    /**
+     * Split [plain] — the output of [decryptFile] — into header and file bytes:
+     * `u32be(len(header)) || header_json || file_bytes`, where the header
+     * carries the original filename and destination folder. They exist only
+     * inside the ciphertext: the server stores the blob under an opaque id and
+     * never sees them (design §7a, D13). Null when the payload is not a
+     * well-formed envelope (truncated length, header past the end, bad JSON).
+     */
+    fun parseEnvelope(plain: ByteArray): PushEnvelope? = try {
+        if (plain.size < 4) {
+            null
+        } else {
+            val headerLen = ((plain[0].toInt() and 0xff) shl 24) or
+                ((plain[1].toInt() and 0xff) shl 16) or
+                ((plain[2].toInt() and 0xff) shl 8) or
+                (plain[3].toInt() and 0xff)
+            if (headerLen < 0 || headerLen > plain.size - 4) {
+                null
+            } else {
+                val header = WIRE.decodeFromString<EnvelopeHeader>(
+                    String(plain, 4, headerLen, Charsets.UTF_8))
+                PushEnvelope(
+                    header.name,
+                    header.path,
+                    plain.copyOfRange(4 + headerLen, plain.size),
+                )
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
         /**
          * Every cloud-push payload is snake_case on the wire (`push_id`,

@@ -39,58 +39,106 @@ class CloudPushDownloader @Inject constructor(
      */
     suspend fun drain(pushId: String, tempDir: File, onFile: (String) -> Unit): Int {
         var imported = 0
-        for (task in manager.state.value.filter { it.pushId == pushId }) {
+        // Plaintext pushes carry name/path in the signed manifest; encrypted
+        // ones carry them inside the envelope and can only be resolved after
+        // download + decrypt (design §7a), so nothing name-based is settled
+        // before bytes move in that mode.
+        val encrypted = config.encryptionMode == "on"
+        val matched = manager.state.value.filter { it.pushId == pushId }
+        android.util.Log.d(
+            "CloudPushDownload",
+            "drain pushId=$pushId encrypted=$encrypted known=${manager.state.value.size} matched=${matched.size}",
+        )
+        for (task in matched) {
             val fileId = task.fileId
             if (statusOf(fileId) == CloudPushManager.Status.CANCELLED) {
                 // Ack so the server drops its copy; the user declined it.
                 client.ackReceived(config, fileId, task.file.retrievalKey)
                 continue
             }
-            onFile(task.file.name)
+            onFile(if (encrypted) "encrypted file" else task.file.name)
 
-            val folderId = resolveFolder(task.targetFolder, task.file.path)
-            // SKIP is settled before any bytes move: if the name is already
-            // taken there is nothing to download, so do not spend the bandwidth.
-            if (task.conflict == ConflictStrategy.SKIP &&
-                fileRepository.findByName(folderId, task.file.name) != null
-            ) {
-                client.ackReceived(config, fileId, task.file.retrievalKey)
-                pushHistory.record(ROOT_FOLDER, task.file.name, task.file.size, folderId)
-                manager.onFinished(fileId, success = true)
-                continue
+            // Plaintext resolves its folder up front so SKIP can settle before
+            // any bytes move; encrypted folders only exist after decrypt.
+            val plainFolder = if (!encrypted) {
+                val preFolder = resolveFolder(task.targetFolder, task.file.path)
+                if (task.conflict == ConflictStrategy.SKIP &&
+                    fileRepository.findByName(preFolder, task.file.name) != null
+                ) {
+                    client.ackReceived(config, fileId, task.file.retrievalKey)
+                    pushHistory.record(ROOT_FOLDER, task.file.name, task.file.size, preFolder)
+                    manager.onFinished(fileId, success = true)
+                    continue
+                }
+                preFolder
+            } else {
+                null
             }
 
             val temp = File.createTempFile("cp_", ".tmp", tempDir)
+            var name = task.file.name
+            var skipped = false
             val ok = runCatching {
                 client.downloadFile(config, fileId, task.file.retrievalKey, temp)
                     .getOrThrow()
-                // Server-enforced encryption (design §7b): the bytes are opaque
-                // ciphertext; decrypt in place with the content key before import.
-                if (config.encryptionMode == "on") {
+                val target: Long
+                if (encrypted) {
+                    // Server-enforced encryption (design §7b): the bytes are
+                    // opaque ciphertext; decrypt, then read the name/folder out
+                    // of the envelope — the server holds neither (D13).
                     val key = cek ?: refreshCek()
                         ?: throw IOException("no content key for an encrypted push")
                     val plain = crypto.decryptFile(temp.readBytes(), key)
-                        ?: throw IOException("encrypted file did not authenticate")
-                    temp.writeBytes(plain)
+                    if (plain == null) {
+                        android.util.Log.w("CloudPushDownload", "decryptFile returned null")
+                        throw IOException("encrypted file did not authenticate")
+                    }
+                    val env = crypto.parseEnvelope(plain)
+                    if (env == null) {
+                        android.util.Log.w(
+                            "CloudPushDownload",
+                            "parseEnvelope returned null (len=${plain.size})",
+                        )
+                        throw IOException("encrypted payload is not a valid envelope")
+                    }
+                    temp.writeBytes(env.bytes)
+                    name = env.name.ifBlank { task.file.name }
+                    target = resolveFolder(task.targetFolder, env.path)
+                } else {
+                    target = plainFolder ?: throw IOException("no destination folder")
                 }
-                // importFileFromTemp consumes and deletes the temp file, so the
-                // size has to be read first or every history row would say 0.
-                val size = temp.length()
-                importHonouringConflict(temp, task, folderId)
-                // Ack only once the file is safely in the library. A server that
-                // still holds an unacked file can resend it, which beats silently
-                // losing one.
-                client.ackReceived(config, fileId, task.file.retrievalKey)
-                    .getOrThrow()
-                pushHistory.record(ROOT_FOLDER, task.file.name, size, folderId)
+                if (task.conflict == ConflictStrategy.SKIP &&
+                    fileRepository.findByName(target, name) != null
+                ) {
+                    // Taken after all (or, encrypted, only knowable now):
+                    // ack without importing so the server stops offering it.
+                    client.ackReceived(config, fileId, task.file.retrievalKey)
+                    pushHistory.record(ROOT_FOLDER, name, temp.length(), target)
+                    skipped = true
+                } else {
+                    // importFileFromTemp consumes and deletes the temp file, so the
+                    // size has to be read first or every history row would say 0.
+                    val size = temp.length()
+                    importHonouringConflict(temp, task, target, name)
+                    // Ack only once the file is safely in the library. A server that
+                    // still holds an unacked file can resend it, which beats silently
+                    // losing one.
+                    client.ackReceived(config, fileId, task.file.retrievalKey)
+                        .getOrThrow()
+                    pushHistory.record(ROOT_FOLDER, name, size, target)
+                }
             }.onFailure { e ->
+                android.util.Log.w(
+                    "CloudPushDownload",
+                    "task ${task.file.fileId} failed: ${e.javaClass.simpleName}: ${e.message}",
+                )
                 // 401/404 means the server has forgotten us. Retrying will not
                 // help, so ask for re-pairing instead of failing silently forever.
                 if (e is PushHttpException && e.isUnregistered) {
                     manager.setReRegistrationNeeded(true)
                 }
             }.isSuccess
-            if (ok) imported++
+            if (ok && !skipped) imported++
             temp.delete()
             manager.onFinished(fileId, ok)
         }
@@ -105,32 +153,46 @@ class CloudPushDownloader @Inject constructor(
      * holds only the sealed blob, so it cannot do this itself (design §7c).
      */
     private suspend fun refreshCek(): ByteArray? {
-        val sealed = client.fetchSealedCek(config).getOrNull() ?: return null
-        return crypto.decryptSealedCek(sealed)?.also { cek = it }
+        val sealed = client.fetchSealedCek(config).getOrElse {
+            android.util.Log.w(
+                "CloudPushDownload",
+                "fetchSealedCek failed: ${it.javaClass.simpleName}: ${it.message}",
+            )
+            return null
+        }
+        val key = crypto.decryptSealedCek(sealed)
+        android.util.Log.d(
+            "CloudPushDownload",
+            "refreshCek sealed=${sealed.length} unwrapped=${key?.size}",
+        )
+        return key?.also { cek = it }
     }
 
     /**
      * Import [temp] under the conflict strategy the sender chose, behaving the
      * same way a LocalSend receive does so one mental model covers both.
+     * [name] is the real filename — for encrypted pushes it came from the
+     * envelope, not the manifest's opaque id.
      */
     private suspend fun importHonouringConflict(
         temp: File,
         task: CloudPushManager.DownloadTask,
-        folderId: Long?,
+        folderId: Long,
+        name: String,
     ) {
-        val mime = fileRepository.mimeTypeFromExtension(task.file.name)
+        val mime = fileRepository.mimeTypeFromExtension(name)
         when (task.conflict) {
             ConflictStrategy.REPLACE -> {
-                val old = fileRepository.findByName(folderId, task.file.name)
+                val old = fileRepository.findByName(folderId, name)
                 if (old == null) {
-                    fileRepository.importFileFromTemp(temp, task.file.name, mime, folderId)
+                    fileRepository.importFileFromTemp(temp, name, mime, folderId)
                 } else {
                     // Carry the reader's place over to the replacement, exactly
                     // as LocalSend does, so overwriting a file does not silently
                     // reset someone's scroll or playback position.
                     val lastOpened = fileRepository.getLastOpenedAt(old.id)?.coerceAtLeast(0) ?: 0
                     fileRepository.replaceFileFromTemp(
-                        temp, task.file.name, mime, folderId,
+                        temp, name, mime, folderId,
                         oldId = old.id,
                         bookmarks = FileBookmarks(
                             scrollPosition = old.scrollPosition,
@@ -143,10 +205,10 @@ class CloudPushDownloader @Inject constructor(
             // Already dealt with before the download; if we got here the name
             // was free after all, so a plain import is the right outcome.
             ConflictStrategy.SKIP ->
-                fileRepository.importFileFromTemp(temp, task.file.name, mime, folderId)
+                fileRepository.importFileFromTemp(temp, name, mime, folderId)
             ConflictStrategy.RENAME -> fileRepository.importFileFromTemp(
                 temp,
-                fileRepository.uniqueNameInFolder(folderId, task.file.name),
+                fileRepository.uniqueNameInFolder(folderId, name),
                 mime,
                 folderId,
             )

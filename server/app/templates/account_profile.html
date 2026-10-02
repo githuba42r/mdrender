@@ -5,14 +5,11 @@
 <p class="lede">Your name, contact details and password. Email, phone and password
   changes are written through to your Firebase sign-in account, so they stay in
   step with how you sign in.</p>
-{% if account.firebase_uid %}
-<p class="lede">Linked to your sign-in account.</p>
-{% else %}
-<p class="lede">Not yet linked to a sign-in account — sign out and back in with a
-  sign-in link to link it.</p>
+{% if firebase %}
+<p class="lede">{% if account.firebase_uid %}Linked to your sign-in account.{% else %}Not yet linked to a sign-in account.{% endif %}</p>
 {% endif %}
 {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
-<form method="POST" action="/account/profile" class="stack">
+<form method="POST" action="/account/profile" class="stack" data-validate>
   <label for="name">Name</label>
   <div class="field"><input type="text" id="name" name="name" value="{{ account.name or '' }}"></div>
   <label for="email">Email</label>
@@ -21,6 +18,24 @@
   <div class="field"><input type="text" id="phone" name="phone" autocomplete="tel" value="{{ account.phone or '' }}" placeholder="+61 400 000 000"></div>
   <label for="password">New password (leave blank to keep)</label>
   <div class="field"><input type="password" id="password" name="password" autocomplete="new-password"></div>
+  <label for="password_confirm">Confirm new password</label>
+  <div class="field"><input type="password" id="password_confirm" name="password_confirm" autocomplete="new-password"></div>
   <button type="submit" class="btn-primary">Save changes</button>
 </form>
+{% if firebase %}
+<h2>Sign-in linking</h2>
+{% if request.args.get('linked') %}
+<p class="login-msg">Sign-in account linked.</p>
+{% endif %}
+{% if account.firebase_uid %}
+<p class="lede">Linked to your sign-in account. Link another method below to
+  sign in with it next time:</p>
+{% else %}
+<p class="lede">Link this account to a sign-in so you can come back with an
+  email link, a password, or a social account. Your local password keeps
+  working either way:</p>
+{% endif %}
+{% set auth_action = 'link' %}{% set auth_next = '/account/profile' %}
+{% include "_firebase_auth.html" %}
+{% endif %}
 {% endblock %}

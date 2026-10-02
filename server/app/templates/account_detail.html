@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+{% block title %}{{ account.email }} &middot; Users &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<p><a href="/accounts">&larr; Users</a></p>
+<h1>{{ account.email }}</h1>
+{% if account.name %}<p class="empty">{{ account.name }}</p>{% endif %}
+{% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
+<p class="lede">
+  {% if account.status == 'active' %}<span class="chip acked">active</span>
+  {% elif account.status == 'banned' %}<span class="chip failed">banned</span>
+  {% else %}<span class="chip pending">{{ account.status }}</span>{% endif %}
+  <span class="empty">{{ account.host }}</span>
+  &middot; Balance: {{ account.balance }}
+  &middot; Created: {{ account.created_at | dt }}
+  &middot; Last login: {% if account.last_login_at %}{{ account.last_login_at | dt }}{% else %}<span class="empty">never</span>{% endif %}
+  &middot; Devices: {{ devices | length }}
+  &middot; Pending: {{ stats.pending_files }} file(s), {{ stats.pending_bytes | filesize }}
+  &middot; Pushes this month: {{ stats.messages_month }}
+</p>
+<p>
+  {% if account.status == 'active' %}
+  <form method="POST" action="/accounts/{{ account.account_id }}/status" class="inline"
+        data-confirm="Deactivate {{ account.email }}? Their devices will stop receiving pushes."
+        data-confirm-ok="Deactivate">
+    <input type="hidden" name="status" value="blocked">
+    <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+    <button type="submit" class="icon-btn" title="Deactivate">{{ icons.pause() }}</button>
+  </form>
+  {% else %}
+  <form method="POST" action="/accounts/{{ account.account_id }}/status" class="inline">
+    <input type="hidden" name="status" value="active">
+    <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+    <button type="submit" class="icon-btn" title="Activate">{{ icons.check() }}</button>
+  </form>
+  {% endif %}
+  {% if account.status != 'banned' %}
+  <form method="POST" action="/accounts/{{ account.account_id }}/status" class="inline"
+        data-confirm="Ban {{ account.email }}? They cannot sign in or push."
+        data-confirm-ok="Ban">
+    <input type="hidden" name="status" value="banned">
+    <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+    <button type="submit" class="icon-btn btn-danger" title="Ban">{{ icons.ban() }}</button>
+  </form>
+  {% endif %}
+</p>
+
+<h2>Devices</h2>
+{% if devices %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Model</th><th>Registered</th><th>Last seen</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for d in devices %}
+    <tr>
+      <td>{{ d.device_name }}</td>
+      <td>{% if d.device_model %}{{ d.device_model }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{{ d.registered_at | dt }}</td>
+      <td>{{ d.last_seen | dt }}</td>
+      <td>
+        {% if d.blocked_at %}<span class="chip failed">blocked</span>
+        {% elif d.approved_at %}<span class="chip acked">approved</span>
+        {% else %}<span class="chip pending">pending approval</span>{% endif %}
+      </td>
+      <td>
+        {% if d.blocked_at %}
+        <form method="POST" action="/accounts/{{ account.account_id }}/devices/{{ d.device_secret }}/block" class="inline">
+          <input type="hidden" name="blocked" value="0">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn" title="Unblock device">{{ icons.check() }}</button>
+        </form>
+        {% else %}
+        <form method="POST" action="/accounts/{{ account.account_id }}/devices/{{ d.device_secret }}/block" class="inline"
+              data-confirm="Block device '{{ d.device_name }}'? It will stop receiving pushes until unblocked."
+              data-confirm-ok="Block">
+          <input type="hidden" name="blocked" value="1">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn" title="Block device">{{ icons.ban() }}</button>
+        </form>
+        {% endif %}
+        <form method="POST" action="/accounts/{{ account.account_id }}/devices/{{ d.device_secret }}/revoke" class="inline"
+              data-confirm="Remove device '{{ d.device_name }}'? It must re-pair before it can receive pushes again."
+              data-confirm-ok="Remove">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No devices paired to this account.</p>
+{% endif %}
+
+<h2>CLI clients</h2>
+{% if clients %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Client ID</th><th>Created</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for c in clients %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><code>{{ c.client_id }}</code></td>
+      <td>{{ c.created_at | dt }}</td>
+      <td>
+        {% if c.blocked_at %}<span class="chip failed">blocked</span>
+        {% else %}<span class="chip acked">active</span>{% endif %}
+      </td>
+      <td>
+        {% if c.blocked_at %}
+        <form method="POST" action="/accounts/{{ account.account_id }}/clients/{{ c.client_id }}/block" class="inline">
+          <input type="hidden" name="blocked" value="0">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn" title="Unblock client">{{ icons.check() }}</button>
+        </form>
+        {% else %}
+        <form method="POST" action="/accounts/{{ account.account_id }}/clients/{{ c.client_id }}/block" class="inline"
+              data-confirm="Block client '{{ c.name }}'? Its tokens stop working until unblocked."
+              data-confirm-ok="Block">
+          <input type="hidden" name="blocked" value="1">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn" title="Block client">{{ icons.ban() }}</button>
+        </form>
+        {% endif %}
+        <form method="POST" action="/accounts/{{ account.account_id }}/clients/{{ c.client_id }}/revoke" class="inline"
+              data-confirm="Revoke client '{{ c.name }}'? Its tokens stop working immediately and it disappears from the list."
+              data-confirm-ok="Revoke">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn btn-danger" title="Revoke">{{ icons.revoke() }}</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No CLI clients enrolled for this account.</p>
+{% endif %}
+
+<h2>Recent pushes</h2>
+<form method="POST" action="/accounts/{{ account.account_id }}/pushes/purge" class="inline"
+      data-confirm="Delete every push record and stored file for {{ account.email }}? This cannot be undone."
+      data-confirm-ok="Purge all">
+  <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+  <button type="submit" class="btn-danger">Purge all</button>
+</form>
+{% if pushes %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Push ID</th><th>Device</th><th>Destination folder</th><th>Files</th>
+      <th>Date</th><th>Status</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in pushes %}
+    <tr>
+      <td><code>{{ p.push_id }}</code></td>
+      <td>{{ p.target_device }}</td>
+      <td>
+        {% if encryption_on %}<span class="empty">(encrypted)</span>
+        {% elif p.target_folder %}<code>{{ p.target_folder }}</code>
+        {% else %}<span class="empty">(app default)</span>{% endif %}
+      </td>
+      <td>
+        {% if encryption_on %}<span class="empty">(encrypted)</span>
+          <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
+        {% elif p.file_names %}{{ p.file_names }}
+          <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
+        {% else %}<span class="empty">none</span>{% endif %}
+      </td>
+      <td>{{ p.date | dt }}</td>
+      <td><span class="chip {{ p.status }}">{{ p.status }}</span></td>
+      <td>
+        <form method="POST" action="/accounts/{{ account.account_id }}/pushes/{{ p.push_id }}/delete" class="inline"
+              data-confirm="Remove this push and any stored files?"
+              data-confirm-ok="Remove">
+          <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No pushes yet for this account.</p>
+{% endif %}
+
+<h2>Pending pushes</h2>
+<form method="POST" action="/accounts/{{ account.account_id }}/pending/purge" class="inline"
+      data-confirm="Delete every pending push and stored file for {{ account.email }}? This cannot be undone."
+      data-confirm-ok="Purge pending">
+  <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+  <button type="submit" class="btn-danger">Purge pending</button>
+</form>
+{% if pending %}
+{% for p in pending %}
+<section class="push-group">
+  <h2>
+    <code>{{ p.push_id }}</code>
+    <span class="empty">to {{ p.target_device }}</span>
+    <form method="POST" action="/accounts/{{ account.account_id }}/pushes/{{ p.push_id }}/delete" class="inline"
+          data-confirm="Delete this entire push and all {{ p.files | length }} pending file(s)?"
+          data-confirm-ok="Delete">
+      <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+      <button type="submit" class="icon-btn btn-danger" title="Delete entire push">{{ icons.trash() }}</button>
+    </form>
+  </h2>
+  <p>
+    Destination:
+    {% if encryption_on %}<span class="empty">(encrypted)</span>
+    {% elif p.target_folder %}<code>{{ p.target_folder }}</code>
+    {% else %}<span class="empty">(app default)</span>{% endif %}
+    &middot; Conflict: {{ p.conflict }}
+    &middot; Queued: {{ p.date | dt }}
+  </p>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>File</th><th>Path</th><th>Size</th><th>Created</th><th>Status</th><th>Retries</th></tr>
+    </thead>
+    <tbody>
+      {% for f in p.files %}
+      <tr>
+        <td>{% if encryption_on %}<span class="empty">(encrypted)</span>
+          {%- else %}{{ f.file_name }}{% endif %}</td>
+        <td>{% if encryption_on %}<span class="empty">(encrypted)</span>
+          {%- else %}{{ f.file_path }}{% endif %}</td>
+        <td>{{ f.size | filesize }}</td>
+        <td>{{ f.created_at | dt }}</td>
+        <td><span class="chip {{ f.status }}">{{ f.status }}</span></td>
+        <td>{{ f.retries }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endfor %}
+{% else %}
+<p class="empty">Nothing pending for this account.</p>
+{% endif %}
+{% endblock %}

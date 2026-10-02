@@ -32,6 +32,10 @@ server/.venv/
 server/docker-compose.yml
 server/data/
 
+# Local federated (slave) instance: same reason
+server/docker-compose.federated.yml
+server/data-federated/
+
 # Firebase CLI debug output
 firebase-debug.log
 

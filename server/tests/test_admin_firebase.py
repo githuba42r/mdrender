@@ -18,7 +18,7 @@ def _app(config, **overrides):
 
 
 def _login(c):
-    assert c.post("/login",
+    assert c.post("/admin-login",
                   data={"username": "admin", "password": "testpass"}).status_code == 302
 
 
@@ -53,6 +53,30 @@ def test_admin_login_route_is_local_only(config, db_path):
     assert b'name="username"' in page.data and b'name="password"' in page.data
     assert c.post("/admin-login",
                   data={"username": "admin", "password": "nope"}).status_code == 401
+    assert c.post("/admin-login",
+                  data={"username": "admin", "password": "testpass"}).status_code == 302
+
+
+def test_local_credentials_stay_available_when_firebase_is_on(config, db_path):
+    """Firebase admin login augments the password form, never replaces it:
+    local credentials (the SERVER_PASSWORD bootstrap path) must still be
+    typeable and submittable on the operator console."""
+    app = _app(config, ADMIN_FIREBASE_LOGIN=True, FIREBASE_API_KEY="k",
+               FIREBASE_AUTH_DOMAIN="proj.firebaseapp.com",
+               FIREBASE_PROVIDERS="password")
+    c = app.test_client()
+    body = c.get("/admin-login").data
+
+    assert b'action="/admin-login"' in body          # the local form
+    assert b'name="username"' in body and b'name="password"' in body
+    assert b"window.__FIREBASE__" in body            # ...plus the Firebase block
+    assert body.index(b'action="/admin-login"') < body.index(b"window.__FIREBASE__")
+    # It is a real <form> with a submit button, so Enter submits; the Firebase
+    # fields sit outside any form, so they carry their own Enter handlers.
+    assert b"onkeydown" in body
+    # The operator console never advertises public account creation.
+    assert b"/signup" not in body and b"Create one" not in body
+    # Local password auth still works with Firebase enabled.
     assert c.post("/admin-login",
                   data={"username": "admin", "password": "testpass"}).status_code == 302
 
@@ -132,7 +156,7 @@ def test_signup_offers_link_only_but_login_has_password(config, db_path):
     # The attach-email panel is available for phone-only sign-ins.
     assert b"auth-email-link-panel" in signup.data
 
-    login = app.test_client().get("/login")
+    login = app.test_client().get("/admin-login")
     assert b"Send sign-in link" in login.data
     assert b"auth-password-panel" in login.data
     assert b"auth-email-link-panel" in login.data
@@ -141,7 +165,7 @@ def test_signup_offers_link_only_but_login_has_password(config, db_path):
 def test_only_configured_providers_are_rendered(config, db_path):
     app = _app(config, FIREBASE_API_KEY="k", FIREBASE_AUTH_DOMAIN="proj.firebaseapp.com",
                FIREBASE_PROVIDERS="email_link")
-    page = app.test_client().get("/login").data
+    page = app.test_client().get("/admin-login").data
     assert b"Send sign-in link" in page
     assert b"mdrenderGoogle" not in page
     assert b"mdrenderGithub" not in page

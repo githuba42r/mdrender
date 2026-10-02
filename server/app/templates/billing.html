@@ -20,8 +20,8 @@
       <td>{{ p.name }}</td>
       <td>{{ 'server (host)' if p.scope == 'slave' else 'account' }}</td>
       <td>{{ p.price_cents | money }}</td>
-      <td>{% if p.scope == 'account' %}{{ p.included_messages }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
-      <td>{% if p.scope == 'account' %}{{ p.message_cents_per_1000 | money }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{{ p.included_messages }}</td>
+      <td>{{ p.message_cents_per_1000 | money }}</td>
       <td>{% if p.scope == 'account' %}{{ p.storage_cents_per_mb | money }} <span class="empty">(after {{ p.storage_grace_days }}d)</span>{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
       <td>{% if p.max_messages_per_month %}{{ p.max_messages_per_month }}{% else %}<span class="empty">unlimited</span>{% endif %}</td>
       <td>{% if p.scope == 'account' %}{{ p.max_pending_bytes | filesize }} / {% if p.pending_expiry_hours %}{{ p.pending_expiry_hours }}h{% else %}never{% endif %}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
@@ -73,7 +73,7 @@
                 data-plan-overage="{{ plan.message_cents_per_1000 | money }}"
                 data-plan-storage="{{ plan.storage_cents_per_mb | money }}"
                 data-plan-grace="{{ plan.storage_grace_days }}"
-                data-plan-max="{{ plan.max_messages_per_month }}"
+                data-plan-max="{{ plan.max_messages_per_month if plan.max_messages_per_month else 'unlimited' }}"
                 data-plan-pending="{{ plan.max_pending_bytes | filesize }}"
                 data-plan-expiry="{{ plan.pending_expiry_hours }}">{{ icons.plan() }}</button>
         {% else %}<span class="empty">(no plan)</span>{% endif %}
@@ -132,7 +132,9 @@
              aria-label="Max messages per month (0 = unlimited)">
       <span class="unit">messages/month</span>
     </div>
-    <div class="field-row plan-account-only">
+    {# Message fees apply to server plans too - the monthly fee covers a cap,
+       everything past it is charged at the overage rate. #}
+    <div class="field-row">
       <span class="row-title">Message fees:</span>
       <input type="text" name="included_messages" value="" required
              aria-label="Included messages">
@@ -207,11 +209,11 @@
       <dt>Monthly fee</dt><dd class="pd-fee"></dd>
       <dt>Included messages</dt><dd class="pd-included"></dd>
       <dt>Cost / 1000 messages</dt><dd class="pd-overage"></dd>
-      <dt>Storage / MB / month</dt><dd class="pd-storage"></dd>
-      <dt>Storage grace</dt><dd class="pd-grace"></dd>
+      <dt class="pd-hide-for-server">Storage / MB / month</dt><dd class="pd-storage pd-hide-for-server"></dd>
+      <dt class="pd-hide-for-server">Storage grace</dt><dd class="pd-grace pd-hide-for-server"></dd>
       <dt>Max messages / month</dt><dd class="pd-max"></dd>
-      <dt>Max pending storage</dt><dd class="pd-pending"></dd>
-      <dt>Pending expiry (hours)</dt><dd class="pd-expiry"></dd>
+      <dt class="pd-hide-for-server">Max pending storage</dt><dd class="pd-pending pd-hide-for-server"></dd>
+      <dt class="pd-hide-for-server">Pending expiry (hours)</dt><dd class="pd-expiry pd-hide-for-server"></dd>
     </dl>
     <div class="confirm-actions">
       <button value="close" class="btn-primary">Close</button>

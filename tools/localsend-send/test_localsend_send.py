@@ -598,3 +598,245 @@ def test_push_to_server_sends_folder_and_conflict(tmp_path, cloud_server):
     body = state["push_body"]
     assert b'name="target_folder"' in body and b"Docs" in body
     assert b'name="conflict"' in body and b"replace" in body
+
+
+# --- Cloud-pin routing (--cloud / --localsend / --cloud-pin) ---------------
+#
+# Routing only: resolve_name and push_to_server are faked so no LAN probe or
+# HTTP ever happens; the point of each test is WHICH path main() picks.
+
+
+@pytest.fixture()
+def pins_path(tmp_path, monkeypatch):
+    """Redirect the cloud-pin store into tmp_path; $HOME is never touched."""
+    p = str(tmp_path / "cloud-pins.json")
+    monkeypatch.setattr(ls, "_default_cloud_pins_path", lambda: p)
+    return p
+
+
+@pytest.fixture()
+def routing(tmp_path, monkeypatch):
+    """Fake the two routing endpoints and return (calls, creds_path, file_path)."""
+    calls = {"resolve": [], "push": []}
+
+    def fake_resolve(name):
+        calls["resolve"].append(name)
+        return None  # not on the LAN
+
+    def fake_push(creds, name, paths, *, folder=None, conflict=None):
+        calls["push"].append(name)
+        return 0
+
+    monkeypatch.setattr(ls, "resolve_name", fake_resolve)
+    monkeypatch.setattr(ls, "push_to_server", fake_push)
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({"server_url": "https://push.example.com",
+                                 "client_id": "id",
+                                 "client_secret": "secret"}))
+    f = tmp_path / "note.md"
+    f.write_text("hi")
+    return calls, str(creds), str(f)
+
+
+def test_cloud_pin_roundtrip(routing, pins_path):
+    calls, creds, f = routing
+    assert ls.main(["--cloud-pin", "--name", "Falcon"]) == 0
+    pins = json.loads(open(pins_path).read())
+    assert "Falcon" in pins and isinstance(pins["Falcon"]["pinned_at"], int)
+
+    # Pinned: straight to cloud, no LAN probe.
+    assert ls.main(["--name", "Falcon", f, "--creds", creds]) == 0
+    assert calls["resolve"] == []
+    assert calls["push"] == ["Falcon"]
+
+    # Unpinned: the LAN probe comes back.
+    assert ls.main(["--cloud-unpin", "--name", "Falcon"]) == 0
+    assert json.loads(open(pins_path).read()) == {}
+    assert ls.main(["--name", "Falcon", f, "--creds", creds]) == 0
+    assert calls["resolve"] == ["Falcon"]
+    assert calls["push"] == ["Falcon", "Falcon"]
+
+
+def test_cloud_unpin_of_unpinned_device_is_harmless(pins_path, capsys):
+    assert ls.main(["--cloud-unpin", "--name", "Ghost"]) == 0
+    assert "was not cloud-pinned" in capsys.readouterr().out
+    assert not os.path.exists(pins_path) or json.loads(open(pins_path).read()) == {}
+
+
+def test_cloud_flag_skips_lan_lookup(routing, pins_path):
+    calls, creds, f = routing
+    assert ls.main(["--cloud", "--name", "Falcon", f, "--creds", creds]) == 0
+    assert calls["resolve"] == []
+    assert calls["push"] == ["Falcon"]
+
+
+def test_localsend_overrides_cloud_pin(routing, pins_path):
+    calls, creds, f = routing
+    ls.save_cloud_pins({"Falcon": {"pinned_at": 1}})
+    rc = ls.main(["--localsend", "--name", "Falcon", f, "--creds", creds])
+    assert rc == 0
+    assert calls["resolve"] == ["Falcon"]  # pin ignored for this run
+    assert calls["push"] == ["Falcon"]     # LAN miss → cloud fallback
+
+
+def test_cloud_and_localsend_are_mutually_exclusive(routing, pins_path, capsys):
+    calls, creds, f = routing
+    rc = ls.main(["--cloud", "--localsend", "--name", "Falcon", f,
+                  "--creds", creds])
+    assert rc == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+    assert calls["resolve"] == [] and calls["push"] == []
+
+
+def test_cloud_and_localsend_require_name(routing, pins_path, capsys):
+    calls, creds, f = routing
+    assert ls.main(["--cloud", f, "--creds", creds]) == 2
+    assert "--name" in capsys.readouterr().err
+    assert calls["resolve"] == [] and calls["push"] == []
+
+
+def test_cloud_pin_usage_errors(pins_path, capsys):
+    # no --name
+    assert ls.main(["--cloud-pin"]) == 2
+    # takes no files
+    assert ls.main(["--cloud-pin", "--name", "Falcon", "x.md"]) == 2
+    # both flags
+    assert ls.main(["--cloud-pin", "--cloud-unpin", "--name", "Falcon"]) == 2
+    # config action, not a push mode
+    assert ls.main(["--cloud-pin", "--cloud", "--name", "Falcon"]) == 2
+    err = capsys.readouterr().err
+    assert "require --name" in err
+    assert "take no files" in err
+    assert "mutually exclusive" in err
+    assert "config actions" in err
+    assert not os.path.exists(pins_path)
+
+
+def test_device_names_include_cloud_pins(monkeypatch, pins_path):
+    monkeypatch.setattr(ls, "_discover", lambda timeout=3.0: {})
+    monkeypatch.setattr(ls, "_default_creds_path", lambda: "/nonexistent-creds")
+    ls.save_cloud_pins({"Pinned Device": {"pinned_at": 1}})
+    args = argparse.Namespace(discover_timeout=1.0, server=None,
+                              creds="/nonexistent-creds")
+    assert ls._device_names(args) == ["Pinned Device"]
+
+
+# --- Transfer PIN storage + default device --------------------------------
+
+
+def test_cloud_pin_stores_transfer_pin(routing, pins_path):
+    calls, creds, f = routing
+    assert ls.main(["--cloud-pin", "--pin", "1964", "--name", "Falcon"]) == 0
+    pins = json.loads(open(pins_path).read())
+    assert pins["Falcon"]["pin"] == "1964"
+    assert "pinned_at" in pins["Falcon"]
+
+    # Re-pinning without --pin keeps the stored transfer PIN...
+    assert ls.main(["--cloud-pin", "--name", "Falcon"]) == 0
+    assert json.loads(open(pins_path).read())["Falcon"]["pin"] == "1964"
+
+    # ...and a new --pin updates it.
+    assert ls.main(["--cloud-pin", "--pin", "4321", "--name", "Falcon"]) == 0
+    assert json.loads(open(pins_path).read())["Falcon"]["pin"] == "4321"
+
+
+def test_effective_transfer_pin_precedence(routing, pins_path):
+    ls.save_cloud_pins({"Falcon": {"pinned_at": 1, "pin": "1964"}})
+    args = argparse.Namespace(pin=None, name="Falcon")
+    assert ls._effective_transfer_pin(args) == "1964"   # stored wins when bare
+    args.pin = "9999"
+    assert ls._effective_transfer_pin(args) == "9999"   # explicit --pin beats it
+    args.pin, args.name = None, "Ghost"
+    assert ls._effective_transfer_pin(args) is None     # no record, no pin
+
+
+def test_set_default_routes_bare_runs(routing, pins_path):
+    calls, creds, f = routing
+    assert ls.main(["--set-default", "--name", "Falcon"]) == 0
+    rec = json.loads(open(pins_path).read())["Falcon"]
+    assert rec["default"] is True
+
+    # No --name/--host: the default device is used (LAN probe first — it is
+    # not cloud-pinned — then cloud fallback in this fixture).
+    assert ls.main([f, "--creds", creds]) == 0
+    assert calls["resolve"] == ["Falcon"]
+    assert calls["push"] == ["Falcon"]
+
+    # --cloud applies to the default device too, still skipping the LAN probe.
+    assert ls.main(["--cloud", f, "--creds", creds]) == 0
+    assert calls["resolve"] == ["Falcon"]
+    assert calls["push"] == ["Falcon", "Falcon"]
+
+    # An explicit --name wins over the default.
+    assert ls.main(["--name", "Laptop", f, "--creds", creds]) == 0
+    assert calls["resolve"] == ["Falcon", "Laptop"]
+    assert calls["push"] == ["Falcon", "Falcon", "Laptop"]
+
+
+def test_cloud_pinned_default_skips_lan(routing, pins_path):
+    calls, creds, f = routing
+    assert ls.main(["--cloud-pin", "--name", "Falcon"]) == 0
+    assert ls.main(["--set-default", "--name", "Falcon"]) == 0
+    assert ls.main([f, "--creds", creds]) == 0
+    assert calls["resolve"] == []        # cloud-pinned default: no probe
+    assert calls["push"] == ["Falcon"]
+
+
+def test_set_default_moves_the_flag(routing, pins_path):
+    ls.main(["--cloud-pin", "--name", "Falcon"])
+    ls.main(["--set-default", "--name", "Falcon"])
+    ls.main(["--set-default", "--name", "Laptop"])
+    pins = json.loads(open(pins_path).read())
+    assert pins["Laptop"].get("default") is True
+    assert "default" not in pins["Falcon"]
+    assert "pinned_at" in pins["Falcon"]        # cloud pin untouched
+    assert ls._default_device_name() == "Laptop"
+
+
+def test_clear_default(routing, pins_path, capsys):
+    calls, creds, f = routing
+    ls.main(["--set-default", "--name", "Falcon"])
+    assert ls.main(["--clear-default", "--name", "Falcon"]) == 0
+    assert ls._default_device_name() is None
+    # clearing a device that never held it is harmless
+    assert ls.main(["--clear-default", "--name", "Ghost"]) == 0
+    assert "was not the default device" in capsys.readouterr().out
+    # a bare run without a default still errors, with a hint
+    rc = ls.main([f, "--creds", creds])
+    assert rc == 2
+    assert "--set-default" in capsys.readouterr().err
+    assert calls["resolve"] == [] and calls["push"] == []
+
+
+def test_cloud_unpin_keeps_transfer_pin_and_default(routing, pins_path):
+    calls, creds, f = routing
+    ls.main(["--cloud-pin", "--pin", "1964", "--name", "Falcon"])
+    ls.main(["--set-default", "--name", "Falcon"])
+    assert ls.main(["--cloud-unpin", "--name", "Falcon"]) == 0
+    rec = json.loads(open(pins_path).read())["Falcon"]
+    assert rec == {"pin": "1964", "default": True}
+    # Still the default for bare runs, but no longer cloud-pinned:
+    # the LAN probe comes back (and the stored PIN would be applied).
+    assert ls.main([f, "--creds", creds]) == 0
+    assert calls["resolve"] == ["Falcon"]
+    assert calls["push"] == ["Falcon"]
+
+
+def test_config_action_guards(routing, pins_path, capsys, tmp_path):
+    f = str(tmp_path / "note.md")
+    open(f, "w").write("hi")
+    # two config actions at once
+    assert ls.main(["--cloud-pin", "--set-default", "--name", "Falcon"]) == 2
+    assert ls.main(["--set-default", "--clear-default", "--name", "Falcon"]) == 2
+    # config actions are not push modes
+    assert ls.main(["--set-default", "--cloud", "--name", "Falcon"]) == 2
+    # require --name
+    assert ls.main(["--set-default"]) == 2
+    # take no files
+    assert ls.main(["--set-default", "--name", "Falcon", f]) == 2
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+    assert "not push modes" in err
+    assert "require --name" in err
+    assert "take no files" in err
+    assert not os.path.exists(pins_path)

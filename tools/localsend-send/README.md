@@ -21,7 +21,13 @@ third-party CLIs (e.g. localsend-go) do not.
 
 ## Requirements
 
-Python 3.8+. No pip packages — standard library only.
+Python 3.8+. The LAN and plaintext cloud-push paths are standard library
+only. **Encrypted cloud push** (servers running `ENCRYPTION_MODE=on`) needs
+the `cryptography` package — Arch: `pacman -S python-cryptography`,
+Debian/Ubuntu: `apt install python3-cryptography`, or
+`pip install cryptography`. The .deb/.rpm/.apk/.pkg builds already declare
+it; without it the client exits with an install hint when the server
+requires encryption.
 
 Requests carry a `localsend-send/1.0` User-Agent. Cloudflare-fronted servers
 answer Python's default `Python-urllib/3.x` signature with `403 error code 1010`,
@@ -49,6 +55,12 @@ which breaks the cloud-push path (enrol, token, push).
 |------|---------|
 | `--host` | Receiver IP or hostname (required unless `--name`/`--enrol`) |
 | `--name` | Resolve the device by name: local DNS first, then LAN discovery, then cloud push |
+| `--cloud` | With `--name`: push via the cloud-push server immediately, skip the LAN lookup |
+| `--localsend` | With `--name`: force the LocalSend LAN lookup even if the device is cloud-pinned |
+| `--cloud-pin` | Pin `--name`'s device to always use cloud push (no LAN lookup); needs no files. An `--pin` given here is stored as the device's transfer PIN |
+| `--cloud-unpin` | Remove the device's cloud pin (needs `--name`); keeps its transfer PIN and default-device flag |
+| `--set-default` | Make `--name`'s device the default target for runs with no `--name`/`--host` (LocalSend or cloud-pinned devices alike) |
+| `--clear-default` | Clear the default device (needs `--name`) |
 | `--port` | Receiver port (default 53317) |
 | `--pin` | Transfer PIN, if the receiver requires one |
 | `--http` | Use http instead of https |
@@ -111,6 +123,77 @@ and push credentials exist.
 The one-time code is case-insensitive and short-lived (60 s by default). If it
 expires, click **New code** on the page and type the fresh one.
 
+### Forcing cloud push, pinning a device
+
+For a device that is (or should always be) pushed over the cloud — e.g. the
+phone lives on another network, or you just do not want to wait out the ~3 s
+discovery probe on every run:
+
+```bash
+# Pin once: future --name pushes go straight to the cloud server.
+# --pin 1964 here is stored too, and applied automatically on LAN runs.
+./localsend-send.py --cloud-pin --pin 1964 --name "Clever Juniper"
+
+# Now this skips DNS/discovery entirely
+./localsend-send.py --name "Clever Juniper" report.pdf
+
+# One-off force without pinning
+./localsend-send.py --cloud --name "Clever Juniper" report.pdf
+
+# Override the pin for a single run (tries the LAN, cloud-falls-back);
+# an explicit --pin still beats the stored one
+./localsend-send.py --localsend --name "Clever Juniper" report.pdf
+
+# Remove the pin (stored transfer PIN and default flag survive)
+./localsend-send.py --cloud-unpin --name "Clever Juniper"
+```
+
+### Default device
+
+Pin any device — LocalSend or cloud-pinned — as the default target, then
+bare invocations need no `--name` or `--host`:
+
+```bash
+./localsend-send.py --set-default --name "Clever Juniper"
+./localsend-send.py report.pdf                 # sends to Clever Juniper
+./localsend-send.py --cloud report.pdf         # ...via cloud, this run
+./localsend-send.py --name "Laptop" x.pdf      # explicit --name still wins
+./localsend-send.py --clear-default --name "Clever Juniper"
+```
+
+The default follows the device's normal routing: a cloud-pinned default goes
+straight to the server, anything else gets the usual LAN-first resolution.
+Only one device can hold the flag at a time — `--set-default` demotes the
+previous holder.
+
+Pins live in `~/.config/mdrender/cloud-pins.json` (mode `0600`), keyed by
+device name: `pinned_at` marks a cloud pin, `pin` the stored transfer PIN,
+`default` the default device. This is pure routing state, unrelated to the
+encryption-mode policy or the content-key TOFU pins. `--list` marks pinned
+and default devices, and shell completion includes them.
+
+### Encrypted servers (`ENCRYPTION_MODE=on`)
+
+A server configured with server-enforced encryption (design §7a/§7b) accepts
+**only opaque blobs** — no plaintext filename, folder, or content ever
+reaches it. The client detects this via `GET /api/server/policy` and, on
+each push:
+
+1. derives the content key (CEK) from a local **account master secret** at
+   `~/.config/mdrender/content-key` (mode `0600`, created on first use,
+   never uploaded — copy it byte-for-byte to other machines that must push
+   this account's files);
+2. fetches the device's content public key, verifies its pairing-key proof,
+   and **pins the key fingerprint** on first sight
+   (`~/.config/mdrender/pins.json`, printed to stderr); a later key change
+   is refused until you delete that entry (TOFU, design §7c);
+3. seals the CEK to that public key and encrypts each file into a blob
+   `nonce(12) ‖ AES-256-GCM(envelope)` where the envelope carries the real
+   filename and destination folder **inside the ciphertext**.
+
+The server stores the blob verbatim under a random id and cannot read any
+of it; the app recovers the name and folder after decrypting.
+
 ## Bash completion
 
 `--completion [bash]` prints a completion script generated from the parser, so
@@ -152,4 +235,6 @@ key and use their own defaults.
 ## Exit codes
 
 `0` success · `1` other error · `2` usage · `3` rejected/timeout ·
-`4` PIN required/incorrect · `5` receiver busy
+`4` PIN required/incorrect · `5` receiver busy ·
+`6` server refused / trust failure (revoked client, changed content key,
+missing crypto library)

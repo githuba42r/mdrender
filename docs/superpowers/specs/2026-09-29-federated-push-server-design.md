@@ -120,19 +120,55 @@ API keys, token verification).
 - On first run the server mints a **UUID `server_id`** and an **RSA keypair**
   (a federation keypair, distinct from the manifest-signing key), stored in the
   DB.
-- A slave registers with the master via a **server-enrolment handshake**:
-  - slave `POST /api/federation/enrol/start` → master returns an enrolment;
-  - the slave submits its **hostname**, **server_id**, **public key**, and the
-    **base URL** the master should call. **Enrolment is automatic (D2)** — no
-    per-slave operator approval; bans/revocation still apply.
+- A slave registers with the master via a **server-enrolment handshake** that
+  starts with **operator consent (D2, revised)**:
+  - on the slave, the admin enters (or confirms) the **master URL** on the
+    Federation page and presses **Connect**; the slave signs a `connect`
+    request and redirects the admin's browser to the master;
+  - on the master, the admin sees who is asking (hostname, server id, URL),
+    the plans that apply, and the terms, and **Approves** (or Declines);
+    approving mints a **single-use code** bound to that exact slave and sends
+    the browser back to the slave's `/federation/callback?code=…&state=…`;
+  - the slave exchanges the code for its enrolment
+    (`POST /api/federation/enrol` carrying `code`) and lands on the push list.
+    **No slave ever enrols without that approval** — not the worker, not a
+    restart; the only code-less exception is re-enrolling a `server_id` the
+    master already consented to with the same base URL and key that has not
+    been revoked or changed.
+  - bans/revocation still apply, and the master's `FEDERATION_ENABLED` env +
+    `accept_new_slaves` setting remain kill switches in front of all of it.
 - **Mutual authentication:** the slave's admin configures the **expected master
-  hostname**, and the slave verifies the master's hostname before enrolling
-  (D5-review). The master verifies the slave by the signed callback (§5a).
+  URL** (stored as `federation_master_url` when overridden, else `MASTER_URL`)
+  and is sent only there; the master verifies the slave by the signed callback
+  (§5a), and the consent request itself is signed by the slave's keypair.
 - Thereafter, slave↔master API calls are **Bearer-authenticated *and signed***
   with the slave keypair (§5a); the master verifies the signature against the
   registered public key, so an intercepted token alone is not enough.
 
 ## 5a. Registration callback, signed messages, and liveness
+
+### Consent handshake (operator approval, design §5)
+1. **Connect (slave → master, browser):** the slave signs
+   `connect|server_id|hostname|base_url|public_key|state|ts` with its federation
+   key and redirects the admin to `GET <master>/federation/connect?…` with that
+   signature. The master checks the signature, the timestamp window, that the
+   URL is a sane http(s) origin and **not its own**, records the request
+   (`federation_connects`, TTL) and renders the approval page.
+2. **Approve/decline (master):** `POST …/connect/<id>/approve` mints a
+   single-use code (short TTL) and 302s the browser to
+   `<slave>/federation/callback?code=…&state=…`; decline records the refusal and
+   stops there. Neither page needs a master login - the signature on the
+   request *is* the authentication - and no secret other than the code ever
+   reaches the browser.
+3. **Callback (slave → master, API):** the slave (admin session required)
+   verifies `state` against its pending request and enrolls with the code. The
+   master accepts the code only when it matches that exact
+   `(server_id, base_url, public_key)`, consumes it atomically after the signed
+   callback verifies, and otherwise answers `403 consent required`. A code-less
+   enrolment is accepted only for a previously consented, unrevoked, unchanged
+   identity.
+4. **Landing:** on success the slave lands on the push list; any refusal lands
+   it back on the Federation page with the master's own reason.
 
 ### Registration callback (prove it exists, is alive and functional)
 1. The slave submits its **hostname**, **server_id**, **public key**, and the
@@ -219,48 +255,79 @@ Security invariants: for relayed pushes the master cannot read the doorbell (no
 `push_key`) or forge a manifest (no server signing key); only the holder of a
 device's `push_key` can produce an effective doorbell.
 
-## 7a. File content encryption (server-blind) — requires an app change
+Doorbells are sent as **high-priority FCM** messages (direct, relayed, and
+retry rings alike): the priority is what grants the receiving app a short
+temp-allowlist to start its download service from the background —
+normal-priority rings are dropped on Android 12+ with
+`ForegroundServiceStartNotAllowedException` and only burn retry budget.
+
+## 7a. File content encryption (server-blind)
 
 **Goal:** an account's files are encrypted **before upload**, so no server —
 slave or master — can read them, and the operator is not responsible for the
-content. **The server infrastructure is built first; the Android app change
-(the decryption key) follows.**
+content. Implemented end-to-end (push client, server, app); the wire contract
+below is what the three components actually exchange.
 
 The key is shared **only** between the push client and the app. The server
 relays **public keys and an opaque sealed blob** — it never sees the private
 key or the content key.
 
 ### Key material (one key per **account**, not per device/client)
-- Each account has one **account master secret (AMS)** — 32 random bytes. It is
-  the account's content-key root, shared by **all of the account's push
-  clients**, stored on each client (0600) and **never uploaded**.
-- The **content encryption key** is derived: `CEK = HKDF(AMS,
-  "mdrender-content")` (AES-256-GCM per file, random nonce). Any client can
-  derive the same CEK; files are encrypted with it.
-- The **app/device** holds a **content decryption keypair** in its Keystore and
-  registers its **content public key** with the server. This is a **new app
-  key**: the app's existing pairing key is **sign-only** (`2863d0d`) and cannot
+- Each account has one **account master secret (AMS)** — 32 random bytes at
+  `~/.config/mdrender/content-key` (0600). It is the account's content-key
+  root, shared by **all of the account's push clients**, never uploaded.
+- The **content encryption key** is derived:
+  `CEK = HKDF-SHA256(salt="", IKM=AMS, info="mdrender-content", L=32)`
+  (AES-256-GCM per file, random 12-byte nonce). Any client derives the same
+  CEK; files are encrypted with it.
+- The **app/device** holds a **content decryption keypair** in its Keystore
+  (RSA-3072) and registers its **content public key** with the server. This is
+  a **new app** key: the app's existing pairing key is **sign-only** and cannot
   decrypt. A device never holds AMS — only its own sealed copy of the CEK.
 
 ### Key exchange at device registration
-1. On pairing, the app generates its content decryption keypair and registers
-   the **content public key** (with the §7c proof) with the server.
-2. **Any client** fetches the device's content public key and **seals the CEK to
-   it** (`sealed_cek = wrap(device_content_pub, CEK)`), uploading the sealed
-   blob. No particular client is required, so devices added later are covered by
-   whichever client runs next.
-3. The server stores `sealed_cek` as an **opaque blob** — it cannot unwrap it.
-   Only that device can open it.
+1. On pairing (when the policy is on), the app generates its content keypair
+   and registers the **content public key** with the **§7c proof**:
+   `proof = SHA256withRSA(pairing_priv, "content:" + content_pubkey_b64)`.
+2. Any client fetches the device's content key pair with
+   `GET /api/push/content-key?device=<name>` (client Bearer auth) →
+   `{content_pubkey, content_proof, device_public_key}`. It **verifies the
+   proof** against the device's pairing public key (so the server cannot
+   substitute a content key) and **TOFU-pins the content key fingerprint**
+   (`~/.config/mdrender/pins.json`; a changed fingerprint is a hard error).
+3. The client seals the CEK to that key:
+   `sealed_cek = RSA-OAEP(content_pub, CEK)` with **message digest SHA-256 and
+   MGF1 digest SHA-1** (empty label) — Android Keystore's OAEP profile, which
+   its `RSA/ECB/OAEPWithSHA-256AndMGF1Padding` maps to; MGF1-SHA256 is refused
+   at unwrap time as an incompatible MGF digest. The client uploads it with
+   the push (`sealed_cek` form field) — the server **upserts it onto the
+   device's `device_content_keys` row** (keyed by `device_secret`) and stores
+   it as an **opaque blob it cannot unwrap**. The app later fetches its own
+   sealed blob via `POST /api/device/content-key`.
 
-### Push / fetch
-1. The client encrypts each file with the CEK — **including a mangled/encrypted
-   filename inside the payload** — and uploads the ciphertext + nonce
-   (optionally signing with `Cpriv` so the app can verify origin).
-2. The server stores **only an opaque binary blob** (no filename, no metadata) —
-   just a random id, the bytes, and the nonce. The manifest carries opaque ids.
-3. The app fetches `sealed_cek` once, unwraps it with its Keystore key, and
-   decrypts downloads (recovering the real filename from the payload) with the
-   CEK.
+### Push / fetch (wire format)
+1. The client encrypts each file into an **envelope**, then seals it:
+   - `header = {"name": <real filename>, "path": <slash-delimited folder>}`
+     (`path` blank = the push's target folder; it is the only folder carrier
+     because plaintext `target_folder` is rejected, §7b/D13);
+   - `envelope = u32be(len(header)) || header_json || file_bytes`;
+   - `blob = nonce(12) || AES-256-GCM(CEK, envelope)`.
+2. The upload (`POST /api/push`) carries **only** opaque form fields:
+   `target_device`, `alg=aes-256-gcm`, `nonce` (advisory — the real nonce
+   travels inside the blob), `sealed_cek`. The multipart filename is ignored;
+   no `target_folder`. The server stores a random `file_id` and the bytes —
+   in mode `on` it stores **no** name/path (D13, §7b) and **never decrypts**.
+3. When the policy is on and the device has no sealed CEK, the upload is
+   refused **428 `seal required`** before any row is written, and the retry
+   worker **never rings** an unnegotiated push (it marks it exhausted
+   instead), so a plaintext-era push cannot be doorbelled at an
+   encryption-only app.
+4. The app fetches `sealed_cek` once, unwraps it with its Keystore key
+   (RSA-OAEP, SHA-256/MGF1-SHA-1, empty label), decrypts each download
+   (`nonce||ciphertext`), parses the envelope, and imports by the envelope's
+   **name and folder** (blank name falls back to the manifest name). The
+   manifest still carries the opaque `file_id`s; its `name`/`path` values are
+   meaningless under encryption.
 
 ### Rotation
 - **Rotating AMS** yields a new CEK, re-sealed to every device and
@@ -293,6 +360,14 @@ before anything is delivered:
   uploads are rejected.
 - A **doorbell is refused** for a device with no sealed CEK, forcing the
   client/app to finish negotiation first.
+- The server **stores no push metadata it cannot legitimately see** (D13): the
+  destination folder is rejected as form data (it belongs in the encrypted
+  payload until the app/client carry it there), the multipart filename is
+  discarded in favour of the opaque `file_id` — in the database *and* on disk —
+  and any pre-existing plaintext metadata (rows written before the mode was
+  flipped) is scrubbed at every boot. Every operator/user surface renders
+  folder, filename and path cells as `(encrypted)` when the mode is on, so the
+  UI shows only what the server actually holds.
 
 This is a deliberate operator control: it lets the admin guarantee that content
 at rest on the push server (awaiting collection) is unreadable to them, and
@@ -379,6 +454,18 @@ admin UI (linked) and are configurable per operator.
   ban, a CIDR range, or an AS number — enforced at signup and every request
   (§14).
 - Account ↔ devices ↔ pending files are scoped per account.
+- **Per-user admin detail page:** from the Users list, an admin opens
+  `GET /accounts/<account_id>` to see that account's registered devices, CLI
+  clients, recent pushes and pending pushes, with scoped actions (all
+  ownership-checked, returning to the page):
+  - **Block/unblock** a device or client — a reversible soft-disable
+    (`blocked_at`). Blocked clients are refused by the bearer gate
+    (`client_blocked`); blocked devices fail authentication, cannot be pushed
+    to, are never rung (no FCM/relay, including retries), and cannot fetch
+    manifests. **Remove** a device = unpair (delete); **revoke** a client is
+    permanent.
+  - **Delete** a single push, **purge all** pushes, or **purge pending** for
+    that account only (records + storage directories).
 
 ## 10. Per-account storage and quotas
 
@@ -442,6 +529,7 @@ Build the foundation now; wire real providers later.
 | `federated_servers` | server_id, hostname, `base_url`, pubkey, secret hash, status (pending/active/down/deactivated/revoked/banned), plan, period, last_seen, `down_since`, `last_probe` |
 | `federated_nonces` | seen signed-request nonces (replay window) |
 | `federated_outbox` | queued master→slave messages: server_id, payload, created, attempts, next_retry_at, acked_at |
+| `federation_connects` | consent requests (§5): id, server_id, hostname, base_url, pubkey, state, created/expires, single-use `code`, consumed_at, declined_at |
 | `bans` | `kind = ip \| cidr \| asn \| hostname \| domain`; `scope = global \| server \| account`; reason, created_by, expires |
 | `accounts` | email, password hash (nullable), `host` (master \| federated server_id), status (active/blocked/banned), balance — the tenant/customer |
 | `account_devices` | routing only, **no PII**: `account_id` (opaque), `device_id`, `server_id`, `fcm_token`, name(optional local) |
@@ -467,8 +555,12 @@ Existing `devices`, `pushes`, `push_files`, `sessions`, `server_keys` remain;
 `GET /auth/providers` and `POST /auth/oidc` (verify via `IdentityProvider`, mint
 a session); local login always available.
 
+**Consent (browser, §5a):** slave `POST /federation/connect` (admin) → master
+`GET /federation/connect` (signed request, approval page), `POST
+/federation/connect/{id}/approve|decline` → slave `GET /federation/callback`.
+
 **Master ↔ slave (Bearer + signature):**
-`POST /api/federation/enrol/start`, `POST /api/federation/enrol`,
+`POST /api/federation/enrol` (carries the consent `code`),
 `GET/POST /api/federation/verify`, `POST /api/federation/probe`,
 `POST /api/federation/ping`, `POST /api/federation/heartbeat`,
 `GET /api/federation/whoami`,
@@ -554,8 +646,13 @@ Each phase lands independently with tests.
 - **D1 (resolved)** FCM availability: file presence + a **live probe** at
   startup; failure disables FCM (no master sending), warns in the UI, and
   re-probes periodically.
-- **D2 (resolved)** Slave registration is **automatic** after the signing
-  callback; no per-slave operator approval.
+- **D2 (resolved, revised)** Slave registration requires **operator approval**:
+  the slave's admin is sent to the master's consent page (requester details,
+  applicable plans, terms) and approving there mints a single-use code the
+  slave exchanges to enrol. Nothing - worker, restart, retry - enrols on its
+  own; a previously consented, unchanged and unrevoked slave may re-enrol
+  code-less so heartbeats survive a wipe. (Was: "automatic after the signing
+  callback, no per-slave operator approval".)
 - **D3 (resolved direction)** Support **local user DB + optional hosted IdP**
   (social + magic-link); spike Auth0 / Cognito / Firebase; document
   bring-your-own-Firebase setup.

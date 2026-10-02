@@ -48,7 +48,7 @@ def test_profile_writes_through_to_firebase(config, db_path, monkeypatch):
 
     resp = c.post("/account/profile", data={
         "name": "Sam", "email": "sam@example.com", "phone": "+61400000000",
-        "password": "newpassword1"})
+        "password": "newpassword1", "password_confirm": "newpassword1"})
     assert resp.status_code == 303
     uid, fields = calls[0]
     assert uid == "uid-1"

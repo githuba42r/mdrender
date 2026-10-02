@@ -41,3 +41,12 @@ def signup_enabled(conn) -> bool:
 def signup_group_id(conn):
     """Billing group new accounts are placed in on creation (None = system)."""
     return get(conn, "signup_group_id") or None
+
+
+def default_server_plan_id(conn):
+    """Billing plan given to slave servers when they enrol (None = none).
+
+    An explicit plan set on a server in the Federation list always wins; this
+    is only what a server registers with.
+    """
+    return get(conn, "default_server_plan_id") or None

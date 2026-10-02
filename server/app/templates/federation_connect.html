@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Connect a server &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Federation consent</h1>
+
+{% if error %}
+<div class="callout error">
+  <svg class="callout-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1.5 15h-3v-2h3v2zm0-4h-3V7h3v6z"/>
+  </svg>
+  <span>{{ error }}</span>
+</div>
+
+{% elif declined %}
+<p class="lede">Connection declined. Nothing was connected - close this tab,
+or press Connect again on the server if you change your mind.</p>
+
+{% else %}
+<p class="lede"><strong>{{ hostname }}</strong> wants to join this master as a
+federated push relay. Nothing connects until you approve it here.</p>
+
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr><th>Server</th><td>{{ hostname }}</td></tr>
+    <tr><th>Server ID</th><td><code>{{ server_id }}</code></td></tr>
+    <tr><th>Its address</th><td><code>{{ base_url }}</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>What connecting costs</h2>
+{% if plans %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Plan</th><th>Monthly fee</th><th>Incl. storage</th><th>Incl. msgs</th><th>Interval</th></tr></thead>
+  <tbody>
+    {% for p in plans %}
+    <tr>
+      <td>{{ p.name }}</td>
+      <td>{{ p.price_cents | money }}</td>
+      <td>{% if p.included_bytes %}{{ p.included_bytes | filesize }}{% else %}<span class="empty">-</span>{% endif %}</td>
+      <td>{% if p.included_messages %}{{ p.included_messages }}{% else %}<span class="empty">-</span>{% endif %}</td>
+      <td>{{ p.interval }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No plans are published for federated servers yet.</p>
+{% endif %}
+
+<h2>Terms of this connection</h2>
+<div class="admin-details" style="white-space: pre-line">{{ terms }}</div>
+
+<div class="actions-end">
+  <form method="POST" action="/federation/connect/{{ connect_id }}/decline" class="inline">
+    <button type="submit" class="btn">Decline</button>
+  </form>
+  <form method="POST" action="/federation/connect/{{ connect_id }}/approve" class="inline">
+    <button type="submit" class="btn btn-primary">Approve and connect</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

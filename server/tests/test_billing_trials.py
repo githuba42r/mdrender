@@ -17,7 +17,7 @@ def _app(config):
 
 def _admin(app):
     c = app.test_client()
-    c.post("/login", data={"username": "admin", "password": "testpass"})
+    c.post("/admin-login", data={"username": "admin", "password": "testpass"})
     return c
 
 

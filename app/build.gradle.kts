@@ -108,6 +108,11 @@ android {
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
+    testOptions {
+        // Production classes log through android.util.Log; JVM unit tests get
+        // default no-op returns instead of "not mocked" exceptions.
+        unitTests.isReturnDefaultValues = true
+    }
 
 }
 

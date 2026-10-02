@@ -94,6 +94,33 @@ def test_profile_rejects_an_admin_email(config, db_path):
     assert resp.status_code == 400
 
 
+def test_profile_password_change_needs_a_matching_confirm(config, db_path):
+    app = _app(config)
+    c, account_id = _account(app)
+
+    # The page offers a confirm field alongside the new-password field.
+    assert b'name="password_confirm"' in c.get("/account/profile").data
+
+    # A mismatch is refused before anything is written.
+    resp = c.post("/account/profile", data={
+        "name": "Sam", "email": "user@example.com", "phone": "",
+        "password": "newpassword1", "password_confirm": "different"})
+    assert resp.status_code == 400
+    assert b"The passwords do not match." in resp.data
+    with app.config["_db"].connect() as conn:
+        assert accounts.verify_account_password(
+            conn, "user@example.com", "newpassword1") is None
+
+    # Matching fields land the change and the new password signs in.
+    ok = c.post("/account/profile", data={
+        "name": "Sam", "email": "user@example.com", "phone": "",
+        "password": "newpassword1", "password_confirm": "newpassword1"})
+    assert ok.status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert accounts.verify_account_password(
+            conn, "user@example.com", "newpassword1") == account_id
+
+
 def test_pushes_and_pending_are_account_scoped(config, db_path):
     app = _app(config)
     c, account_id = _account(app)
@@ -207,7 +234,7 @@ def test_admin_can_purge_all_pushes(config, db_path):
                             file_path="", size=1, retrieval_key="rk", stored_path=None,
                             created_at=1)
     admin = app.test_client()
-    admin.post("/login", data={"username": "admin", "password": "testpass"})
+    admin.post("/admin-login", data={"username": "admin", "password": "testpass"})
     assert admin.post("/pushes/purge").status_code == 303
     with app.config["_db"].connect() as conn:
         assert push_store.get_push_by_id(conn, "p-admin") is None

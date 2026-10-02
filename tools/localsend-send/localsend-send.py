@@ -12,20 +12,30 @@ Examples:
     localsend-send.py --host 10.0.1.226 *.md
     localsend-send.py --host 10.0.1.226 --port 53318 --insecure report.pdf
     localsend-send.py --name "Sunny Falcon" notes.md  # DNS, LAN discovery, cloud fallback
+    localsend-send.py --cloud --name "Sunny Falcon" notes.md  # skip LAN, push now
+    localsend-send.py --cloud-pin --pin 1964 --name "Sunny Falcon"  # pin + transfer PIN
+    localsend-send.py --localsend --name "Sunny Falcon" x.md  # override the pin once
+    localsend-send.py --set-default --name "Sunny Falcon"     # bare runs send here
     localsend-send.py --list                          # LAN clients + registered devices
     localsend-send.py --enrol --server https://push.example.com
 
 Exit codes: 0 ok, 2 usage, 3 rejected/timeout / device not found and no creds,
-4 PIN required/wrong, 5 receiver busy, 1 other error.
+4 PIN required/wrong, 5 receiver busy, 6 server refused / trust failure,
+1 other error.
 """
 import argparse
+import base64
+import hashlib
+import hmac
 import http.client
 import json
 import mimetypes
 import os
 import queue
+import secrets
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -36,7 +46,7 @@ import urllib.request
 import uuid
 
 # Keep in step with the packaging manifests (packaging/).
-__version__ = "1.0.15"
+__version__ = "1.0.19"
 
 API = "/api/localsend/v2"
 CLOUD_API = "/api"  # cloud-push server base (NOT the LocalSend LAN protocol)
@@ -125,6 +135,69 @@ def _start_enrolment(server_url):
 
 def _default_creds_path():
     return os.path.expanduser("~/.config/mdrender/push-credentials.json")
+
+
+def _default_cloud_pins_path():
+    return os.path.expanduser("~/.config/mdrender/cloud-pins.json")
+
+
+def load_cloud_pins(path=None):
+    """Per-device pin records: cloud routing, transfer PIN, default device.
+
+    A record looks like ``{"pinned_at": <ts>, "pin": "1964", "default": true}``:
+
+    * ``pinned_at`` present  -> the device is cloud-pinned (--cloud-pin);
+      presence of the record itself means nothing.
+    * ``pin``                 -> the receiver's LocalSend transfer PIN,
+      applied automatically on LAN runs unless --pin overrides it.
+    * ``default``             -> the device is the default target for runs
+      with no --name/--host (--set-default).
+
+    Pure routing state (not security). Unreadable or missing files pin
+    nothing.
+    """
+    path = path or _default_cloud_pins_path()
+    try:
+        with open(path) as fh:
+            pins = json.load(fh)
+        return pins if isinstance(pins, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cloud_pins(pins, path=None):
+    """Write the device-pin map (mode 0600, like push credentials)."""
+    path = path or _default_cloud_pins_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(pins, fh, indent=2, sort_keys=True)
+        fh.flush()
+        os.fchmod(fh.fileno(), 0o600)
+    return pins
+
+
+def _effective_transfer_pin(args):
+    """The LocalSend transfer PIN for this run.
+
+    An explicit --pin wins; otherwise the target device's stored record
+    (from ``--cloud-pin --name X --pin N``) supplies it. Returns None when
+    the device has none (or no --name was given).
+    """
+    if args.pin:
+        return args.pin
+    if args.name:
+        rec = load_cloud_pins().get(args.name)
+        if isinstance(rec, dict):
+            return rec.get("pin")
+    return None
+
+
+def _default_device_name():
+    """The device marked with --set-default, if any."""
+    for name, rec in load_cloud_pins().items():
+        if isinstance(rec, dict) and rec.get("default"):
+            return name
+    return None
 
 
 def _write_creds(creds, path):
@@ -328,6 +401,215 @@ def list_push_devices(creds_path, server_url=None):
         return json.load(r)["devices"]
 
 
+# --- Server-blind cloud push (design §7a) -------------------------------
+#
+# Against an ENCRYPTION_MODE=on server every file crosses the wire as one
+# opaque blob: AES-256-GCM under a content key (CEK) derived from a local
+# account master secret, with the real filename and destination folder
+# inside the encrypted envelope. The server stores the blob verbatim under
+# an opaque id and can never read any of it.
+
+
+class EncryptedPushError(Exception):
+    """Encrypted-push setup failure; carries the process exit code."""
+
+    def __init__(self, message, code=1):
+        super().__init__(message)
+        self.code = code
+
+
+def _crypto_modules():
+    """Lazy import: the LAN/plaintext paths stay standard-library only."""
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError as e:
+        raise EncryptedPushError(
+            "this server requires encryption, but the 'cryptography' package "
+            "is not installed — install it and retry (Arch: pacman -S "
+            "python-cryptography; Debian/Ubuntu: apt install "
+            "python3-cryptography; or: pip install cryptography)", 6) from e
+    return hashes, serialization, padding, AESGCM
+
+
+def _content_key_path():
+    return os.path.expanduser("~/.config/mdrender/content-key")
+
+
+def _pins_path():
+    return os.path.expanduser("~/.config/mdrender/pins.json")
+
+
+def load_account_master_secret(path=None):
+    """Load or create the account master secret (AMS): 32 bytes, mode 0600.
+
+    The AMS is the content-key root shared by an account's push clients
+    (design §7a) and is never uploaded; copies of this file on other
+    machines must be byte-identical for them to derive the same CEK.
+    """
+    path = path or _content_key_path()
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                ams = bytes.fromhex(fh.read().strip())
+        except (OSError, ValueError) as e:
+            raise EncryptedPushError(
+                f"content-key file {path} is unreadable or corrupt: {e}; "
+                "fix or delete it (deleting rotates the content key — "
+                "already-pushed files stay sealed to the old one)", 6)
+        if len(ams) != 32:
+            raise EncryptedPushError(
+                f"content-key file {path} must hold 32 bytes", 6)
+        return ams
+    ams = secrets.token_bytes(32)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(ams.hex() + "\n")
+    return ams
+
+
+def hkdf_sha256(ikm, salt=b"", info=b"", length=32):
+    """RFC 5869 HKDF-SHA256 (extract-then-expand), stdlib only."""
+    if not salt:
+        salt = b"\x00" * 32
+    prk = hmac.new(salt, ikm, hashlib.sha256).digest()
+    okm = b""
+    t = b""
+    counter = 1
+    while len(okm) < length:
+        t = hmac.new(prk, t + info + bytes([counter]), hashlib.sha256).digest()
+        okm += t
+        counter += 1
+    return okm[:length]
+
+
+def fetch_policy(server_url):
+    """GET /api/server/policy -> "on" / "off".
+
+    An unreachable probe reads as "off"; the server's own 422 gate still
+    refuses plaintext if the guess was wrong.
+    """
+    try:
+        req = urllib.request.Request(
+            f"{server_url.rstrip('/')}/api/server/policy")
+        req.add_header("User-Agent", USER_AGENT)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.load(r).get("encryption", "off")
+    except Exception:  # noqa: BLE001 - probe is advisory; the gate decides
+        return "off"
+
+
+def _pin_content_key(server_url, device, content_pubkey_b64):
+    """TOFU pin of the device's content key (§7c). Returns the fingerprint.
+
+    First sight stores and prints the fingerprint; any later change is a
+    hard error, because a swapped content key would let the server read
+    everything pushed from then on.
+    """
+    fp = "sha256:" + hashlib.sha256(
+        base64.b64decode(content_pubkey_b64)).hexdigest()
+    path = _pins_path()
+    pins = {}
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                pins = json.load(fh)
+        except (OSError, ValueError) as e:
+            raise EncryptedPushError(f"cannot read pin store {path}: {e}", 6)
+    key = f"{server_url}|{device}"
+    stored = pins.get(key)
+    if stored is None:
+        pins[key] = {"fingerprint": fp, "pinned_at": int(time.time())}
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            json.dump(pins, fh, indent=2, sort_keys=True)
+        print(f"pinned content key for {device} on {server_url}: {fp}",
+              file=sys.stderr)
+        return fp
+    if stored.get("fingerprint") != fp:
+        raise EncryptedPushError(
+            f"content key for {device} on {server_url} CHANGED\n"
+            f"  pinned: {stored.get('fingerprint')}\n"
+            f"  now:    {fp}\n"
+            "refusing to seal — possible key substitution (design §7c). If the "
+            "device was legitimately re-paired, delete that entry from "
+            f"{path} and retry.", 6)
+    return fp
+
+
+def _encrypted_session(server_url, token, target_device):
+    """Fetch, verify and pin the device's content key; seal the CEK to it.
+
+    Returns (cek, sealed_cek_b64) ready for the push request.
+    """
+    hashes, serialization, padding, _ = _crypto_modules()
+    url = (f"{server_url}/api/push/content-key"
+           f"?device={urllib.parse.quote(target_device)}")
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("User-Agent", USER_AGENT)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            info = json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        if e.code == 404:
+            raise EncryptedPushError(
+                "the server has no content key for this device — pair it with "
+                "a current app version (which registers its content key at "
+                "pairing) and retry", 3)
+        raise EncryptedPushError(
+            f"content-key lookup failed: HTTP {e.code} {body[:200]}", 1)
+
+    # §7c: the pairing key must verify the content key's proof. This catches
+    # a broken key chain; the TOFU pin below catches a *substituted* one.
+    try:
+        pairing_pub = serialization.load_der_public_key(
+            base64.b64decode(info["device_public_key"]))
+        pairing_pub.verify(
+            base64.b64decode(info["content_proof"]),
+            b"content:" + info["content_pubkey"].encode(),
+            padding.PKCS1v15(), hashes.SHA256())
+    except EncryptedPushError:
+        raise
+    except Exception as e:
+        raise EncryptedPushError(
+            "content-key proof failed to verify against the device's pairing "
+            "key — refusing to seal (design §7c)", 6) from e
+
+    _pin_content_key(server_url, target_device, info["content_pubkey"])
+
+    content_pub = serialization.load_der_public_key(
+        base64.b64decode(info["content_pubkey"]))
+    cek = hkdf_sha256(load_account_master_secret(),
+                       info=b"mdrender-content", length=32)
+    # OAEP message digest SHA-256, MGF1 digest SHA-1: Android Keystore's OAEP
+    # profile (its "RSA/ECB/OAEPWithSHA-256AndMGF1Padding" maps to exactly
+    # this). MGF1-SHA256 is rejected at unwrap time as INCOMPATIBLE_MGF_DIGEST.
+    sealed = content_pub.encrypt(cek, padding.OAEP(
+        mgf=padding.MGF1(hashes.SHA1()),
+        algorithm=hashes.SHA256(), label=None))
+    return cek, base64.b64encode(sealed).decode()
+
+
+def encrypt_push_blob(file_bytes, name, folder, cek):
+    """Seal one file into the wire blob: nonce(12) || AES-GCM(envelope).
+
+    envelope = u32be(len(header)) || header_json || file_bytes, where
+    header carries the original filename and destination folder — the only
+    place they exist in transit or at rest on the server (§7a/D13). Each
+    blob is self-describing: the app reads the nonce from its prefix.
+    """
+    _, _, _, AESGCM = _crypto_modules()
+    header = json.dumps({"name": name, "path": folder or ""},
+                        separators=(",", ":")).encode()
+    plaintext = struct.pack(">I", len(header)) + header + file_bytes
+    nonce = secrets.token_bytes(12)
+    return nonce, nonce + AESGCM(cek).encrypt(nonce, plaintext, None)
+
+
 def _discover(timeout=3.0, want=None):
     """Best-effort LocalSend v2 UDP discovery: maps alias -> info dict.
 
@@ -452,6 +734,12 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
     *folder* and *conflict* mirror the LocalSend "mds" options so the cloud path
     behaves like a direct send: the same destination folder and the same
     collision behaviour.
+
+    When the server's policy is encryption=on (§7b), each file is sealed
+    client-side into an opaque blob (§7a): AES-256-GCM under the content key,
+    with the original filename and folder inside the envelope, and the content
+    key sealed to the device's content public key. The server then stores only
+    ciphertext under an opaque id and can never read any of it.
     """
     try:
         token = get_access_token(creds_path)
@@ -460,6 +748,31 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
         return 6
     with open(creds_path) as fh:
         server_url = json.load(fh)["server_url"].rstrip("/")
+
+    # §7b: an encryption-on server accepts only opaque blobs. Probe the
+    # policy before building the body so plaintext never hits it.
+    encrypted = fetch_policy(server_url) == "on"
+    cek = sealed_cek = None
+    if encrypted:
+        try:
+            cek, sealed_cek = _encrypted_session(
+                server_url, token, target_device)
+        except EncryptedPushError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return e.code
+
+    # Read and (when required) seal every file up front: the encryption
+    # metadata is per-push, so the first blob's nonce rides in the form.
+    blobs = []
+    for path in paths:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        if encrypted:
+            nonce, blob = encrypt_push_blob(
+                data, os.path.basename(path), folder, cek)
+            blobs.append((path, blob, nonce))
+        else:
+            blobs.append((path, data, None))
 
     boundary = f"----mdrender{uuid.uuid4().hex}"
     parts = []
@@ -474,20 +787,28 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
     # Text part: the target device name, plus the destination folder and
     # conflict strategy when set (the server reads target_folder/conflict).
     text_part("target_device", target_device)
-    if folder:
+    if encrypted:
+        # No target_folder: the folder travels inside each envelope (D13).
+        # alg/nonce satisfy the server's encryption-metadata gate (§7b);
+        # every blob is self-describing (nonce prefix), so the form nonce
+        # is the first file's — the server stores neither field.
+        text_part("alg", "aes-256-gcm")
+        text_part("nonce", base64.b64encode(blobs[0][2]).decode())
+        text_part("sealed_cek", sealed_cek)
+    elif folder:
         text_part("target_folder", folder)
     if conflict:
         text_part("conflict", conflict)
-    # One file part per path.
-    for path in paths:
-        name = os.path.basename(path)
+    # One file part per path: the opaque blob when encrypted (the original
+    # filename never reaches the server), the plain file otherwise.
+    for path, data, nonce in blobs:
+        part_name = "blob" if nonce is not None else os.path.basename(path)
         parts.append(f"--{boundary}".encode())
         parts.append(
-            f'Content-Disposition: form-data; name="file"; filename="{name}"'.encode())
+            f'Content-Disposition: form-data; name="file"; filename="{part_name}"'.encode())
         parts.append(b"Content-Type: application/octet-stream")
         parts.append(b"")
-        with open(path, "rb") as fh:
-            parts.append(fh.read())
+        parts.append(data)
     parts.append(f"--{boundary}--".encode())
     body = b"\r\n".join(parts)
 
@@ -511,6 +832,9 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
                   "this client is no longer registered; " + _RE_REGISTER_HINT),
                   file=sys.stderr)
             return 6
+        if e.code in (422, 428):
+            print("hint: the server requires encryption (design §7b) — this "
+                  "client supports it; retry", file=sys.stderr)
         print(f"error: cloud push failed: HTTP {e.code} {body[:200]}", file=sys.stderr)
         return 1
     except (urllib.error.URLError, OSError) as e:
@@ -521,7 +845,8 @@ def push_to_server(creds_path, target_device, paths, *, folder=None, conflict=No
     for path in paths:
         print(f"  ✓ {os.path.basename(path)}")
     push_id = reply.get("push_id", "?")
-    print(f"cloud push to {target_device}: {sent} file(s) sent (push {push_id})")
+    print(f"cloud push to {target_device}: {sent} file(s) sent "
+          f"(push {push_id}{', encrypted' if encrypted else ''})")
     return 0 if sent >= 1 else 1
 
 
@@ -570,6 +895,7 @@ def _device_names(args):
             names += [d["name"] for d in list_push_devices(creds, args.server)]
         except Exception:  # noqa: BLE001 - completion must never error out
             pass
+    names += list(load_cloud_pins())
     return list(dict.fromkeys(names))  # de-dupe, keep order
 
 
@@ -611,15 +937,105 @@ def cmd_list(args):
             print(f"\ncould not list registered push devices: {e}",
                   file=sys.stderr)
         else:
+            pins = load_cloud_pins()
             print(f"\nRegistered push devices on {server_url} ({len(devices)}):")
             if devices:
                 for d in devices:
+                    rec = pins.get(d["name"])
+                    rec = rec if isinstance(rec, dict) else {}
+                    marks = []
+                    if "pinned_at" in rec:
+                        marks.append("cloud-pinned")
+                    if rec.get("default"):
+                        marks.append("default")
+                    mark = f"  [{', '.join(marks)}]" if marks else ""
                     print(f"  {d['name']}  (registered {_fmt_ts(d['registered_at'])},"
-                          f" last seen {_fmt_ts(d['last_seen'])})")
+                          f" last seen {_fmt_ts(d['last_seen'])}){mark}")
             else:
                 print("  (none)")
     else:
         print("\n(no push credentials; skipping registered push devices)")
+    return 0
+
+
+def _cmd_pin_action(args):
+    """Config actions: --cloud-pin/--cloud-unpin/--set-default/--clear-default."""
+    n_actions = sum((args.cloud_pin, args.cloud_unpin,
+                     args.set_default, args.clear_default))
+    if n_actions > 1:
+        print("error: config actions (--cloud-pin/--cloud-unpin/"
+              "--set-default/--clear-default) are mutually exclusive",
+              file=sys.stderr)
+        return 2
+    if args.cloud or args.localsend:
+        print("error: config actions (--cloud-pin/--cloud-unpin/"
+              "--set-default/--clear-default) are not push modes; "
+              "do not combine them with --cloud/--localsend", file=sys.stderr)
+        return 2
+    if not args.name:
+        print("error: config actions require --name <device>", file=sys.stderr)
+        return 2
+    if args.files:
+        print("error: config actions take no files", file=sys.stderr)
+        return 2
+
+    pins = load_cloud_pins()
+    rec = pins.get(args.name)
+    rec = dict(rec) if isinstance(rec, dict) else {}
+
+    if args.set_default:
+        # Exactly one default: demote any other holder (and drop records
+        # that end up empty).
+        drop = []
+        for other, other_rec in pins.items():
+            if other == args.name or not isinstance(other_rec, dict):
+                continue
+            other_rec.pop("default", None)
+            if not other_rec:
+                drop.append(other)
+        for other in drop:
+            del pins[other]
+        rec["default"] = True
+        pins[args.name] = rec
+        save_cloud_pins(pins)
+        print(f"set {args.name} as the default device "
+              f"(runs with no --name/--host send here)")
+        return 0
+    if args.clear_default:
+        if not rec.pop("default", None):
+            print(f"{args.name} was not the default device")
+            return 0
+        if rec:
+            pins[args.name] = rec
+        else:
+            pins.pop(args.name, None)
+        save_cloud_pins(pins)
+        print(f"cleared {args.name} as the default device")
+        return 0
+    if args.cloud_unpin:
+        if rec.pop("pinned_at", None) is None:
+            print(f"{args.name} was not cloud-pinned")
+            return 0
+        if rec:
+            pins[args.name] = rec
+        else:
+            pins.pop(args.name, None)
+        save_cloud_pins(pins)
+        print(f"unpinned {args.name}: --name will try the LAN again")
+        return 0
+
+    # --cloud-pin: record (or refresh) the cloud pin, keeping any stored
+    # transfer PIN and default-device flag. --pin updates the transfer PIN.
+    rec["pinned_at"] = int(time.time())
+    if args.pin:
+        rec["pin"] = args.pin
+    pins[args.name] = rec
+    save_cloud_pins(pins)
+    print(f"pinned {args.name} to cloud push "
+          f"(--name skips the LAN lookup; --localsend overrides once)")
+    if args.pin:
+        print(f"stored transfer PIN {args.pin} "
+              f"(used automatically for LAN transfers; --pin overrides)")
     return 0
 
 
@@ -632,6 +1048,26 @@ def _build_parser():
     p.add_argument("--host", default=None, help="receiver IP or hostname")
     p.add_argument("--name", default=None,
                    help="device name: local DNS, then LAN discovery, else cloud push")
+    p.add_argument("--cloud", action="store_true",
+                   help="with --name: push via the cloud-push server, "
+                        "skip the LAN lookup entirely")
+    p.add_argument("--localsend", action="store_true",
+                   help="with --name: force the LocalSend LAN lookup even if "
+                        "the device is cloud-pinned (falls back to cloud push "
+                        "if the device is not found on the LAN)")
+    p.add_argument("--cloud-pin", action="store_true",
+                   help="pin --name's device to always use cloud push (no "
+                        "LAN lookup); stored in ~/.config/mdrender/cloud-pins.json. "
+                        "Records --pin as the device's transfer PIN too")
+    p.add_argument("--cloud-unpin", action="store_true",
+                   help="remove the device's cloud pin (with --name); keeps "
+                        "its stored transfer PIN and default-device flag")
+    p.add_argument("--set-default", action="store_true",
+                   help="make --name's device the default target for runs "
+                        "with no --name/--host (works for LocalSend and "
+                        "cloud-pinned devices alike)")
+    p.add_argument("--clear-default", action="store_true",
+                   help="clear the default device (with --name)")
     p.add_argument("--port", type=int, default=53317, help="receiver port (default 53317)")
     p.add_argument("--pin", default=None, help="transfer PIN, if the receiver requires one")
     p.add_argument("--http", action="store_true", help="use http instead of https")
@@ -784,12 +1220,31 @@ def main(argv=None):
     if args.list or args.names:
         return cmd_list(args)
 
+    if args.cloud_pin or args.cloud_unpin or args.set_default \
+            or args.clear_default:
+        return _cmd_pin_action(args)
+
+    # No target given: fall back to the pinned default device so a bare
+    # `mdrender-send file.md` just works. Explicit --name/--host win.
+    if not args.name and not args.host:
+        default_name = _default_device_name()
+        if default_name:
+            args.name = default_name
+
+    if (args.cloud or args.localsend) and not args.name:
+        print("error: --cloud/--localsend require --name <device>", file=sys.stderr)
+        return 2
+    if args.cloud and args.localsend:
+        print("error: --cloud and --localsend are mutually exclusive",
+              file=sys.stderr)
+        return 2
+
     if not args.files:
         print("error: at least one file is required", file=sys.stderr)
         return 2
     if not args.name and not args.host:
-        print("error: --host <IP or hostname> or --name <device name> is required",
-              file=sys.stderr)
+        print("error: --host <IP or hostname> or --name <device name> is "
+              "required (or set one with --set-default)", file=sys.stderr)
         return 2
 
     paths = []
@@ -799,19 +1254,34 @@ def main(argv=None):
             return 2
         paths.append(f)
 
-    # --name: resolve on the LAN (local DNS first, then LocalSend UDP
-    # discovery); if that finds nothing, fall back to the cloud-push server
-    # when push credentials exist. --host stays direct with no fallback
-    # (spec), and --name wins if both are given.
+    # --name routing: --cloud forces the cloud server, --localsend forces the
+    # LAN probe, a cloud pin (recorded by --cloud-pin) makes the server the
+    # default for that name, and otherwise resolve on the LAN (local DNS
+    # first, then LocalSend UDP discovery) and fall back to the cloud-push
+    # server when push credentials exist. --host stays direct with no
+    # fallback (spec), and --name wins if both are given.
     if args.name:
-        ip = resolve_name(args.name)
-        if ip:
-            args.host = ip
-        else:
+        rec = load_cloud_pins().get(args.name)
+        rec = rec if isinstance(rec, dict) else {}
+        pinned = (not args.cloud and not args.localsend
+                  and "pinned_at" in rec)
+        cloud = args.cloud or pinned
+        if not cloud:
+            ip = resolve_name(args.name)
+            if ip:
+                args.host = ip
+            else:
+                cloud = True  # not on the LAN → cloud fallback
+        if cloud:
             creds = args.creds or os.path.expanduser(
                 "~/.config/mdrender/push-credentials.json")
             if not os.path.exists(creds):
-                print("device not found on LAN and no push credentials", file=sys.stderr)
+                if args.cloud or pinned:
+                    print("cloud push requested but no push credentials",
+                          file=sys.stderr)
+                else:
+                    print("device not found on LAN and no push credentials",
+                          file=sys.stderr)
                 return 3
             return push_to_server(creds, args.name, paths,
                                   folder=args.folder, conflict=args.conflict)
@@ -839,8 +1309,9 @@ def main(argv=None):
         }
 
     prepare_url = f"{base}/prepare-upload"
-    if args.pin:
-        prepare_url += f"?pin={urllib.parse.quote(args.pin)}"
+    transfer_pin = _effective_transfer_pin(args)
+    if transfer_pin:
+        prepare_url += f"?pin={urllib.parse.quote(transfer_pin)}"
 
     # MDRender protocol extension: destination folder and conflict strategy.
     # Only sent when non-default so vanilla receivers are not bothered.

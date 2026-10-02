@@ -2,7 +2,8 @@
  *
  * The page must set window.__FIREBASE__ (apiKey, authDomain, projectId, appId)
  * before loading this module. On success we exchange the Firebase ID token for
- * an MDRender session at POST /auth/oidc.
+ * an MDRender session at POST /auth/oidc - or, when __FIREBASE_ACTION__ is
+ * "link", bind it to the signed-in account at POST /account/link.
  *
  * Primary flow: one identifier field — email sends a magic link, a phone number
  * sends an SMS code. A password option and social buttons are secondary. */
@@ -55,6 +56,13 @@ function friendly(e) {
   return ERRORS[code] || (e && e.message) || String(e);
 }
 
+// Link mode: the visitor is already signed in locally and is binding a
+// Firebase identity to that account, so the token goes to /account/link and
+// success returns to the profile page instead of opening a session.
+function linkMode() {
+  return window.__FIREBASE_ACTION__ === "link";
+}
+
 async function exchange(user) {
   try {
     const idToken = await user.getIdToken();
@@ -64,13 +72,17 @@ async function exchange(user) {
       || params.get("affiliate") || params.get("affiliate_code") || "").trim();
     const payload = { id_token: idToken };
     if (affiliate) payload.affiliate_code = affiliate;
-    const resp = await fetch("/auth/oidc", {
+    const resp = await fetch(linkMode() ? "/account/link" : "/auth/oidc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (resp.ok) {
       const body = await resp.json().catch(() => ({}));
+      if (linkMode()) {
+        window.location = "/account/profile?linked=1";
+        return;
+      }
       const next = (window.__FIREBASE_NEXT__ || "").trim();
       const dest = next.startsWith("/") && !next.startsWith("//")
         ? next
@@ -87,8 +99,10 @@ async function exchange(user) {
 
 // Every account needs a verified email, but a phone-only Firebase user has
 // none. Rather than exchange, ask them to attach one first (see below).
+// Linking is different: the account already has an email of its own, so a
+// phone-only identity can bind as it stands.
 async function afterSignIn(user) {
-  if (user && !user.email) {
+  if (user && !user.email && !linkMode()) {
     showEmailLinkPanel();
     return;
   }

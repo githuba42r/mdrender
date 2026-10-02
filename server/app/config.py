@@ -55,6 +55,10 @@ DEFAULTS = {
     "FIREBASE_PROVIDERS": "google,github,phone,password,email_link",
     # Server-enforced content encryption: on (clients must encrypt) | off.
     "ENCRYPTION_MODE": "off",
+    # Name this server is known by on the master's server list (and in the
+    # enrolment payload). Empty = host of PUSH_PUBLIC_URL, else the container
+    # hostname, which is an id nobody can recognise.
+    "SERVER_HOSTNAME": "",
     # Allow a Firebase-linked admin to sign in on the generic front page by
     # their Firebase identity (bind-by-uid). Local /admin-login always works.
     "ADMIN_FIREBASE_LOGIN": False,

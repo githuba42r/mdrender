@@ -111,6 +111,44 @@ def get_user(config, uid):
     return (users[0] if users else None), None
 
 
+def get_user_by_email(config, email):
+    """Look up an Identity Platform user by email. -> (user|None, error).
+
+    An email with no user is not an error: the caller decides whether to
+    create one.
+    """
+    if not _project(config):
+        return None, "identity provider not configured"
+    payload, error = _post(config, f"{ACCOUNTS.format(project=_project(config))}:lookup",
+                           {"email": email})
+    if error:
+        return None, error
+    users = (payload or {}).get("users") or []
+    return (users[0] if users else None), None
+
+
+def create_user(config, *, email, display_name=None):
+    """Create an Identity Platform user (the Admin SDK's createUser path).
+
+    No password is minted: the account signs in by email link, a social
+    provider, or a password reset, so nothing secret is stored or shown.
+    -> (uid, error)
+    """
+    if not _project(config):
+        return None, "identity provider not configured"
+    payload = {"email": email, "returnSecureToken": False}
+    if display_name:
+        payload["displayName"] = display_name
+    result, error = _post(config, f"{ACCOUNTS.format(project=_project(config))}:signUp",
+                          payload)
+    if error:
+        return None, error
+    uid = (result or {}).get("localId")
+    if not uid:
+        return None, "provider returned no user id"
+    return uid, None
+
+
 def update_user(config, uid, **fields):
     """Update the user's fields (email, phoneNumber, displayName, password, …).
 

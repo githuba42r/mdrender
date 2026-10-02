@@ -17,7 +17,7 @@ def _app(config):
 def _admin(app):
     c = app.test_client()
     assert c.get("/billing").status_code == 303  # session-gated
-    c.post("/login", data={"username": "admin", "password": "testpass"})
+    c.post("/admin-login", data={"username": "admin", "password": "testpass"})
     return c
 
 
@@ -148,3 +148,104 @@ def test_groups_attach_plans_and_default_group_is_fixed(config, db_path):
     with app.config["_db"].connect() as conn:
         default = billing.get_group(conn, default_id)
     assert default is not None and default["name"] == "system" and default["is_default"] == 1
+
+
+def test_server_plan_form_keeps_message_fees_and_hides_only_pending_storage(config, db_path):
+    """The Message fees row applies to every plan type; only Pending and
+    Storage fees are account-only, so only those two rows carry the class the
+    scope toggle hides."""
+    import re
+
+    app = _app(config)
+    page = _admin(app).get("/billing?tab=plans").data.decode()
+
+    message_fees = re.search(
+        r'<div class="([^"]*)">\s*<span class="row-title">Message fees:', page)
+    assert message_fees, "the Message fees row is missing"
+    assert "plan-account-only" not in message_fees.group(1)
+
+    for title in ("Pending:", "Storage fees:"):
+        row = re.search(
+            r'<div class="([^"]*)">\s*<span class="row-title">' + title, page)
+        assert row, f"the {title} row is missing"
+        assert "plan-account-only" in row.group(1)
+    assert page.count("plan-account-only") == 2
+
+
+def test_server_plan_stores_and_shows_message_fees(config, db_path):
+    app = _app(config)
+    c = _admin(app)
+    c.post("/billing/plans", data={"name": "Host", "scope": "slave",
+                                   "price": "20",
+                                   "max_messages_per_month": "10000",
+                                   "included_messages": "1000",
+                                   "message_cost": "0.15"})
+    with app.config["_db"].connect() as conn:
+        plan = billing.list_plans(conn)[0]
+    assert plan["scope"] == "slave"
+    assert plan["included_messages"] == 1000
+    assert plan["message_cents_per_1000"] == 15
+    assert plan["max_messages_per_month"] == 10000
+
+    # The plans table shows them for a server plan (storage/pending stay "—").
+    row = next(r for r in c.get("/billing?tab=plans").data.decode().split("<tr>")
+               if ">Host<" in r)
+    cells = row.split("<td>")
+    assert "server (host)" in cells[2]
+    assert "1000" in cells[4] and "0.15" in cells[5]
+    assert "&mdash;" in cells[6] and "&mdash;" in cells[8]
+
+
+def test_editing_a_server_plan_leaves_absent_account_fields_untouched(config, db_path):
+    """A hidden (disabled) field is not submitted; the update must treat an
+    absent value as "leave as-is", while the visible message fees still land."""
+    app = _app(config)
+    c = _admin(app)
+    c.post("/billing/plans", data={"name": "Old", "scope": "account",
+                                   "price": "5", "pending_mb": "100",
+                                   "pending_expiry_hours": "24",
+                                   "storage_cost": "0.01", "storage_grace_days": "7"})
+    with app.config["_db"].connect() as conn:
+        plan = billing.list_plans(conn)[0]
+
+    # Now switch it to a server plan without sending the account-only fields.
+    c.post(f"/billing/plans/{plan['plan_id']}", data={
+        "name": "Old", "scope": "slave", "price": "5",
+        "max_messages_per_month": "5000",
+        "included_messages": "500", "message_cost": "0.10"})
+    with app.config["_db"].connect() as conn:
+        plan = billing.get_plan(conn, plan["plan_id"])
+    assert plan["scope"] == "slave"
+    assert plan["included_messages"] == 500
+    assert plan["message_cents_per_1000"] == 10
+    # Absent inputs: unchanged, not zeroed.
+    assert plan["max_pending_bytes"] == 100 * 1048576
+    assert plan["pending_expiry_hours"] == 24
+    assert plan["storage_cents_per_mb"] == 1
+    assert plan["storage_grace_days"] == 7
+
+
+def test_plan_details_dialog_marks_server_irrelevant_terms(config, db_path):
+    """The info popup tags the storage/pending/expiry rows so app.js hides
+    them for server (host) plans, and a zero message cap reads 'unlimited'."""
+    app = _app(config)
+    c = _admin(app)
+    c.get("/billing?tab=groups")
+    c.post("/billing/plans", data={"name": "Starter", "scope": "account"})
+    c.post("/billing/groups", data={"name": "Beta"})
+    with app.config["_db"].connect() as conn:
+        plan_id = billing.list_plans(conn)[0]["plan_id"]
+        groups = {gr["name"]: gr for gr in billing.list_groups(conn)}
+    c.post(f"/billing/groups/{groups['Beta']['group_id']}/plan",
+           data={"plan_id": plan_id})
+
+    page = c.get("/billing?tab=groups").data.decode()
+    # 4 <dt> + 4 <dd> rows: storage, grace, pending storage, pending expiry.
+    assert page.count("pd-hide-for-server") == 8
+    assert 'data-plan-max="unlimited"' in page
+
+    js = os.path.join(os.path.dirname(__file__), "..", "app", "static",
+                      "app.js")
+    with open(js, encoding="utf-8") as fh:
+        source = fh.read()
+    assert "pd-hide-for-server" in source and "isServerPlan" in source

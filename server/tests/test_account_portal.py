@@ -53,7 +53,7 @@ def test_account_session_cannot_reach_admin_pages(config, db_path):
 
     # And an admin session cannot be used as an account.
     admin = app.test_client()
-    admin.post("/login", data={"username": "admin", "password": "testpass"})
+    admin.post("/admin-login", data={"username": "admin", "password": "testpass"})
     assert admin.get("/account").headers["Location"] == "/account/login"
 
 

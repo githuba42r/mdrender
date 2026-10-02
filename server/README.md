@@ -61,7 +61,10 @@ All configuration is via environment variables. Defaults come from
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `SERVER_PASSWORD` | *(none — required)* | Password for the browser UI (`/login`). |
-| `PUSH_PUBLIC_URL` | *(empty)* | Public base URL. Embedded in the pairing QR payload and the tool-enrolment verification URI. |
+| `PUSH_PUBLIC_URL` | *(empty)* | Public base URL. Embedded in the pairing QR payload and the tool-enrolment verification URI. On a slave it is also the URL the master calls back on. |
+| `ROLE` | *(auto)* | `master` / `slave` / `standalone`. Empty ⇒ auto-detect from FCM availability. |
+| `MASTER_URL` | *(empty)* | Federation master a slave enrols with (see [Example: federated slave](#example-federated-slave)). |
+| `FEDERATION_ENABLED` | `true` | Master-side env gate for the federation endpoints; the Settings page then toggles `accept_new_slaves`. |
 | `FCM_SERVER_KEY` | *(empty)* | Path to a Firebase service-account JSON (FCM HTTP v1). Empty ⇒ pushes are stored but not delivered. |
 | `LISTEN_ADDR` | `:8080` | Bind address `host:port` (empty host = all interfaces). |
 | `DB_PATH` | `/data/push/server.db` | SQLite database file. Holds the server keypair, OAuth clients, and devices. |
@@ -143,6 +146,62 @@ Then `POST /oauth/token` (client-credentials grant) → a Bearer `access_token` 
 
 Enrolment sessions expire after `ENROL_TOKEN_TTL_HOURS`; access tokens after
 `ACCESS_TOKEN_TTL_SECONDS`.
+
+## Example: federated slave
+
+A **slave** is a second instance of this same image that registers with a
+**master** (see `federation.py` / `federation_client.py` / `federation_worker.py`).
+Pushes landing on the slave are relayed to the master's outbox on every
+heartbeat, and the master probes the slave at its `PUSH_PUBLIC_URL`, so devices
+paired with either server end up under one FCM configuration.
+
+```bash
+cd server
+cp docker-compose.federated.example.yml docker-compose.federated.yml
+MASTER_URL=https://md.z42z.com \
+PUSH_PUBLIC_URL=https://federated.z42z.com \
+docker compose -f docker-compose.federated.yml up -d --build
+```
+
+The example keeps its own compose project name (`mdrender-federated`), its own
+image tag, and its own volume (`./data-federated:/data/push`), so it runs beside
+the master container (`mdrender-push`) without reconciling it. `IDENTITY_PROVIDER`,
+`ENCRYPTION_MODE`, and `ROLE` come from the example file.
+
+First boot and joining a master (design §5):
+
+1. A fresh slave has no admin: the browser lands on **`/setup`**, where the
+   first admin chooses the username and password.
+2. Setup signs them in and lands them on **`/federation`**, which shows the
+   master URL (editable) and a **Connect to a master** button
+   (`POST /federation/connect`).
+3. Connect signs a `connect` request with the slave's federation key and
+   redirects the admin's browser to the master's **consent page**
+   (`GET /federation/connect?…`): who is asking, the server/host plans that
+   apply, and the terms - no login needed on the master for that page.
+4. **Approve** mints a single-use code and sends the browser back to the
+   slave's `/federation/callback?code=…&state=…`; **Decline** stops there.
+5. The callback enrolls the slave (the code is exchanged over
+   `POST /api/federation/enrol`) and lands the admin on the push list. The
+   master's `/federation` then lists the slave (`active` / `down` /
+   `deactivated` / `revoked`).
+
+Nothing enrolls on its own: the worker only heartbeats a slave that is already
+enrolled, and an enrolment without an operator-approved code is answered
+`403 consent required` (a slave the master already consented to, unchanged and
+unrevoked, may re-enrol code-less so a wiped DB recovers).
+
+Two URL notes:
+
+- The **master must be able to reach `PUSH_PUBLIC_URL`** — it calls
+  `/api/federation/verify` during enrolment and probes it afterwards. A hostname
+  behind a Cloudflare Tunnel therefore has to be **proxied** (orange cloud); a
+  grey-clouded tunnel record only yields the tunnel CNAME and the callback fails.
+  Registration failure is shown on the slave's `/federation` page, not swallowed.
+- Changing `PUSH_PUBLIC_URL` or `MASTER_URL` after registration means the master
+  still has the old `base_url`. Press **Connect to a master** again (or clear
+  the slave's `federation_client` row first) so the master stores the new URL -
+  approval covers the exact `(server_id, base_url, public_key)` triple.
 
 ## FCM setup
 

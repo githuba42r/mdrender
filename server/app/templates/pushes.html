@@ -66,7 +66,9 @@
       <td><code>{{ p.push_id }}</code></td>
       <td>{{ p.target_device }}</td>
       <td>
-        {% if p.target_folder %}
+        {% if encryption_on %}
+          <span class="empty">(encrypted)</span>
+        {% elif p.target_folder %}
           <code>{{ p.target_folder }}</code>
         {% else %}
           <span class="empty">(app default)</span>
@@ -74,7 +76,10 @@
       </td>
       <td>{{ p.conflict }}</td>
       <td>
-        {% if p.file_names %}
+        {% if encryption_on %}
+          <span class="empty">(encrypted)</span>
+          <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
+        {% elif p.file_names %}
           {{ p.file_names }}
           <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
         {% else %}

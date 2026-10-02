@@ -58,11 +58,13 @@ def list_clients(conn, account_id=None):
     """
     if account_id is None:
         return conn.execute(
-            "SELECT client_id, name, account_id, created_at, revoked_at FROM clients "
+            "SELECT client_id, name, account_id, created_at, revoked_at, blocked_at"
+            " FROM clients "
             "WHERE revoked_at IS NULL ORDER BY created_at"
         ).fetchall()
     return conn.execute(
-        "SELECT client_id, name, account_id, created_at, revoked_at FROM clients "
+        "SELECT client_id, name, account_id, created_at, revoked_at, blocked_at"
+        " FROM clients "
         "WHERE revoked_at IS NULL AND account_id = ? ORDER BY created_at",
         (account_id,)).fetchall()
 
@@ -71,6 +73,19 @@ def revoke_client(conn, client_id):
     conn.execute("UPDATE clients SET revoked_at = ? WHERE client_id = ?",
                  (int(time.time()), client_id))
     conn.commit()
+
+
+def set_client_blocked(conn, client_id, blocked) -> bool:
+    """Soft-disable a client without revoking it (admin block).
+
+    Blocking keeps the row (and its tokens) intact so unblocking restores
+    service; revoking is permanent. Returns whether the row was hit.
+    """
+    cur = conn.execute(
+        "UPDATE clients SET blocked_at = ? WHERE client_id = ?",
+        (int(time.time()) if blocked else None, client_id))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def update_device_token(conn, device_secret, device_auth, new_token) -> bool:
@@ -129,7 +144,8 @@ def update_device_push_key(conn, device_secret, device_auth, new_push_key_b64) -
 
 def check_device(conn, device_secret, device_auth) -> bool:
     return conn.execute(
-        "SELECT 1 FROM devices WHERE device_secret = ? AND device_auth = ?",
+        "SELECT 1 FROM devices WHERE device_secret = ? AND device_auth = ?"
+        " AND blocked_at IS NULL",
         (device_secret, device_auth),
     ).fetchone() is not None
 
@@ -154,6 +170,19 @@ def delete_device(conn, device_secret):
     conn.commit()
 
 
+def set_device_blocked(conn, device_secret, blocked) -> bool:
+    """Soft-disable a device without unpairing it (admin block).
+
+    Blocking keeps the row so unblocking restores service; removing the device
+    is the permanent path. Returns whether the row was hit.
+    """
+    cur = conn.execute(
+        "UPDATE devices SET blocked_at = ? WHERE device_secret = ?",
+        (int(time.time()) if blocked else None, device_secret))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def list_devices(conn):
     return conn.execute(
         "SELECT device_secret, device_name, registered_at, last_seen FROM devices ORDER BY registered_at"
@@ -163,7 +192,7 @@ def list_devices(conn):
 def list_account_devices(conn, account_id):
     return conn.execute(
         "SELECT device_secret, device_name, device_model, fcm_token, registered_at,"
-        " last_seen, approved_at FROM devices WHERE account_id = ?"
+        " last_seen, approved_at, blocked_at FROM devices WHERE account_id = ?"
         " ORDER BY registered_at", (account_id,)).fetchall()
 
 

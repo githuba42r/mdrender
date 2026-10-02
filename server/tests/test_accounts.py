@@ -9,6 +9,7 @@ import pytest
 
 from server.app import accounts, crypto, federation
 from server.app.app import create_app
+from conftest import consent_code
 
 
 @pytest.fixture()
@@ -61,12 +62,14 @@ def _enrol_slave(app):
     priv, pub = crypto.generate_rsa_keypair()
     priv_pem = crypto.private_to_pem(priv).decode()
     pub_b64 = base64.b64encode(crypto.public_to_spki_der(pub)).decode()
+    code = consent_code(app, server_id="srv-1", hostname="slave",
+                        base_url="https://slave", public_key=pub_b64)
     with mock.patch.object(federation, "verify_slave_callback",
                            lambda base_url, challenge, timeout=10:
                            federation.sign_bytes(priv_pem, challenge.encode())):
         resp = app.test_client().post("/api/federation/enrol", json={
             "server_id": "srv-1", "hostname": "slave",
-            "base_url": "https://slave", "public_key": pub_b64})
+            "base_url": "https://slave", "public_key": pub_b64, "code": code})
     return priv_pem, f"srv-1.{resp.get_json()['server_secret']}"
 
 
@@ -96,8 +99,8 @@ class _FakeFcm:
     def __init__(self):
         self.sent = []
 
-    def send(self, data, token):
-        self.sent.append((data, token))
+    def send(self, data, token, **kwargs):
+        self.sent.append((data, token, kwargs))
 
 
 def test_master_relays_a_doorbell_to_the_owning_device(app_):
@@ -116,7 +119,10 @@ def test_master_relays_a_doorbell_to_the_owning_device(app_):
     resp = c.post("/api/federation/doorbell", data=body,
                   content_type="application/json", headers=headers)
     assert resp.status_code == 200, resp.data
-    assert fake.sent == [({"p": "CIPHER", "i": "IV"}, "tok-1")]
+    # Relayed doorbells go out high-priority so the phone may start its
+    # download service from the background (Android 12+).
+    assert fake.sent == [({"p": "CIPHER", "i": "IV"}, "tok-1",
+                          {"high_priority": True})]
 
     # A device that isn't registered for this slave/account is refused.
     body = json.dumps({"account_id": "acct-2", "device_id": "dev-9",

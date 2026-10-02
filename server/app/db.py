@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS federated_servers (
   last_seen INTEGER,
   down_since INTEGER,
   last_probe INTEGER,
-  probe_failures INTEGER NOT NULL DEFAULT 0
+  probe_failures INTEGER NOT NULL DEFAULT 0,
+  plan_id TEXT
 );
 CREATE TABLE IF NOT EXISTS federated_nonces (
   server_id TEXT NOT NULL,
@@ -113,6 +114,19 @@ CREATE TABLE IF NOT EXISTS federated_outbox (
   attempts INTEGER NOT NULL DEFAULT 0,
   next_retry_at INTEGER,
   acked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS federation_connects (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL,
+  hostname TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  code TEXT,
+  consumed_at INTEGER,
+  declined_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS accounts (
   account_id TEXT PRIMARY KEY,
@@ -280,6 +294,7 @@ class Database:
                 "content_pubkey": "TEXT",
                 "content_proof": "TEXT",
                 "device_model": "TEXT",
+                "blocked_at": "INTEGER",
             },
             "pushes": {
                 "challenge_key": "TEXT NOT NULL DEFAULT ''",
@@ -289,6 +304,7 @@ class Database:
             },
             "federated_servers": {
                 "probe_failures": "INTEGER NOT NULL DEFAULT 0",
+                "plan_id": "TEXT",
             },
             "sessions": {
                 "principal_type": "TEXT NOT NULL DEFAULT 'admin'",
@@ -329,6 +345,7 @@ class Database:
             },
             "clients": {
                 "account_id": "TEXT",
+                "blocked_at": "INTEGER",
             },
         }
         for table, columns in wanted.items():

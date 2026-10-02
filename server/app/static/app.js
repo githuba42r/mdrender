@@ -79,6 +79,20 @@
     'stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
     '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>' +
     '<circle cx="12" cy="12" r="3"/></svg>';
+  // Crossed-out eye = the value is currently masked.
+  var EYE_OFF = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
+    '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45' +
+    ' 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0' +
+    ' 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>' +
+    '<line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+  function syncToggle(btn, input) {
+    var hidden = input.type === "password";
+    btn.innerHTML = hidden ? EYE_OFF : EYE;
+    btn.setAttribute("aria-label", hidden ? "Show password" : "Hide password");
+    btn.setAttribute("aria-pressed", hidden ? "false" : "true");
+  }
 
   document.querySelectorAll('input[type="password"]').forEach(function (input) {
     var field = input.closest(".field") || input.parentElement;
@@ -86,14 +100,12 @@
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "pw-toggle";
-    btn.setAttribute("aria-label", "Show password");
-    btn.innerHTML = EYE;
     btn.addEventListener("click", function () {
-      var show = input.type === "password";
-      input.type = show ? "text" : "password";
-      btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+      input.type = input.type === "password" ? "text" : "password";
+      syncToggle(btn, input);
     });
     field.appendChild(btn);
+    syncToggle(btn, input);
   });
 
   // ---- Disable submit until required fields are complete ------------------
@@ -148,13 +160,33 @@
     pendingForm = null;
   });
 
+  // ---- Passwords in dialogs ------------------------------------------------
+
+  // A "new password" field has to start empty and stay empty until the user
+  // deliberately types in it. Password managers fill it with the *current*
+  // password the instant the dialog opens; saving that looks like a successful
+  // change but silently keeps the old password, so the new one never works.
+  // readOnly keeps autofill out; the first click or keystroke drops it, so
+  // typing behaves normally.
+  function armPasswordField(input) {
+    if (!input) return;
+    input.value = "";
+    input.readOnly = true;
+    var unlock = function () { input.readOnly = false; };
+    input.addEventListener("keydown", unlock, {once: true});
+    input.addEventListener("pointerdown", unlock, {once: true});
+  }
+
   // ---- Generic modals (e.g. add / edit admin) -----------------------------
 
   document.addEventListener("click", function (event) {
     var opener = event.target.closest("[data-open-dialog]");
     if (opener) {
       var target = document.querySelector(opener.getAttribute("data-open-dialog"));
-      if (target) target.showModal();
+      if (target) {
+        target.showModal();
+        target.querySelectorAll('input[type="password"]').forEach(armPasswordField);
+      }
       return;
     }
     var closer = event.target.closest("[data-close-dialog]");
@@ -171,10 +203,10 @@
         "action", "/admins/" + edit.getAttribute("data-id") + "/update");
       editDialog.querySelector('[name="name"]').value = edit.getAttribute("data-name") || "";
       editDialog.querySelector('[name="email"]').value = edit.getAttribute("data-email") || "";
-      editDialog.querySelector('[name="password"]').value = "";
       editDialog.querySelector(".edit-username").textContent =
         edit.getAttribute("data-username") || "";
       editDialog.showModal();
+      armPasswordField(editDialog.querySelector('[name="password"]'));
       return;
     }
     var editAccount = event.target.closest("[data-edit-account]");
@@ -187,8 +219,8 @@
         editAccount.getAttribute("data-email") || "";
       accountDialog.querySelector('[name="name"]').value =
         editAccount.getAttribute("data-name") || "";
-      accountDialog.querySelector('[name="password"]').value = "";
       accountDialog.showModal();
+      armPasswordField(accountDialog.querySelector('[name="password"]'));
       return;
     }
     var newPlan = event.target.closest("[data-new-plan]");
@@ -231,6 +263,20 @@
       planDialog.querySelector("form")._validate &&
         planDialog.querySelector("form")._validate();
       planDialog.showModal();
+      return;
+    }
+    var editServerPlan = event.target.closest("[data-edit-server-plan]");
+    if (editServerPlan) {
+      var spDialog = document.getElementById("server-plan-dialog");
+      if (!spDialog) return;
+      spDialog.querySelector("form").setAttribute(
+        "action",
+        "/federation/" + editServerPlan.getAttribute("data-server-id") + "/plan");
+      spDialog.querySelector(".sp-hostname").textContent =
+        editServerPlan.getAttribute("data-hostname") || "";
+      spDialog.querySelector('[name="plan_id"]').value =
+        editServerPlan.getAttribute("data-plan") || "";
+      spDialog.showModal();
       return;
     }
     var addCredit = event.target.closest("[data-add-credit]");
@@ -304,6 +350,12 @@
         pd.querySelector(sel).textContent =
           (value === null || value === "" ? "—" : value);
       });
+      // Storage and pending-storage terms don't relate to server (host) plans.
+      var isServerPlan = (pd.querySelector(".pd-type").textContent || "")
+        .indexOf("server") !== -1;
+      pd.querySelectorAll(".pd-hide-for-server").forEach(function (el) {
+        el.hidden = isServerPlan;
+      });
       pd.showModal();
     }
   });
@@ -317,6 +369,13 @@
       var account = scopeSelect.value === "account";
       planDialogEl.querySelectorAll(".plan-account-only").forEach(function (el) {
         el.hidden = !account;
+        // Hidden is not enough: the browser still validates required inputs
+        // it cannot see, so Save would be blocked by the fields we hid. Take
+        // them out of the form as well; absent values leave the stored plan
+        // columns untouched on edit, and default to 0 on create.
+        el.querySelectorAll("input").forEach(function (input) {
+          input.disabled = !account;
+        });
       });
       var form = planDialogEl.querySelector("form");
       form._validate && form._validate();

@@ -21,8 +21,8 @@ class _FakeFcm:
     def __init__(self):
         self.sent = []
 
-    def send(self, data_message, fcm_token):
-        self.sent.append((data_message, fcm_token))
+    def send(self, data_message, fcm_token, **kwargs):
+        self.sent.append((data_message, fcm_token, kwargs))
 
 
 def test_full_push_flow(config, db_path, monkeypatch):
@@ -44,12 +44,12 @@ def test_full_push_flow(config, db_path, monkeypatch):
     # remembering where the visitor was headed.
     anon = client.get("/pair")
     assert anon.status_code == 303
-    assert anon.headers["Location"] == "/login?next=/pair"
+    assert anon.headers["Location"] == "/admin-login?next=/pair"
 
     # Password login (session cookie)
-    r = client.post("/login", data={"username": "admin", "password": "testpass"})
+    r = client.post("/admin-login", data={"username": "admin", "password": "testpass"})
     assert r.status_code == 302
-    assert client.post("/login", data={"username": "admin", "password": "wrong"}).status_code == 401
+    assert client.post("/admin-login", data={"username": "admin", "password": "wrong"}).status_code == 401
 
     # Enrol a tool via the one-time code
     enrol = client.post("/api/enrol/start", json={}).json
@@ -135,6 +135,9 @@ def test_full_push_flow(config, db_path, monkeypatch):
     # Exactly one FCM message, whatever the file count — no batching.
     assert len(fcm.sent) == 1
     msg = fcm.sent[0][0]
+    # Doorbells are wake-ups: high priority so Android lets the app start its
+    # download service while backgrounded.
+    assert fcm.sent[0][2] == {"high_priority": True}
     # The FCM data message carries the two doorbell fields and nothing else: no
     # file names, no paths, no retrieval keys.
     assert set(msg) == {"p", "i"}

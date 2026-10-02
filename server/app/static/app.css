@@ -2,6 +2,12 @@
    Direction: "control room at night" — deep slate-blue ink, one brass signal
    accent, serif wordmark, quiet hairline structure. */
 
+/* The hidden attribute must win. Classes like .field-row set display:flex,
+   and an author display rule beats the browser's [hidden] stylesheet, so
+   JS-hidden sections (e.g. account-only plan fields on a server plan) would
+   otherwise stay on screen. */
+[hidden] { display: none !important; }
+
 :root {
   color-scheme: dark;
   --ink: #0f1420;
@@ -199,6 +205,12 @@ p.lede { color: var(--muted); margin: 0 0 1.4rem; max-width: 68ch; }
   color: #56d364;
 }
 .callout.success .callout-icon { color: #3fb950; }
+.callout.error {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: rgba(248, 81, 73, 0.55);
+  color: #ff7b72;
+}
+.callout.error .callout-icon { color: var(--danger); }
 
 .actions-end { text-align: right; margin: 1.2rem 0 0; }
 
@@ -344,6 +356,7 @@ label { display: block; margin-bottom: 0.35rem; color: var(--muted); font-size: 
 
 input[type="password"],
 input[type="text"],
+input[type="email"],
 input[type="search"],
 select {
   font: inherit;
@@ -473,7 +486,10 @@ body.no-nav main { max-width: none; }
   margin-top: 0.4rem;
 }
 .login-card label { margin-bottom: 0; }
-.login-card .btn-primary { width: 100%; }
+/* The form's flex gap separates every row evenly; the submit button gets extra
+   breathing room so it never reads as part of the password field (or of the
+   error line, when one is showing). */
+.login-card .btn-primary { width: 100%; margin-top: 0.6rem; }
 /* Constrain password-manager icons (LastPass, 1Password, …) to the field and
    leave room for them so they do not overlap the text or escape the border. */
 .field { position: relative; }
@@ -630,6 +646,10 @@ dialog.confirm p { margin: 0 0 1.2rem; color: var(--muted); }
   align-items: center;
 }
 .pw-toggle:hover { color: var(--text); background: none; }
+/* Keep the -50% centring while pressed: `button:active` above would otherwise
+   replace it, yanking the eye out from under the pointer so the release lands
+   on the input and the synthesized click misses the button. */
+.pw-toggle:active { transform: translateY(-50%) translateY(1px); }
 button[disabled], .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- Pending groups ---- */
