@@ -86,10 +86,26 @@ push list.</p>
 
 {% if error %}<div class="callout error">{{ error }}</div>{% endif %}
 
+{% if paypal_url %}
+<div class="callout success">
+  <p><strong>PayPal checkout created.</strong> Send this link to the server
+  operator, or open it yourself to pay on their behalf:</p>
+  <div class="field-row">
+    <input type="text" readonly value="{{ paypal_url }}" onclick="this.select()"
+           aria-label="PayPal checkout link" size="60">
+    <a class="btn btn-primary" href="{{ paypal_url }}" rel="noopener">Open PayPal</a>
+  </div>
+</div>
+{% elif paypal_ok %}
+<div class="callout success">Subscription active - the relay is paid up.</div>
+{% elif paypal_cancelled %}
+<div class="callout success">Checkout abandoned - nothing was charged.</div>
+{% endif %}
+
 {% if servers %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Hostname</th><th>Server ID</th><th>Plan</th><th>Status</th><th>Last seen</th><th></th></tr></thead>
+  <thead><tr><th>Hostname</th><th>Server ID</th><th>Plan</th><th>Billing</th><th>Status</th><th>Last seen</th><th></th></tr></thead>
   <tbody>
     {% for s in servers %}
     <tr>
@@ -114,6 +130,26 @@ push list.</p>
                   data-plan-expiry="">{{ icons.info() }}</button>
         {%- else -%}
           <span class="empty">-</span>
+        {%- endif -%}
+      </td>
+      <td>
+        {%- set sub = sub_by_server.get(s.server_id) -%}
+        {%- set billed_plan = plans_by_id.get(s.plan_id) if s.plan_id else default_plan -%}
+        {%- if not billed_plan or not billed_plan.price_cents -%}
+          <span class="empty">free</span>
+        {%- elif sub and sub.status in ('active', 'suspended') -%}
+          <span class="chip {{ 'acked' if sub.status == 'active' else 'failed' }}">{{ sub.status }}</span>
+          {%- if sub.current_period_end %} <span class="empty">until {{ sub.current_period_end | dt }}</span>{% endif -%}
+        {%- elif sub and sub.status == 'pending' -%}
+          <span class="chip">awaiting payment</span>
+        {%- elif paypal_enabled -%}
+          <form method="POST" action="/federation/{{ s.server_id }}/checkout" class="inline"
+                data-confirm="Create a PayPal payment link for {{ s.hostname }}?"
+                data-confirm-ok="Create link">
+            <button type="submit" class="icon-btn" title="Collect payment">Pay</button>
+          </form>
+        {%- else -%}
+          <span class="chip failed">unpaid</span>
         {%- endif -%}
       </td>
       <td><span class="chip {{ 'failed' if s.status in ('down','revoked','banned') else ('acked' if s.status == 'active' else '') }}">{{ s.status }}</span></td>

@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   storage_grace_days INTEGER NOT NULL DEFAULT 0,
   max_pending_bytes INTEGER NOT NULL DEFAULT 0,
   pending_expiry_hours INTEGER NOT NULL DEFAULT 0,
+  paypal_plan_id TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
@@ -259,6 +260,48 @@ CREATE TABLE IF NOT EXISTS billing_ledger (
   reason TEXT,
   provider_ref TEXT,
   created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS billing_subscriptions (
+  subscription_id TEXT PRIMARY KEY,
+  account_type TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  plan_id TEXT,
+  provider TEXT NOT NULL DEFAULT 'paypal',
+  provider_subscription_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  current_period_start INTEGER,
+  current_period_end INTEGER,
+  cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_billing_subscriptions_provider
+  ON billing_subscriptions(provider_subscription_id)
+  WHERE provider_subscription_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_billing_subscriptions_live
+  ON billing_subscriptions(account_type, account_id)
+  WHERE status IN ('pending', 'active', 'suspended');
+CREATE TABLE IF NOT EXISTS billing_orders (
+  order_id TEXT PRIMARY KEY,
+  account_type TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'AUD',
+  provider TEXT NOT NULL DEFAULT 'paypal',
+  provider_order_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  captured_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_billing_orders_provider
+  ON billing_orders(provider_order_id)
+  WHERE provider_order_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS billing_webhook_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT,
+  status TEXT NOT NULL DEFAULT 'processed',
+  detail TEXT,
+  received_at INTEGER NOT NULL
 );
 """
 
@@ -326,6 +369,7 @@ class Database:
                 "storage_grace_days": "INTEGER NOT NULL DEFAULT 0",
                 "max_pending_bytes": "INTEGER NOT NULL DEFAULT 0",
                 "pending_expiry_hours": "INTEGER NOT NULL DEFAULT 0",
+                "paypal_plan_id": "TEXT",
             },
             "billing_groups": {
                 "trial_days": "INTEGER NOT NULL DEFAULT 0",

@@ -80,6 +80,15 @@ All configuration is via environment variables. Defaults come from
 | `PUSH_RETRY_COUNT` | `5` | FCM re-push attempts per file not acked within the retry window. |
 | `PUSH_RETRY_INTERVAL_MINUTES` | `30` | Delay between FCM retries. |
 | `DEVICE_TTL_DAYS` | `90` | Devices not seen in this long are swept. |
+| `BILLING_ENFORCEMENT` | `false` | When `true`, a paid server plan with no live PayPal subscription is refused at the doorbell (`402`). |
+| `PAYPAL_MODE` | `sandbox` | PayPal API host: `sandbox` or `live`. |
+| `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal REST app credentials; both set ⇒ payments enabled (see [PayPal setup](#paypal-setup)). |
+| `PAYPAL_WEBHOOK_ID` | *(empty)* | Webhook id from the PayPal app, needed to verify event signatures. |
+| `PAYPAL_VERIFY_WEBHOOKS` | `true` | Verify webhook signatures; `false` only for local development. |
+| `PAYPAL_CURRENCY` | `AUD` | Default currency for plans and top-ups. |
+| `PAYPAL_BRAND_NAME` | `MDRender Cloud Push` | Name shown on the PayPal checkout page. |
+| `PAYPAL_GRACE_DAYS` | `3` | Days after a period end/suspension that access continues. |
+| `PAYPAL_TOPUP_MIN_CENTS` / `PAYPAL_TOPUP_MAX_CENTS` | `500` / `50000` | Bounds for one-time prepaid top-ups (cents). |
 
 ## Pairing a device
 
@@ -218,6 +227,17 @@ configured (`server/run.py`, `server/app/retry.py`).
 Use `tools/fcm/setup-fcm.sh` (see the spec) to create the Firebase project,
 the `fcm-pusher` service account, and `fcm-service-account.json`. Mount that
 file into the container and point `FCM_SERVER_KEY` at it.
+
+## PayPal setup
+
+Account subscriptions, prepaid top-ups and paid server (federation) plans are
+billed through PayPal. The gateway activates when `PAYPAL_CLIENT_ID` and
+`PAYPAL_CLIENT_SECRET` are both set; **Billing → Payments** shows the
+connection state, per-plan provisioning, and the webhook warning.
+
+The full walkthrough — developer account, sandbox app, test buyer accounts,
+webhook registration, sandbox payment testing, and going live — is in
+[docs/paypal-integration-setup.md](../docs/paypal-integration-setup.md).
 
 ## Backup
 
