@@ -71,6 +71,18 @@ DEFAULTS = {
     # DB-IP Lite MMDB paths for local ASN/country lookups (D9).
     "GEOIP_ASN_DB": "",
     "GEOIP_COUNTRY_DB": "",
+    # ---- Account deletion ---------------------------------------------
+    # Confirmed deletions are held this long before the data is purged, and
+    # the emailed confirmation link stays valid this many hours.
+    "DELETION_GRACE_DAYS": 14,
+    "DELETION_EMAIL_TTL_HOURS": 48,
+    # Outbound email (SMTP). Empty host = email is not configured; the
+    # delete-account flow then tells the user to contact the operator.
+    "SMTP_HOST": "",
+    "SMTP_PORT": 587,
+    "SMTP_USER": "",
+    "SMTP_PASSWORD": "",
+    "SMTP_FROM": "",
     # ---- PayPal billing -------------------------------------------------
     # The gateway is considered configured when CLIENT_ID and CLIENT_SECRET
     # are both non-empty; nothing else activates it.
@@ -101,6 +113,8 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS", "STORAGE_BILL_AFTER_HOURS",
+                 "DELETION_GRACE_DAYS", "DELETION_EMAIL_TTL_HOURS",
+                 "SMTP_PORT",
                  "PAYPAL_TOPUP_MIN_CENTS",
                  "PAYPAL_TOPUP_MAX_CENTS"):
             env[k] = int(env[k])

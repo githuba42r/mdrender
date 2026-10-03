@@ -1,10 +1,10 @@
 # server/app/billing_worker.py
-"""Periodic billing sweeps: trial-group expiry and pending-file expiry."""
+"""Periodic sweeps: trial-group expiry, pending-file expiry, deletion purges."""
 import logging
 import os
 import time
 
-from server.app import billing, push_store
+from server.app import billing, deletions, push_store
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ def run_forever(config, db, *, interval_seconds=300):
                 expired = sweep_pending_expiry(conn, config)
                 if expired:
                     log.info("billing: expired %d pending file(s)", expired)
+                purged = deletions.purge_expired(conn, config)
+                if purged:
+                    log.info("deletions: purged %d expired account(s)", purged)
         except Exception:  # noqa: BLE001 - the worker must never die
             log.warning("billing: sweep failed", exc_info=True)
         time.sleep(interval_seconds)

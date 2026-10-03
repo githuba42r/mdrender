@@ -5,6 +5,41 @@
 <h1>Users</h1>
 <p class="lede">Accounts (customers) and the devices related to them. Users sign in with their email; devices are paired to a user.</p>
 {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
+
+<h2>Pending deletions</h2>
+{% if pending %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Email</th><th>Name</th><th>Requested</th><th>Purges on</th><th>Requested by</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for d in pending %}
+    <tr>
+      <td>{{ d.email }}</td>
+      <td>{% if d.name %}{{ d.name }}{% else %}<span class="empty">&mdash;</span>{% endif %}</td>
+      <td>{{ d.requested_at | dt }}</td>
+      <td><span class="chip pending">{{ d.purge_after | dt }}</span></td>
+      <td>{{ 'self-service' if d.requested_by == 'self' else 'operator' }}</td>
+      <td>
+        <form method="POST" action="/accounts/{{ d.account_id }}/restore" class="inline"
+              data-confirm="Restore {{ d.email }}? The account becomes usable again."
+              data-confirm-ok="Restore">
+          <button type="submit" class="icon-btn" title="Restore">{{ icons.check() }}</button>
+        </form>
+        <a class="btn icon-btn inline" href="/accounts/{{ d.account_id }}/export"
+           title="Download data">{{ icons.download() }}</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">None &mdash; confirmed deletions wait here for {{ grace_days }} days before they are purged.</p>
+{% endif %}
+
+<h2>All users</h2>
 <p><button type="button" class="btn-primary" data-open-dialog="#add-account-dialog">Add user</button></p>
 
 {% if accounts %}
@@ -37,6 +72,9 @@
         {% if a.status == 'active' %}<span class="chip acked">active</span>
         {% elif a.status == 'banned' %}<span class="chip failed">banned</span>
         {% else %}<span class="chip pending">{{ a.status }}</span>{% endif %}
+        {% if a.account_id in pending_ids %}
+        <span class="chip failed" title="Purges {{ pending_ids[a.account_id].purge_after | dt }}">deleting</span>
+        {% endif %}
       </td>
       <td>{{ a.balance | money }}</td>
       <td>
@@ -46,6 +84,8 @@
                 data-name="{{ a.name or '' }}" data-email="{{ a.email }}" title="Edit">{{ icons.edit() }}</button>
         <button type="button" class="inline icon-btn" data-add-credit data-id="{{ a.account_id }}"
                 data-email="{{ a.email }}" title="Add credit">{{ icons.credit() }}</button>
+        <a class="btn icon-btn inline" href="/accounts/{{ a.account_id }}/export"
+           title="Download data (ZIP)">{{ icons.download() }}</a>
         {% if a.status == 'active' %}
         <form method="POST" action="/accounts/{{ a.account_id }}/status" class="inline"
               data-confirm="Deactivate {{ a.email }}? Their devices will stop receiving pushes."
@@ -66,7 +106,7 @@
           <button type="submit" class="icon-btn btn-danger" title="Ban">{{ icons.ban() }}</button>
         </form>
         <form method="POST" action="/accounts/{{ a.account_id }}/delete" class="inline"
-              data-confirm="Delete {{ a.email }} and detach their devices?"
+              data-confirm="Schedule deletion of {{ a.email }}? They are locked immediately and purged after {{ grace_days }} days."
               data-confirm-ok="Delete">
           <button type="submit" class="icon-btn btn-danger" title="Delete">{{ icons.trash() }}</button>
         </form>

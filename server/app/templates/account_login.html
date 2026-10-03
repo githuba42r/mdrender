@@ -6,6 +6,18 @@
     <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
     <h1>Account login</h1>
   </div>
+  {% if deletion %}
+  <p class="login-msg{% if deletion.state == 'scheduled' %} login-msg-error{% endif %}">
+    {% if deletion.state == 'confirmed' %}
+    Deletion confirmed. The account and its data are held for {{ grace_days }}
+    days, then purged permanently &mdash; contact the operator if you change
+    your mind.
+    {% else %}
+    This account is scheduled for deletion on {{ deletion.purge_after | dt }}.
+    Contact the operator to restore it.
+    {% endif %}
+  </p>
+  {% endif %}
   {% if firebase %}
   <p class="lede">Sign in with a social account, phone code, or magic email link.</p>
   {% set auth_action = 'signin' %}{% set auth_next = next %}

@@ -3,6 +3,7 @@
 import base64
 import datetime
 import hmac
+import io
 import json
 import os
 import queue
@@ -21,9 +22,11 @@ from qrcode.image.svg import SvgPathImage
 
 from cryptography.hazmat.primitives import serialization
 
-from server.app import (accounts, bans, billing, crypto, encryption, events,
+from server.app import (accounts, bans, billing, crypto, data_export,
+                        deletions, encryption, events,
                         federation, federation_client, fcm as fcm_mod, geoip,
-                        identity_admin, oidc, pairing, paypal, push_store,
+                        identity_admin, mail, oidc, pairing, paypal,
+                        push_store,
                         releases, settings, storage, trigger)
 from server.app.config import load_config
 from server.app.auth import (LoginGate, create_session, delete_session,
@@ -253,8 +256,14 @@ def create_app(config):
             conn.close()
 
     def _principal():
-        return principal_of(g.db, config.session_secret,
-                            request.cookies.get(SESSION_COOKIE), config)
+        p = principal_of(g.db, config.session_secret,
+                         request.cookies.get(SESSION_COOKIE), config)
+        # A confirmed deletion locks the account: its sessions become inert
+        # everywhere at once (pages, forms and the account API all gate here).
+        if (p is not None and p["type"] == "account"
+                and deletions.active_for(g.db, p["id"]) is not None):
+            return None
+        return p
 
     def _is_admin():
         principal = _principal()
@@ -552,11 +561,13 @@ def create_app(config):
 
     @app.context_processor
     def _inject_settings():
-        """Expose the signup toggle so pages can show/hide signup links."""
+        """Expose the signup toggle and deletion grace period to templates."""
         try:
-            return {"signup_open": settings.signup_enabled(g.db)}
+            signup = settings.signup_enabled(g.db)
         except Exception:
-            return {"signup_open": True}
+            signup = True
+        return {"signup_open": signup,
+                "grace_days": int(config.DELETION_GRACE_DAYS)}
 
     @app.context_processor
     def _inject_auth_state():
@@ -602,6 +613,37 @@ def create_app(config):
     def privacy_page():
         """Privacy policy - legal pages are public, no session."""
         return render_template("privacy.html")
+
+    @app.route("/account/delete/confirm", methods=["GET"])
+    def account_delete_confirm():
+        """The emailed confirmation link: show what confirming will do."""
+        token = request.args.get("token", "")
+        row = deletions.token_row(g.db, token)
+        if row is None:
+            return render_template("account_delete_confirm.html",
+                                   invalid=True), 400
+        if row["confirmed_at"] is not None:
+            return render_template("account_delete_confirm.html", already=True)
+        if deletions.token_usable(g.db, config, token) is None:
+            return render_template("account_delete_confirm.html",
+                                   invalid=True), 400
+        account = accounts.get_account(g.db, row["account_id"])
+        purge_preview = int(time.time()) + int(config.DELETION_GRACE_DAYS) * 86400
+        return render_template("account_delete_confirm.html", token=token,
+                               account=account, purge_preview=purge_preview)
+
+    @app.route("/account/delete/confirm", methods=["POST"])
+    def account_delete_confirm_submit():
+        """Confirm deletion: lock the account and start the grace period."""
+        token = request.form.get("token", "")
+        row = deletions.confirm(g.db, config, token)
+        if row is None:
+            return render_template("account_delete_confirm.html",
+                                   invalid=True), 400
+        g.db.execute("DELETE FROM sessions WHERE principal_type = 'account'"
+                     " AND principal_id = ?", (row["account_id"],))
+        g.db.commit()
+        return redirect("/login?deleted=1", 303)
 
     @app.route("/setup", methods=["GET"])
     def setup_page():
@@ -749,8 +791,20 @@ def create_app(config):
             # A server with no admin yet has nothing to sign in to: finish setup.
             if request.path == "/login" and count_admins(g.db) == 0:
                 return redirect("/setup")
+            deletion = None
+            if request.args.get("deleted") == "1":
+                deletion = {"state": "confirmed"}
+            else:
+                p = principal_of(g.db, config.session_secret,
+                                 request.cookies.get(SESSION_COOKIE), config)
+                if p is not None and p["type"] == "account":
+                    row = deletions.active_for(g.db, p["id"])
+                    if row is not None:
+                        deletion = {"state": "scheduled",
+                                    "purge_after": row["purge_after"]}
             return render_template("account_login.html",
-                                   next=request.args.get("next", ""))
+                                   next=request.args.get("next", ""),
+                                   deletion=deletion)
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password", "")
         account_id = accounts.verify_account_password(g.db, email, password)
@@ -758,6 +812,13 @@ def create_app(config):
             return render_template("account_login.html",
                                    error="Invalid email or password.",
                                    next=request.form.get("next", "")), 401
+        row = deletions.active_for(g.db, account_id)
+        if row is not None:
+            return render_template(
+                "account_login.html",
+                deletion={"state": "scheduled",
+                          "purge_after": row["purge_after"]},
+                next=request.form.get("next", "")), 403
         accounts.touch_login(g.db, account_id)
         token = create_session(g.db, config.session_secret, config,
                                principal_type="account", principal_id=account_id)
@@ -983,7 +1044,8 @@ def create_app(config):
         if auth_error:
             return auth_error
         account = accounts.get_account(g.db, _principal()["id"])
-        return render_template("account_profile.html", account=account)
+        return render_template("account_profile.html", account=account,
+                               ok=request.args.get("ok", ""))
 
     @app.route("/account/profile", methods=["POST"])
     def account_profile_update():
@@ -1050,6 +1112,56 @@ def create_app(config):
             g.db, account_id, name=name, email=email, phone=phone,
             password=password if password else None)
         return redirect("/account/profile", 303)
+
+    @app.route("/account/export")
+    def account_export():
+        """Download everything this server holds about the signed-in account."""
+        auth_error = require_account_session()
+        if auth_error:
+            return auth_error
+        data, name = data_export.account_zip(g.db, config, _principal()["id"])
+        return send_file(io.BytesIO(data), mimetype="application/zip",
+                         as_attachment=True, download_name=name)
+
+    @app.route("/account/delete-request", methods=["POST"])
+    def account_delete_request():
+        """Ask to delete the account: email a one-time confirmation link.
+
+        Nothing is scheduled until the link is opened; the account stays
+        fully usable until then.
+        """
+        auth_error = require_account_form("/account/profile")
+        if auth_error:
+            return auth_error
+        account = accounts.get_account(g.db, _principal()["id"])
+        if deletions.active_for(g.db, account["account_id"]) is not None:
+            return redirect("/account/profile?ok=already-deleted", 303)
+        token = deletions.request_self(g.db, config, account)
+        base = (config.PUSH_PUBLIC_URL or request.url_root).rstrip("/")
+        url = f"{base}/account/delete/confirm?token={token}"
+        grace = int(config.DELETION_GRACE_DAYS)
+        ttl = int(config.DELETION_EMAIL_TTL_HOURS)
+        body = (f"Someone with access to {account['email']} asked to delete"
+                f" that account.\n\nConfirm by opening this link within"
+                f" {ttl} hours:\n\n{url}\n\nOnce confirmed, the account and"
+                f" its data are held for {grace} days and then purged"
+                f" permanently; an operator can restore it before then."
+                f" If this was not you, ignore this message - nothing has"
+                f" been scheduled.\n")
+        if app.config.get("TESTING"):
+            app.config.setdefault("_test_emails", []).append(
+                {"to": account["email"], "subject": "Confirm your account"
+                 " deletion", "body": body})
+            sent = True
+        else:
+            sent = mail.send(config, account["email"],
+                             "Confirm your account deletion", body)
+        if not sent:
+            return render_template(
+                "account_profile.html", account=account,
+                error="Email is not configured on this server - ask the"
+                      " operator to delete the account for you."), 503
+        return redirect("/account/profile?ok=delete-sent", 303)
 
     @app.route("/account/link", methods=["POST"])
     def account_link():
@@ -1527,8 +1639,11 @@ def create_app(config):
                   "device_count": accounts.device_count(g.db, r["account_id"]),
                   "balance": balances.get(r["account_id"], 0)}
                  for r in rows]
+        pending = deletions.list_pending(g.db)
         return render_template(
             "accounts.html", accounts=items,
+            pending=pending,
+            pending_ids={p["account_id"]: p for p in pending},
             can_sync=identity_admin.available(config),
             error=request.args.get("error", ""))
 
@@ -1619,11 +1734,37 @@ def create_app(config):
 
     @app.route("/accounts/<account_id>/delete", methods=["POST"])
     def accounts_delete(account_id):
+        """Schedule deletion: the account locks now and is purged after the
+        grace period. Listed on the Users page under pending deletions, where
+        the operator can still restore it."""
         auth_error = require_form_session("/accounts")
         if auth_error:
             return auth_error
-        accounts.delete_account(g.db, account_id)
-        return redirect("/accounts", 303)
+        if accounts.get_account(g.db, account_id) is None:
+            return redirect("/accounts", 303)
+        deletions.schedule_admin(g.db, config, account_id, _principal()["id"])
+        return redirect(_return_to("/accounts"), 303)
+
+    @app.route("/accounts/<account_id>/restore", methods=["POST"])
+    def accounts_restore(account_id):
+        """Undelete a pending account: drop its deletion and unlock it."""
+        auth_error = require_form_session("/accounts")
+        if auth_error:
+            return auth_error
+        deletions.restore(g.db, account_id)
+        return redirect(_return_to("/accounts"), 303)
+
+    @app.route("/accounts/<account_id>/export")
+    def accounts_export(account_id):
+        """Download an account's data as a ZIP (operator view)."""
+        auth_error = require_page_session()
+        if auth_error:
+            return auth_error
+        if accounts.get_account(g.db, account_id) is None:
+            return redirect("/accounts", 303)
+        data, name = data_export.account_zip(g.db, config, account_id)
+        return send_file(io.BytesIO(data), mimetype="application/zip",
+                         as_attachment=True, download_name=name)
 
     @app.route("/accounts/<account_id>", methods=["GET"])
     def account_detail(account_id):

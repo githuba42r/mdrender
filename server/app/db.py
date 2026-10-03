@@ -307,6 +307,17 @@ CREATE TABLE IF NOT EXISTS billing_webhook_events (
   detail TEXT,
   received_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS account_deletions (
+  deletion_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  requested_at INTEGER NOT NULL,
+  requested_by TEXT NOT NULL,
+  confirmed_at INTEGER,
+  purge_after INTEGER,
+  token_hash TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_account_deletions_account
+  ON account_deletions(account_id);
 """
 
 

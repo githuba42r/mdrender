@@ -2,7 +2,7 @@
 """Admin user (account) management: list/add/edit/ban/delete (design §9)."""
 import os
 
-from server.app import accounts
+from server.app import accounts, deletions
 from server.app.app import create_app
 
 
@@ -59,10 +59,16 @@ def test_accounts_admin_crud(config, db_path):
     with app.config["_db"].connect() as conn:
         assert accounts.get_account(conn, account_id)["status"] == "banned"
 
-    # Delete removes the account.
+    # Delete schedules a pending deletion: the row stays (locked) for the
+    # grace period, and the operator can restore it.
     c.post(f"/accounts/{account_id}/delete")
     with app.config["_db"].connect() as conn:
-        assert accounts.get_account(conn, account_id) is None
+        assert accounts.get_account(conn, account_id) is not None
+        assert deletions.active_for(conn, account_id) is not None
+    c.post(f"/accounts/{account_id}/restore")
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id) is not None
+        assert deletions.active_for(conn, account_id) is None
 
 
 def test_accounts_page_is_session_gated(config, db_path):

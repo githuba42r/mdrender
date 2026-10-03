@@ -38,4 +38,26 @@
 {% set auth_action = 'link' %}{% set auth_next = '/account/profile' %}
 {% include "_firebase_auth.html" %}
 {% endif %}
+
+<h2>Export and deletion</h2>
+{% if ok == 'delete-sent' %}
+<div class="callout success">Confirmation email sent to {{ account.email }} &mdash;
+  open the link within 48 hours to start deletion. Until you do, nothing has
+  changed.</div>
+{% elif ok == 'already-deleted' %}
+<div class="callout success">Deletion is already confirmed for this account
+  and is waiting to be purged.</div>
+{% endif %}
+<p class="lede">Download everything this server holds about your account as a
+  ZIP file, or ask to delete it. Deletion is confirmed by a link sent to your
+  email; the account is then held for {{ grace_days }} days before it is purged,
+  and an operator can restore it during that time.</p>
+<form method="GET" action="/account/export" class="inline">
+  <button type="submit" class="btn-primary">Download my data (ZIP)</button>
+</form>
+<form method="POST" action="/account/delete-request" class="inline"
+      data-confirm="We'll email you a confirmation link. Nothing is deleted until you open it."
+      data-confirm-ok="Email me the link">
+  <button type="submit" class="btn-danger">Delete my account</button>
+</form>
 {% endblock %}

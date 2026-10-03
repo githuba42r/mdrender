@@ -43,15 +43,6 @@ def update_account(conn, account_id, *, name=None, email=None, phone=None,
     conn.commit()
 
 
-def delete_account(conn, account_id) -> None:
-    """Remove a user/account and its device rows."""
-    conn.execute("DELETE FROM account_devices WHERE account_id = ?", (account_id,))
-    conn.execute("UPDATE devices SET account_id = NULL, approved_at = NULL"
-                 " WHERE account_id = ?", (account_id,))
-    conn.execute("DELETE FROM accounts WHERE account_id = ?", (account_id,))
-    conn.commit()
-
-
 def device_count(conn, account_id) -> int:
     return conn.execute("SELECT COUNT(*) FROM devices WHERE account_id = ?",
                         (account_id,)).fetchone()[0]

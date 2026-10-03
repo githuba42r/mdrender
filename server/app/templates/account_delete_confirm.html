@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Confirm deletion &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<div class="login-card">
+  {% if invalid %}
+  <div class="login-head">
+    <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
+    <h1>Link not valid</h1>
+  </div>
+  <p class="lede">This confirmation link is invalid or has expired. Request
+    deletion again from Account info for a fresh link, or ask the operator.</p>
+  <p class="login-foot"><a href="/login">Back to sign-in</a>.</p>
+  {% elif already %}
+  <div class="login-head">
+    <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
+    <h1>Already confirmed</h1>
+  </div>
+  <p class="lede">This account&rsquo;s deletion has already been confirmed and
+    is waiting to be purged. The operator can restore it during that time.</p>
+  <p class="login-foot"><a href="/login">Back to sign-in</a>.</p>
+  {% else %}
+  <div class="login-head">
+    <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
+    <h1>Delete this account?</h1>
+  </div>
+  <p class="lede">Confirm deletion of <b>{{ account.email }}</b>. This
+    will:</p>
+  <ul>
+    <li>sign the account out and block sign-in straight away;</li>
+    <li>hold the account and its data until <b>{{ purge_preview | dt }}</b> -
+      an operator can restore it during that time;</li>
+    <li>then permanently purge its devices, pushes, files, keys and settings.</li>
+  </ul>
+  <form method="POST" action="/account/delete/confirm"
+        data-confirm="Delete {{ account.email }}? The account is held for {{ grace_days }} days, then purged."
+        data-confirm-ok="Yes, delete it">
+    <input type="hidden" name="token" value="{{ token }}">
+    <button type="submit" class="btn-danger">Confirm deletion</button>
+  </form>
+  <p class="login-foot"><a href="/login">Cancel &mdash; back to sign-in</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}

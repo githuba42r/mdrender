@@ -80,6 +80,11 @@ All configuration is via environment variables. Defaults come from
 | `PUSH_RETRY_COUNT` | `5` | FCM re-push attempts per file not acked within the retry window. |
 | `PUSH_RETRY_INTERVAL_MINUTES` | `30` | Delay between FCM retries. |
 | `DEVICE_TTL_DAYS` | `90` | Devices not seen in this long are swept. |
+| `DELETION_GRACE_DAYS` | `14` | Confirmed account deletions are held this long before the data is purged; an operator can restore (undelete) them from **Users → Pending deletions**. |
+| `DELETION_EMAIL_TTL_HOURS` | `48` | Lifetime of the emailed delete-confirmation link. |
+| `SMTP_HOST` / `SMTP_PORT` | *(empty)* / `587` | SMTP server for outbound email (delete confirmations). Empty `SMTP_HOST` ⇒ email is off and the delete flow asks the operator to act. Port `465` uses implicit TLS. |
+| `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | SMTP credentials (optional for unauthenticated relays). |
+| `SMTP_FROM` | *(empty)* | From address; falls back to `SMTP_USER`, then `no-reply@localhost`. |
 | `BILLING_ENFORCEMENT` | `false` | When `true`, the plan decides who needs prepaid credit: storage-metered accounts (or plans with **Always require credit**) are refused uploads at zero credit (`402`), message-metered accounts are refused pushes, and each file must fit the credit too. Zero-rate plans (and planless accounts) are exempt unless the checkbox is set; a per-account exemption override on the User page beats the plan (metering still runs). A paid server plan with no credit is refused at the doorbell (`402`). |
 | `PAYPAL_MODE` | `sandbox` | PayPal API host: `sandbox` or `live`. |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal REST app credentials; both set ⇒ payments enabled (see [PayPal setup](#paypal-setup)). |
