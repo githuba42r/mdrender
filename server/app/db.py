@@ -261,6 +261,8 @@ CREATE TABLE IF NOT EXISTS billing_ledger (
   provider_ref TEXT,
   created_at INTEGER NOT NULL
 );
+-- Dormant: subscriptions were removed in favour of prepaid credit. The table
+-- stays so existing databases need no destructive migration; nothing writes.
 CREATE TABLE IF NOT EXISTS billing_subscriptions (
   subscription_id TEXT PRIMARY KEY,
   account_type TEXT NOT NULL,

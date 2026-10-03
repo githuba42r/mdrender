@@ -3,7 +3,7 @@
 import io
 import os
 
-from server.app import accounts, storage
+from server.app import accounts, billing, storage
 from server.app.app import create_app
 
 
@@ -52,25 +52,62 @@ def test_upload_enforces_quota(config, db_path):
     assert over.status_code == 413
 
 
-def test_billing_enforcement_blocks_upload_until_entitled(config, db_path):
-    from server.app import billing
-
+def test_billing_enforcement_gates_uploads_on_credit(config, db_path):
     config.BILLING_ENFORCEMENT = True
     app = _app(config)
     c = _account_client(app)
 
+    # No credit: every upload is refused, plan or not.
     blocked = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
                      content_type="multipart/form-data")
     assert blocked.status_code == 402
+    assert blocked.get_json()["error"] == "payment required"
 
     with app.config["_db"].connect() as conn:
-        plan = billing.create_plan(conn, "Free", billing.SCOPE_ACCOUNT)
-        group = billing.ensure_default_group(conn)
-        billing.set_group_plan(conn, group, plan)
+        account_id = conn.execute(
+            "SELECT account_id FROM accounts").fetchone()["account_id"]
+        billing.add_credit(conn, billing.SCOPE_ACCOUNT, account_id, 500,
+                           reason="topup")
 
     ok = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
                 content_type="multipart/form-data")
     assert ok.status_code == 200
+
+    # Spending the balance back to zero blocks the next upload again.
+    with app.config["_db"].connect() as conn:
+        billing.debit(conn, billing.SCOPE_ACCOUNT, account_id, 500,
+                      reason="storage")
+    again = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
+                   content_type="multipart/form-data")
+    assert again.status_code == 402
+
+
+def test_upload_rejects_files_more_expensive_than_credit(config, db_path):
+    config.BILLING_ENFORCEMENT = True
+    app = _app(config)
+    c = _account_client(app)
+    with app.config["_db"].connect() as conn:
+        account_id = conn.execute(
+            "SELECT account_id FROM accounts").fetchone()["account_id"]
+        plan = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
+                                   storage_cents_per_mb=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, plan)
+        billing.add_credit(conn, billing.SCOPE_ACCOUNT, account_id, 250,
+                           reason="topup")
+
+    # 3 MB at 100c/MB = 300c > the 250c credit: refused, naming the file.
+    big = c.post("/api/account/upload",
+                 data={"file": (io.BytesIO(b"x" * (3 * 1024 * 1024)), "big.bin")},
+                 content_type="multipart/form-data")
+    assert big.status_code == 402
+    detail = big.get_json()["detail"]
+    assert "big.bin" in detail and "300" in detail and "250" in detail
+
+    # A file that fits inside the credit still uploads.
+    small = c.post("/api/account/upload",
+                   data={"file": (io.BytesIO(b"x" * 1024), "small.txt")},
+                   content_type="multipart/form-data")
+    assert small.status_code == 200
 
 
 def test_upload_requires_an_account_session(config, db_path):

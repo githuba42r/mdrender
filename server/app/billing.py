@@ -6,16 +6,15 @@ own plan (override) else its group's plan. A default group holds accounts with
 no explicit group. Cycles are anniversary-based (D12). A manual provider adds
 credits; real gateways plug in behind the same ledger.
 
-PayPal is the live gateway (see ``paypal.py``): recurring subscriptions cover
-both plan scopes (a flat fee for a federated server, a plan for a user
-account) and one-time orders top up prepaid credit. This module owns every
-local row the gateway drives - the client itself stays database-free.
+PayPal is the live gateway (see ``paypal.py``): one-time orders top up
+prepaid credit and metered usage draws it down (in arrears). This module owns
+every local row the gateway drives - the client itself stays database-free.
 """
 import math
 import time
 import uuid
 
-from server.app import paypal, settings as server_settings
+from server.app import settings as server_settings
 
 SCOPE_SLAVE = "slave"
 SCOPE_ACCOUNT = "account"
@@ -287,14 +286,25 @@ def debit(conn, account_type, account_id, amount_cents, *, reason=None) -> int:
 
 
 def entitled(conn, account_type, account_id, *, grace_days=None) -> bool:
-    """A billable account may operate if it has a plan, a live subscription,
-    or a positive balance."""
-    if effective_plan(conn, account_type, account_id) is not None:
-        return True
-    kwargs = {} if grace_days is None else {"grace_days": grace_days}
-    if subscription_entitled(conn, account_type, account_id, **kwargs):
-        return True
+    """Metered actions run while the target holds prepaid credit.
+
+    ``grace_days`` is accepted for call-site compatibility and ignored: with
+    top-ups only there is no billing period to run late against.
+    """
     return balance(conn, account_type, account_id) > 0
+
+
+def file_cost_cents(conn, account_id, size_bytes) -> int:
+    """What one file would cost at the account plan's storage rate.
+
+    Mirrors the arrears rounding in ``bill_storage`` (whole MBs, rounded up),
+    so the upload-time affordability check matches the later ledger charge.
+    """
+    plan = effective_plan(conn, SCOPE_ACCOUNT, account_id)
+    rate = plan["storage_cents_per_mb"] if plan else 0
+    if rate <= 0 or size_bytes <= 0:
+        return 0
+    return int(rate) * math.ceil(size_bytes / (1024 * 1024))
 
 
 def bill_messages(conn, config, *, now=None) -> list[str]:
@@ -358,230 +368,6 @@ def bill_storage(conn, config, *, now=None, min_interval_hours=24) -> list[str]:
     return charged
 
 
-# ---- PayPal gateway wiring ---------------------------------------------
-
-def provision_plan(conn, config, plan_id, *, force=False) -> str:
-    """Create (once) the PayPal billing plan behind a local plan row.
-
-    Returns the PayPal plan id. Free plans and an unconfigured gateway are
-    errors here - they never need provisioning. ``force`` re-creates the
-    PayPal plan after a price change (the old one is left alone on PayPal's
-    side; it keeps serving existing subscribers).
-    """
-    plan = get_plan(conn, plan_id)
-    if plan is None:
-        raise ValueError("unknown plan")
-    if plan["paypal_plan_id"] and not force:
-        return plan["paypal_plan_id"]
-    if plan["price_cents"] <= 0:
-        raise ValueError("free plans do not need a PayPal plan")
-    if not paypal.enabled(config):
-        raise ValueError("PayPal is not configured")
-    client = paypal.client(config)
-    product_id = client.ensure_product((
-        lambda: server_settings.get(conn, "paypal_product_id"),
-        lambda value: server_settings.set_value(conn, "paypal_product_id", value)))
-    if not product_id:
-        raise paypal.PaypalError("could not create the PayPal product")
-    paypal_plan_id = client.create_billing_plan(
-        product_id=product_id,
-        name=plan["name"], price_cents=plan["price_cents"],
-        currency=plan["currency"] or config.PAYPAL_CURRENCY,
-        interval=plan["interval"])
-    if not paypal_plan_id:
-        raise paypal.PaypalError("PayPal plan creation returned no id")
-    client.activate_plan(paypal_plan_id)
-    conn.execute("UPDATE billing_plans SET paypal_plan_id = ? WHERE plan_id = ?",
-                 (paypal_plan_id, plan_id))
-    conn.commit()
-    return paypal_plan_id
-
-
-def paypal_plan_for(conn, config, plan) -> str:
-    """The plan's PayPal id, provisioning it on first use (checkout-time)."""
-    if plan["paypal_plan_id"]:
-        return plan["paypal_plan_id"]
-    return provision_plan(conn, config, plan["plan_id"])
-
-
-# ---- Subscriptions ----------------------------------------------------
-
-SUB_LIVE = ("pending", "active", "suspended")
-
-
-def create_subscription(conn, account_type, account_id, plan_id) -> dict:
-    """Open a pending subscription checkout for one target (server or account).
-
-    Only one *live* (pending/active/suspended) subscription may exist per
-    target; a stale pending checkout is replaced rather than stacking.
-    """
-    now = int(time.time())
-    stale = conn.execute(
-        "SELECT subscription_id, status FROM billing_subscriptions"
-        " WHERE account_type = ? AND account_id = ? AND status = 'pending'",
-        (account_type, account_id)).fetchall()
-    for row in stale:
-        conn.execute("DELETE FROM billing_subscriptions WHERE subscription_id = ?",
-                     (row["subscription_id"],))
-    subscription_id = uuid.uuid4().hex
-    conn.execute(
-        "INSERT INTO billing_subscriptions (subscription_id, account_type,"
-        " account_id, plan_id, provider, status, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, 'paypal', 'pending', ?, ?)",
-        (subscription_id, account_type, account_id, plan_id, now, now))
-    conn.commit()
-    return get_subscription(conn, subscription_id)
-
-
-def get_subscription(conn, subscription_id):
-    return conn.execute("SELECT * FROM billing_subscriptions WHERE subscription_id = ?",
-                        (subscription_id,)).fetchone()
-
-
-def delete_subscription(conn, subscription_id) -> None:
-    """Remove an abandoned pending checkout (only pending rows are deletable)."""
-    conn.execute("DELETE FROM billing_subscriptions WHERE subscription_id = ?"
-                 " AND status = 'pending'", (subscription_id,))
-    conn.commit()
-
-
-def find_subscription_by_provider(conn, provider_subscription_id):
-    if not provider_subscription_id:
-        return None
-    return conn.execute(
-        "SELECT * FROM billing_subscriptions WHERE provider_subscription_id = ?",
-        (provider_subscription_id,)).fetchone()
-
-
-def live_subscription(conn, account_type, account_id):
-    """The target's pending/active/suspended subscription, newest first."""
-    return conn.execute(
-        "SELECT * FROM billing_subscriptions WHERE account_type = ?"
-        " AND account_id = ? AND status IN ('pending', 'active', 'suspended')"
-        " ORDER BY created_at DESC, subscription_id DESC LIMIT 1",
-        (account_type, account_id)).fetchone()
-
-
-def latest_subscription(conn, account_type, account_id):
-    """The target's most recent subscription row of any status."""
-    return conn.execute(
-        "SELECT * FROM billing_subscriptions WHERE account_type = ?"
-        " AND account_id = ? ORDER BY created_at DESC, subscription_id DESC"
-        " LIMIT 1", (account_type, account_id)).fetchone()
-
-
-def list_subscriptions(conn, limit=200):
-    return conn.execute(
-        "SELECT * FROM billing_subscriptions ORDER BY created_at DESC"
-        " LIMIT ?", (limit,)).fetchall()
-
-
-def set_subscription_provider_id(conn, subscription_id, provider_subscription_id):
-    conn.execute(
-        "UPDATE billing_subscriptions SET provider_subscription_id = ?,"
-        " updated_at = ? WHERE subscription_id = ?",
-        (provider_subscription_id, int(time.time()), subscription_id))
-    conn.commit()
-
-
-def activate_subscription(conn, subscription_id, *, provider_subscription_id=None,
-                          period_start=None, period_end=None) -> None:
-    """Mark a subscription active (first approval or a renewal).
-
-    For an account-scoped subscription this also pins the paid plan as the
-    account's override, so entitlement follows the plan the buyer chose; the
-    sweep clears the override again when the subscription lapses.
-    """
-    now = int(time.time())
-    row = get_subscription(conn, subscription_id)
-    if row is None:
-        return
-    conn.execute(
-        "UPDATE billing_subscriptions SET status = 'active',"
-        " provider_subscription_id = COALESCE(?, provider_subscription_id),"
-        " current_period_start = COALESCE(?, current_period_start),"
-        " current_period_end = COALESCE(?, current_period_end),"
-        " cancel_at_period_end = 0, updated_at = ?"
-        " WHERE subscription_id = ?",
-        (provider_subscription_id, period_start, period_end, now, subscription_id))
-    if row["account_type"] == SCOPE_ACCOUNT and row["plan_id"]:
-        set_account_plan(conn, SCOPE_ACCOUNT, row["account_id"], row["plan_id"])
-    conn.commit()
-
-
-def mark_subscription(conn, subscription_id, status, *, period_end=None,
-                      cancel_at_period_end=None) -> None:
-    """Record a lifecycle transition coming from a webhook or the API."""
-    now = int(time.time())
-    conn.execute(
-        "UPDATE billing_subscriptions SET status = ?,"
-        " current_period_end = COALESCE(?, current_period_end),"
-        " cancel_at_period_end = COALESCE(?, cancel_at_period_end),"
-        " updated_at = ? WHERE subscription_id = ?",
-        (status, period_end,
-         None if cancel_at_period_end is None else int(cancel_at_period_end),
-         now, subscription_id))
-    conn.commit()
-
-
-def clear_account_override(conn, account_type, account_id, plan_id) -> None:
-    """Drop a subscription-owned plan override when its subscription lapses.
-
-    An override the admin (or the buyer) changed to something else is left
-    alone - only the exact plan this subscription set is removed.
-    """
-    if account_type != SCOPE_ACCOUNT or not plan_id:
-        return
-    conn.execute(
-        "DELETE FROM account_plans WHERE account_type = ? AND account_id = ?"
-        " AND plan_id = ?", (account_type, account_id, plan_id))
-    conn.commit()
-
-
-def subscription_entitled(conn, account_type, account_id, *, now=None,
-                          grace_days=3) -> bool:
-    """Is there a subscription granting service right now (grace included)?
-
-    Grace rules, mirroring the terms' suspension policy:
-      * active      - until period end + grace (a missed renewal webhook
-                      should not cut service on the minute);
-      * suspended   - dunning: keep serving for the grace window from whichever
-                      is later, the period end or the suspension timestamp;
-      * cancelled   - access is retained until the paid period ends (+grace);
-                      a row that never reached activation grants nothing;
-      * pending     - checkout not completed: no access;
-      * expired     - no access.
-
-    Every row is considered (any() over the target's history) so a cancelled
-    row still granting paid access counts even when a newer pending checkout
-    sits above it in the list.
-    """
-    now = int(now if now is not None else time.time())
-    rows = conn.execute(
-        "SELECT * FROM billing_subscriptions WHERE account_type = ?"
-        " AND account_id = ?", (account_type, account_id)).fetchall()
-    return any(_within_grace(row, now, grace_days) for row in rows)
-
-
-def _within_grace(row, now, grace_days) -> bool:
-    status = row["status"]
-    if status == "pending":
-        return False
-    if status == "expired":
-        return False
-    grace = grace_days * 86400
-    anchor = row["current_period_end"] or 0
-    if status in ("suspended", "cancelled"):
-        if not anchor:
-            # Never activated (e.g. an abandoned checkout swept by a webhook):
-            # there is no paid period to honour, so no grace either.
-            return False
-        anchor = max(anchor, row["updated_at"] or 0)
-    if status == "active" and not anchor:
-        return True
-    return anchor + grace >= now
-
-
 def slave_effective_plan(conn, server_id):
     """A server's plan: its assignment, else the deployment default (§7)."""
     row = conn.execute("SELECT plan_id FROM federated_servers WHERE server_id = ?",
@@ -592,56 +378,16 @@ def slave_effective_plan(conn, server_id):
     return get_plan(conn, plan_id)
 
 
-def slave_entitled(conn, server_id, *, now=None, grace_days=3) -> bool:
-    """A federated server may relay doorbells when its plan is free or paid for.
+def slave_entitled(conn, server_id, *, now=None, grace_days=None) -> bool:
+    """A federated server may relay doorbells while it is in credit.
 
     No plan / a free plan / an inactive-price plan never blocks anything; a
-    *paid* plan requires a live PayPal subscription (design F7, terms §Billing).
+    *paid* plan requires a positive server-scope balance (top-ups only).
     """
     plan = slave_effective_plan(conn, server_id)
     if plan is None or not plan["price_cents"]:
         return True
-    now = int(now if now is not None else time.time())
-    rows = conn.execute(
-        "SELECT * FROM billing_subscriptions WHERE account_type = ?"
-        " AND account_id = ?", (SCOPE_SLAVE, server_id)).fetchall()
-    return any(_within_grace(row, now, grace_days) for row in rows
-               if row["plan_id"] == plan["plan_id"])
-
-
-def sweep_subscriptions(conn, *, now=None, grace_days=3, pending_ttl_days=7) -> int:
-    """Expire lapsed subscriptions and drop their account plan overrides.
-
-    Returns how many rows were expired. Webhooks do the live bookkeeping;
-    this is the safety net for missed deliveries and hard cancellations.
-    """
-    now = int(now if now is not None else time.time())
-    expired = 0
-    rows = conn.execute(
-        "SELECT * FROM billing_subscriptions WHERE status IN"
-        " ('active', 'suspended', 'cancelled', 'pending')").fetchall()
-    for row in rows:
-        lapse = None
-        if row["status"] == "pending":
-            if now - (row["created_at"] or 0) > pending_ttl_days * 86400:
-                lapse = "expired"
-        elif row["current_period_end"]:
-            anchor = row["current_period_end"]
-            if row["status"] in ("suspended", "cancelled"):
-                anchor = max(anchor, row["updated_at"] or 0)
-            if now > anchor + grace_days * 86400:
-                lapse = "expired"
-        if lapse is None:
-            continue
-        conn.execute(
-            "UPDATE billing_subscriptions SET status = ?, updated_at = ?"
-            " WHERE subscription_id = ?", (lapse, now, row["subscription_id"]))
-        clear_account_override(conn, row["account_type"], row["account_id"],
-                               row["plan_id"])
-        expired += 1
-    if expired:
-        conn.commit()
-    return expired
+    return balance(conn, SCOPE_SLAVE, server_id) > 0
 
 
 # ---- One-time orders (prepaid top-ups) ---------------------------------

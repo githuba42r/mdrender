@@ -3,17 +3,12 @@
 {% block title %}Billing &middot; My account{% endblock %}
 {% block content %}
 <h1>Billing</h1>
-<p class="lede">Your plan, prepaid balance and payment history. Payments are
-  handled by PayPal - this server never sees your card details.</p>
+<p class="lede">Prepaid credit and payment history. Pushes and uploads draw
+  down your credit as they are used. Payments are handled by PayPal - this
+  server never sees your card details.</p>
 
-{% if ok == 'subscribed' %}
-<div class="callout success">Subscription active. Thank you!</div>
-{% elif ok == 'topup' %}
+{% if ok == 'topup' %}
 <div class="callout success">Payment received - your credit balance has been topped up.</div>
-{% elif ok == 'cancelled' %}
-<div class="callout success">Subscription cancelled. Access continues until the end of the paid period.</div>
-{% elif ok == 'discarded' %}
-<div class="callout success">Checkout discarded - nothing was charged.</div>
 {% elif error %}
 <div class="callout error">{{ error }}</div>
 {% elif request.args.get('cancelled') %}
@@ -28,93 +23,23 @@
 <div class="stats">
   <div class="stat">
     <span class="stat-label">Prepaid balance</span>
-    <span class="stat-value">{{ balance | money }}</span>
+    <span class="stat-value">{{ balance | money }}
+      {%- if balance > 0 %} <span class="chip acked">in credit</span>
+      {%- elif balance < 0 %} <span class="chip failed">debit &middot; owing</span>
+      {%- else %} <span class="chip pending">even</span>{% endif %}
+    </span>
   </div>
   <div class="stat">
     <span class="stat-label">Current plan</span>
     <span class="stat-value">{% if plan %}{{ plan.name }}{% else %}<span class="empty">none</span>{% endif %}</span>
   </div>
   <div class="stat">
-    <span class="stat-label">Subscription</span>
-    <span class="stat-value">
-      {% if subscription %}
-        <span class="chip {{ 'acked' if sub_active else ('failed' if subscription.status in ('expired', 'suspended') else '') }}">{{ subscription.status }}</span>
-      {% else %}<span class="empty">none</span>{% endif %}
-    </span>
-  </div>
-  <div class="stat">
     <span class="stat-label">Service</span>
     <span class="stat-value">
-      {% if sub_active or balance > 0 or plan %}<span class="chip acked">active</span>{% else %}<span class="chip failed">payment required</span>{% endif %}
+      {% if balance > 0 %}<span class="chip acked">in credit</span>{% else %}<span class="chip failed">out of credit</span>{% endif %}
     </span>
   </div>
 </div>
-
-{% if subscription and subscription.status in ('active', 'suspended', 'pending') %}
-<h2>Your subscription</h2>
-<div class="table-wrap">
-<table>
-  <tbody>
-    <tr><th>Plan</th><td>{% if sub_plan %}{{ sub_plan.name }}{% else %}{{ subscription.plan_id or '-' }}{% endif %}</td></tr>
-    <tr><th>Status</th><td><span class="chip {{ 'acked' if subscription.status == 'active' else 'failed' }}">{{ subscription.status }}</span></td></tr>
-    <tr><th>Started</th><td>{{ subscription.created_at | dt }}</td></tr>
-    <tr><th>{% if subscription.status == 'pending' %}Awaiting approval{% else %}Next billing{% endif %}</th>
-        <td>{% if subscription.current_period_end %}{{ subscription.current_period_end | dt }}{% else %}<span class="empty">-</span>{% endif %}</td></tr>
-    {% if subscription.provider_subscription_id %}
-    <tr><th>PayPal reference</th><td><code>{{ subscription.provider_subscription_id }}</code></td></tr>
-    {% endif %}
-  </tbody>
-</table>
-</div>
-{% if subscription.status == 'pending' %}
-<form method="POST" action="/account/billing/cancel" class="actions-end"
-      data-confirm="Discard this checkout? Nothing has been charged and you can start again afterwards."
-      data-confirm-ok="Discard checkout">
-  <button type="submit" class="btn btn-danger">Discard checkout</button>
-</form>
-{% else %}
-<form method="POST" action="/account/billing/cancel" class="actions-end"
-      data-confirm="Cancel this subscription? Access continues until the end of the paid period."
-      data-confirm-ok="Cancel subscription">
-  <button type="submit" class="btn btn-danger">Cancel subscription</button>
-</form>
-{% endif %}
-{% endif %}
-
-<h2>Plans</h2>
-{% if plans %}
-<div class="table-wrap">
-<table>
-  <thead><tr><th>Name</th><th>Price</th><th>Incl. messages</th><th>Storage / MB</th><th></th></tr></thead>
-  <tbody>
-    {% for p in plans %}
-    <tr>
-      <td>{{ p.name }}</td>
-      <td>{{ p.price_cents | money }}/{{ 'year' if p.interval == 'year' else 'month' }}</td>
-      <td>{% if p.included_messages %}{{ p.included_messages }}{% else %}<span class="empty">metered</span>{% endif %}</td>
-      <td>{% if p.storage_cents_per_mb %}{{ p.storage_cents_per_mb | money }}{% else %}<span class="empty">-</span>{% endif %}</td>
-      <td>
-        {% if not paypal_enabled %}
-          <span class="empty">payments unavailable</span>
-        {% elif subscription and subscription.status in ('active', 'suspended', 'pending') %}
-          <span class="empty">subscription in progress</span>
-        {% else %}
-        <form method="POST" action="/account/billing/checkout" class="inline"
-              data-confirm="Subscribe to {{ p.name }} for {{ p.price_cents | money }}/{{ 'year' if p.interval == 'year' else 'month' }}? You will be sent to PayPal."
-              data-confirm-ok="Continue to PayPal">
-          <input type="hidden" name="plan_id" value="{{ p.plan_id }}">
-          <button type="submit" class="btn-primary">Subscribe with PayPal</button>
-        </form>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-{% else %}
-<p class="empty">No paid plans are offered on this server yet.</p>
-{% endif %}
 
 <h2>Top up credit</h2>
 <p class="lede">Prepaid credit covers metered usage (messages and storage) on

@@ -1,12 +1,14 @@
 # PayPal billing setup
 
-This server bills two kinds of customer through PayPal:
+This server bills two kinds of customer through PayPal — always as **one-time
+prepaid credit**, never as a recurring subscription:
 
-- **Accounts** (the `/account/billing` page): monthly/yearly plan
-  subscriptions plus one-time prepaid top-ups.
-- **Federated slave servers** (`/federation`): a paid server plan is paid as
-  a subscription; the admin creates a shareable checkout link and the server
-  operator completes it.
+- **Accounts** (the `/account/billing` page): the buyer tops up a balance;
+  metered usage (messages, storage) draws it down. With enforcement on, an
+  account that is not in credit cannot upload or push.
+- **Federated slave servers** (`/federation`): a paid server plan requires a
+  prepaid balance too. The admin creates a shareable checkout link and the
+  server operator (or the admin) completes it.
 
 Everything runs through PayPal's REST APIs (`server/app/paypal.py`) — no
 SDK, no third-party processor. This guide walks a developer account from
@@ -34,12 +36,11 @@ else activates it.
 | `PAYPAL_CLIENT_SECRET` | *(empty)* | REST app secret. |
 | `PAYPAL_WEBHOOK_ID` | *(empty)* | Id of the webhook registered with this app (step 5). Required to verify event signatures. |
 | `PAYPAL_VERIFY_WEBHOOKS` | `true` | Signature verification gate. Set `false` **only** in local development to accept unsignalled test events. |
-| `PAYPAL_CURRENCY` | `AUD` | Default currency for plans/top-ups that don't carry their own. |
+| `PAYPAL_CURRENCY` | `AUD` | Default currency for top-ups that don't carry their own. |
 | `PAYPAL_BRAND_NAME` | `MDRender Cloud Push` | Name shown on the PayPal checkout page. |
-| `PAYPAL_GRACE_DAYS` | `3` | Days past period end (or suspension) that access continues before entitlement lapses. |
 | `PAYPAL_TOPUP_MIN_CENTS` | `500` | Minimum one-time top-up (5.00). |
 | `PAYPAL_TOPUP_MAX_CENTS` | `50000` | Maximum one-time top-up (500.00). |
-| `BILLING_ENFORCEMENT` | `false` | When `true`, a paid server plan with no live subscription is refused at the doorbell (`402`). Leave `false` until payments are proven end-to-end. |
+| `BILLING_ENFORCEMENT` | `false` | When `true`: an account with no credit (`balance <= 0`) is refused uploads and pushes with `402`; each file in a batch must also fit inside the remaining credit; a **paid** server plan with no credit is refused at the doorbell (`402`). Free plans are never gated. Leave `false` until payments are proven end-to-end. |
 
 ```sh
 export PAYPAL_MODE=sandbox
@@ -69,28 +70,21 @@ Sandbox checkouts are paid with **sandbox buyer accounts**, not real cards.
 
 ## 4. Billing plans
 
-Local plans (created on **Billing → Plans**) are linked to PayPal plans lazily:
+Local plans (created on **Billing → Plans**) are just that — local. They are
+never provisioned into PayPal: a plan's `price` is only the *paid marker*
+for a federation server (non-zero ⇒ that server's doorbell requires prepaid
+credit), while its message/storage rates meter usage into the ledger.
 
-- **At first checkout** — a plan with no PayPal id yet is provisioned
-  automatically (product + billing plan, then activated).
-- **On demand** — the *Provision* button on **Billing → Plans** creates the
-  PayPal plan ahead of time. The `linked` chip confirms the id is stored on
-  the plan row.
-
-Notes:
-
-- Free plans (`price_cents = 0`) are never provisioned — entitlement doesn't
-  need PayPal.
-- The plan's billing period maps to PayPal's cycle: anything starting with
-  `year` becomes a yearly cycle, everything else monthly.
-- After changing a plan's **price**, press *Provision* again (it offers
-  "force") to create a fresh PayPal plan. Existing subscribers stay on the
-  old plan — PayPal does not re-price them.
+- Free plans (`price_cents = 0`) and zero-rate account plans simply charge
+  nothing; entitlement is decided purely by the credit balance.
+- Changing a plan's price or rates takes effect immediately — there is no
+  provider-side plan to re-create.
 
 ## 5. Webhooks
 
-Renewals, cancellations, failed payments and top-up captures arrive as
-webhook events at `POST /api/billing/webhook`.
+Top-up captures arrive as webhook events at `POST /api/billing/webhook`.
+(The synchronous browser return path credits the ledger too — the webhook is
+the belt to that suspenders.)
 
 1. **Expose your server over HTTPS.** PayPal only delivers to `https` URLs.
    For local development:
@@ -103,18 +97,15 @@ webhook events at `POST /api/billing/webhook`.
 2. Developer Dashboard → **Apps & Credentials** → your app → **Webhooks**
    → **Add Webhook**:
    - **Webhook URL**: `https://<your-public-host>/api/billing/webhook`
-   - **Event types** — subscribe to all of:
+   - **Event types** — subscribe to:
 
      ```
-     BILLING.SUBSCRIPTION.ACTIVATED
-     BILLING.SUBSCRIPTION.RE-ACTIVATED
-     BILLING.SUBSCRIPTION.UPDATED
-     BILLING.SUBSCRIPTION.SUSPENDED
-     BILLING.SUBSCRIPTION.PAYMENT.FAILED
-     BILLING.SUBSCRIPTION.CANCELLED
-     BILLING.SUBSCRIPTION.EXPIRED
      PAYMENT.CAPTURE.COMPLETED
      ```
+
+     (Legacy `BILLING.SUBSCRIPTION.*` subscriptions are accepted and
+     ignored — they log `detail: "ignored"` and change nothing. Any other
+     event type behaves the same way.)
 
 3. Copy the **Webhook ID** from the created webhook's details and set
    `PAYPAL_WEBHOOK_ID` to it. Restart.
@@ -131,43 +122,38 @@ re-running. A processing error answers `500` so PayPal retries.
 
 ## 6. Testing in the sandbox
 
-### Account subscription
+### Account top-up
 
 1. Sign up / sign in to the account portal, open **Billing**
    (`/account/billing`).
-2. **Subscribe** on a paid plan → you are redirected to the PayPal checkout.
-3. Approve the payment with the sandbox buyer credentials.
-4. PayPal sends you back to `/account/billing?ok=subscribed` — the plan row
-   shows `active` with a renewal date, and the account's effective plan is
-   now the paid one.
+2. Enter an amount within the top-up bounds and **Top up** → you are
+   redirected to the PayPal checkout.
+3. Approve the order with the sandbox buyer credentials.
+4. PayPal sends you back to `/account/billing?ok=topup` — the balance tile
+   shows the new credit with an *in credit* chip, and the payment history
+   lists the order.
+5. Replaying the return URL must not double-credit: the ledger has one
+   `topup` row per order.
 
-### Prepaid top-up
+### Federated server top-up
 
-On **Billing**, enter an amount within the top-up bounds and **Top up**.
-Approve the order in sandbox; the capture webhook (or the synchronous
-return path) credits the ledger exactly once — replaying the return URL
-must not double-credit.
-
-### Federated server plan
-
-1. On the master's **Federation** page, assign a paid plan to a server and
-   press **Pay**.
+1. On the master's **Federation** page, assign a paid plan to a server,
+   enter an amount next to **Pay** and press it.
 2. The page shows a shareable PayPal link — open it (or hand it to the
    server operator) and approve with the sandbox buyer.
-3. Return to `/federation?paypal_ok=1`: the server's Billing column shows
-   `active`.
+3. Return to `/federation?ok=topup`: the server's Billing column shows
+   `$<amount> in credit`.
 
 ### Webhook events
 
-Approvals exercise the synchronous return path; **webhooks carry the rest of
-the lifecycle** (renewals, dunning, cancellations). To test them without
-waiting weeks:
+Approvals exercise the synchronous return path; the webhook carries the
+asynchronous case (e.g. the buyer closes the tab before the return hits).
+To test it without a second checkout:
 
 - Developer Dashboard → your app → **Webhooks** → select the webhook →
-  **Send test event** (or the *Event logs* view's test action) and choose e.g.
-  `BILLING.SUBSCRIPTION.SUSPENDED` or `BILLING.SUBSCRIPTION.CANCELLED`,
-  with the resource id set to a real `provider_subscription_id` (listed on
-  the **Payments** tab).
+  **Send test event** with `PAYMENT.CAPTURE.COMPLETED` and the resource's
+  `custom_id` set to `order:<order_id>` (order ids are listed on the
+  **Payments** tab).
 - Alternatively set `PAYPAL_VERIFY_WEBHOOKS=false` locally and POST a
   hand-crafted event JSON to `/api/billing/webhook`.
 
@@ -175,40 +161,47 @@ What each event should do:
 
 | Event | Local effect |
 |-------|--------------|
-| `ACTIVATED` / `RE-ACTIVATED` / `UPDATED` | subscription → `active`, period end from `next_billing_time`, account plan pinned |
-| `SUSPENDED` / `PAYMENT.FAILED` | subscription → `suspended` (grace applies) |
-| `CANCELLED` | subscription → `cancelled` (access runs to the paid period + grace) |
-| `EXPIRED` | subscription → `expired`, account plan override cleared |
-| `PAYMENT.CAPTURE.COMPLETED` | top-up credited once (matched by `custom_id = order:<id>`) |
+| `PAYMENT.CAPTURE.COMPLETED` with `custom_id = order:<id>` | top-up credited once, order → `captured` |
+| `PAYMENT.CAPTURE.COMPLETED` for an unknown order | `detail: "unknown order"` — accepted, no change |
+| `BILLING.SUBSCRIPTION.*` (legacy) / anything else | `detail: "ignored"` — accepted, no change |
 
 ### Enforcement
 
-With `BILLING_ENFORCEMENT=true`, a paid server plan with no live
-subscription gets `402 subscription required` at the doorbell (after the
-signature check — free plans and dead plans are unaffected). Turn this on
-only after the flows above pass.
+With `BILLING_ENFORCEMENT=true` (after the flows above pass):
+
+- **Account uploads** (`POST /api/account/upload`): `402 payment required`
+  while `balance <= 0`; additionally every file in the batch is costed
+  against the credit (`ceil(bytes / 1 MiB) × storage_cents_per_mb`) and a
+  file that costs more than the balance is refused by name.
+- **Push doorbells** (`POST /api/push`): the same credit gate and per-file
+  check apply, so a device cannot be woken without credit behind it.
+- **Federation doorbell** (`POST /api/federation/doorbell`): refused with
+  `402 payment required` only when the server's effective plan is paid and
+  its prepaid balance is not positive. Free plans are never gated.
 
 ## 7. Going live
 
 1. Create a **second REST app** on the **Live** toggle of *Apps &
    Credentials* and copy its client id/secret.
 2. Register a **production webhook** on that live app pointing at your real
-   `https://<host>/api/billing/webhook`, and collect its webhook id.
+   `https://<host>/api/billing/webhook` (event type
+   `PAYMENT.CAPTURE.COMPLETED`), and collect its webhook id.
 3. Set `PAYPAL_MODE=live`, swap in the live credentials and
    `PAYPAL_WEBHOOK_ID`, restart, and re-check the **Payments** tab shows
    *Connected in live mode*.
-4. Re-provision paid plans (force) so they get live PayPal plan ids — the
-   sandbox plan ids stored on the rows are invalid in live mode. Cancel any
-   sandbox subscriptions so `BILLING_ENFORCEMENT` doesn't strand anyone.
+4. There are no provider-side plans to migrate — balances are local ledger
+   rows, so a sandbox balance simply does not carry over (top up again in
+   live mode).
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
 | *Online payments are not configured* on any billing page | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` not both set (or server not restarted). |
-| *Webhook ID not set* banner on **Payments** | `PAYPAL_WEBHOOK_ID` empty — renewal events will not arrive. |
+| *Webhook ID not set* banner on **Payments** | `PAYPAL_WEBHOOK_ID` empty — capture events will not arrive. |
 | `400 bad signature` on `/api/billing/webhook` | Wrong `PAYPAL_WEBHOOK_ID` for this app, or `PAYPAL_MODE` doesn't match the app the webhook belongs to. |
 | Webhook URL unreachable | PayPal requires HTTPS and a publicly routable host — use ngrok (or similar) locally. |
-| *PayPal plan creation returned no id* | Check the server log for the API error; usually a bad price/currency on the local plan. |
-| Checkout approval works but status stays `pending` | Return path only succeeds if PayPal reports the subscription `active` — check the **Payments** tab and PayPal's sandbox API logs; then rely on the `ACTIVATED` webhook. |
+| `402 payment required` on upload/push/doorbell with enforcement on | The account (or, for the doorbell, the slave server) has no credit — top up on **Billing** / **Federation**, or turn enforcement off while developing. |
+| Upload refused with *"… costs N cents … only has M cents"* | That single file is more expensive than the remaining credit; top up or send a smaller file. |
+| Checkout approval works but the balance stays put | Check the **Payments** tab: the order row should read `captured`. If it is still `pending`, PayPal's capture call failed — check the server log and PayPal's sandbox API logs; the `PAYMENT.CAPTURE.COMPLETED` webhook will finish it when it arrives. |
 | Double-counted top-up | Should be impossible — `billing_orders` completes once per order id. If seen, check for two *different* order rows (two checkouts), not one order credited twice. |

@@ -83,9 +83,6 @@ DEFAULTS = {
     "PAYPAL_VERIFY_WEBHOOKS": True,
     "PAYPAL_CURRENCY": "AUD",
     "PAYPAL_BRAND_NAME": "MDRender Cloud Push",
-    # Days past a subscription's period end (or a suspension) during which
-    # service stays on before entitlement lapses.
-    "PAYPAL_GRACE_DAYS": 3,
     # Bounds for one-time prepaid top-ups (cents).
     "PAYPAL_TOPUP_MIN_CENTS": 500,
     "PAYPAL_TOPUP_MAX_CENTS": 50000,
@@ -104,7 +101,7 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS", "STORAGE_BILL_AFTER_HOURS",
-                 "PAYPAL_GRACE_DAYS", "PAYPAL_TOPUP_MIN_CENTS",
+                 "PAYPAL_TOPUP_MIN_CENTS",
                  "PAYPAL_TOPUP_MAX_CENTS"):
             env[k] = int(env[k])
     for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT", "FEDERATION_ENABLED",

@@ -1131,7 +1131,7 @@ def create_app(config):
         _purge_push_dirs(push_store.purge_pending(g.db, _principal()["id"]))
         return redirect("/account/pending", 303)
 
-    # ---- Account billing (PayPal subscriptions + top-ups) ----
+    # ---- Account billing (PayPal top-ups) ----
 
     def _public_base() -> str:
         """Externally visible origin for PayPal return/cancel redirects."""
@@ -1143,33 +1143,21 @@ def create_app(config):
 
     @app.route("/account/billing", methods=["GET"])
     def account_billing():
-        """Self-serve billing: plan subscriptions, top-ups, balance, history."""
+        """Self-serve billing: prepaid top-ups, balance and usage history."""
         auth_error = require_account_session()
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
-        grace = getattr(config, "PAYPAL_GRACE_DAYS", 3)
         ledger = [dict(r) for r in g.db.execute(
             "SELECT * FROM billing_ledger WHERE account_type = ? AND account_id = ?"
             " ORDER BY id DESC LIMIT 25",
             (billing.SCOPE_ACCOUNT, account_id)).fetchall()]
-        plans = [dict(p) for p in billing.list_plans(g.db)
-                 if p["scope"] == billing.SCOPE_ACCOUNT and p["active"]
-                 and p["price_cents"] > 0]
-        sub = billing.latest_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
-        sub_plan = (billing.get_plan(g.db, sub["plan_id"])
-                    if sub and sub["plan_id"] else None)
         return render_template(
             "account_billing.html",
             account=accounts.get_account(g.db, account_id),
             balance=billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id),
             ledger=ledger,
             plan=billing.effective_plan(g.db, billing.SCOPE_ACCOUNT, account_id),
-            subscription=dict(sub) if sub else None,
-            sub_plan=sub_plan,
-            sub_active=billing.subscription_entitled(
-                g.db, billing.SCOPE_ACCOUNT, account_id, grace_days=grace),
-            plans=plans,
             paypal_enabled=paypal.enabled(config),
             topup_min=getattr(config, "PAYPAL_TOPUP_MIN_CENTS", 500),
             topup_max=getattr(config, "PAYPAL_TOPUP_MAX_CENTS", 50000),
@@ -1179,7 +1167,7 @@ def create_app(config):
 
     @app.route("/account/billing/checkout", methods=["POST"])
     def account_billing_checkout():
-        """Start a PayPal checkout: a plan subscription or a credit top-up.
+        """Start a PayPal checkout for a one-time prepaid credit top-up.
 
         The browser is redirected to PayPal's hosted approval page; the
         session returns to /billing/paypal/return which reconciles the row.
@@ -1196,37 +1184,6 @@ def create_app(config):
             return _fail("PayPal is not configured on this server")
         base = _public_base()
         client = paypal.client(config)
-        plan_id = (request.form.get("plan_id") or "").strip()
-        if plan_id:
-            plan = billing.get_plan(g.db, plan_id)
-            if (plan is None or plan["scope"] != billing.SCOPE_ACCOUNT
-                    or not plan["active"] or plan["price_cents"] <= 0):
-                return _fail("That plan is not available")
-            if billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id):
-                return _fail("You already have a subscription - cancel it first")
-            try:
-                paypal_plan_id = billing.paypal_plan_for(g.db, config, plan)
-            except (ValueError, paypal.PaypalError) as exc:
-                return _fail(exc)
-            sub = billing.create_subscription(g.db, billing.SCOPE_ACCOUNT,
-                                              account_id, plan_id)
-            try:
-                payload = client.create_subscription(
-                    plan_id=paypal_plan_id,
-                    custom_id=sub["subscription_id"],
-                    return_url=(f"{base}/billing/paypal/return"
-                                f"?checkout={sub['subscription_id']}"),
-                    cancel_url=(f"{base}/billing/paypal/cancel"
-                                f"?checkout={sub['subscription_id']}"))
-            except paypal.PaypalError as exc:
-                return _fail(exc)
-            approve = paypal.PaypalClient.approve_link(payload)
-            if not approve:
-                return _fail("PayPal returned no approval link")
-            billing.set_subscription_provider_id(g.db, sub["subscription_id"],
-                                                 payload.get("id"))
-            return redirect(approve, 302)
-        # One-time top-up -> prepaid credit on the ledger.
         amount = _opt_dollars(request.form.get("amount"))
         if not amount:
             return _fail("Enter a top-up amount")
@@ -1254,63 +1211,20 @@ def create_app(config):
         billing.attach_order_provider(g.db, order["order_id"], payload.get("id"))
         return redirect(approve, 302)
 
-    @app.route("/account/billing/cancel", methods=["POST"])
-    def account_billing_cancel():
-        """Cancel the account's live PayPal subscription (access runs to
-        the end of the paid period per the terms)."""
-        auth_error = require_account_form("/account/billing")
-        if auth_error:
-            return auth_error
-        account_id = _principal()["id"]
-        sub = billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
-        if sub is None:
-            return redirect("/account/billing", 303)
-        if sub["status"] == "pending":
-            # Abandoned checkout - nothing was paid. Drop the local row so a
-            # fresh checkout can start; the provider-side cancel is best
-            # effort (an already-expired approval must not block the retry).
-            if sub["provider_subscription_id"] and paypal.enabled(config):
-                try:
-                    paypal.client(config).cancel_subscription(
-                        sub["provider_subscription_id"],
-                        "Checkout abandoned")
-                except paypal.PaypalError:
-                    pass
-            billing.delete_subscription(g.db, sub["subscription_id"])
-            return redirect("/account/billing?ok=discarded", 303)
-        if (sub["provider_subscription_id"] and paypal.enabled(config)
-                and sub["status"] in ("active", "suspended")):
-            try:
-                paypal.client(config).cancel_subscription(
-                    sub["provider_subscription_id"], "Cancelled by customer")
-            except paypal.PaypalError as exc:
-                return _fail_landing("/account/billing", exc)
-        billing.mark_subscription(g.db, sub["subscription_id"], "cancelled")
-        return redirect("/account/billing?ok=cancelled", 303)
-
     @app.route("/api/billing/subscription", methods=["GET"])
     def api_billing_subscription():
-        """JSON snapshot of the account's plan, subscription and balance."""
+        """JSON snapshot of the account's plan, credit and entitlement."""
         auth_error = require_account_api()
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
-        grace = getattr(config, "PAYPAL_GRACE_DAYS", 3)
-        sub = billing.latest_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
         plan = billing.effective_plan(g.db, billing.SCOPE_ACCOUNT, account_id)
         return jsonify({
             "balance_cents": billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id),
-            "entitled": billing.entitled(g.db, billing.SCOPE_ACCOUNT, account_id,
-                                         grace_days=grace),
+            "entitled": billing.entitled(g.db, billing.SCOPE_ACCOUNT, account_id),
             "plan": ({"id": plan["plan_id"], "name": plan["name"],
                       "price_cents": plan["price_cents"],
                       "currency": plan["currency"]} if plan else None),
-            "subscription": ({
-                "id": sub["subscription_id"], "status": sub["status"],
-                "plan_id": sub["plan_id"],
-                "renews_at": sub["current_period_end"],
-                "cancel_at_period_end": bool(sub["cancel_at_period_end"]),
-            } if sub else None),
         })
 
     def require_account_api():
@@ -1330,17 +1244,31 @@ def create_app(config):
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
-        if (bool(getattr(config, "BILLING_ENFORCEMENT", False))
-                and not billing.entitled(
-                    g.db, billing.SCOPE_ACCOUNT, account_id,
-                    grace_days=getattr(config, "PAYPAL_GRACE_DAYS", 3))):
-            return jsonify({"error": "payment required"}), 402
+        credit = billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id)
+        if bool(getattr(config, "BILLING_ENFORCEMENT", False)) and credit <= 0:
+            return jsonify({"error": "payment required",
+                            "detail": "This account has no credit: top up on"
+                                      " the Billing page before uploading."}), 402
         if _encryption_required() and not (
                 request.form.get("alg") and request.form.get("nonce")):
             return jsonify({"error": "encryption required"}), 422
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files"}), 400
+        if bool(getattr(config, "BILLING_ENFORCEMENT", False)):
+            # Every file in the batch must fit inside the current credit.
+            for f in uploads:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(0)
+                cost = billing.file_cost_cents(g.db, account_id, size)
+                if cost > credit:
+                    return jsonify({
+                        "error": "payment required",
+                        "detail": f"'{os.path.basename(f.filename or 'file')}'"
+                                  f" costs {cost} cents of credit but this"
+                                  f" account only has {credit} cents: top up"
+                                  " before uploading."}), 402
         stored = []
         account_dir = os.path.join(config.PUSH_STORAGE_DIR, "accounts", account_id)
         for f in uploads:
@@ -1678,44 +1606,6 @@ def create_app(config):
         accounts.delete_account(g.db, account_id)
         return redirect("/accounts", 303)
 
-    @app.route("/accounts/<account_id>/cancel-subscription", methods=["POST"])
-    def accounts_cancel_subscription(account_id):
-        """Cancel (or discard) a user's PayPal subscription from the admin UI.
-
-        Mirrors the self-serve semantics: a pending checkout is discarded so
-        the user can start again, a live subscription is cancelled at the
-        provider and keeps access until the end of the paid period.
-        """
-        default = f"/accounts/{account_id}"
-        auth_error = require_form_session(default)
-        if auth_error:
-            return auth_error
-        nxt = _return_to(default)
-        sub = billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
-        if sub is None:
-            return redirect(nxt, 303)
-        if sub["status"] == "pending":
-            # Abandoned checkout - nothing was paid. Drop the local row so a
-            # fresh checkout can start; the provider-side cancel is best
-            # effort (an already-expired approval must not block the retry).
-            if sub["provider_subscription_id"] and paypal.enabled(config):
-                try:
-                    paypal.client(config).cancel_subscription(
-                        sub["provider_subscription_id"], "Checkout abandoned")
-                except paypal.PaypalError:
-                    pass
-            billing.delete_subscription(g.db, sub["subscription_id"])
-            return redirect(nxt + "?notice=discarded", 303)
-        if (sub["provider_subscription_id"] and paypal.enabled(config)
-                and sub["status"] in ("active", "suspended")):
-            try:
-                paypal.client(config).cancel_subscription(
-                    sub["provider_subscription_id"], "Cancelled by operator")
-            except paypal.PaypalError as exc:
-                return _fail_landing(nxt, exc)
-        billing.mark_subscription(g.db, sub["subscription_id"], "cancelled")
-        return redirect(nxt + "?notice=cancelled", 303)
-
     @app.route("/accounts/<account_id>", methods=["GET"])
     def account_detail(account_id):
         """One user's devices, clients and pushes, with block/remove controls.
@@ -1730,11 +1620,6 @@ def create_app(config):
         if account is None:
             return redirect(
                 "/accounts?error=" + urllib.parse.quote("Unknown account."), 303)
-        sub = (billing.live_subscription(g.db, billing.SCOPE_ACCOUNT, account_id)
-               or billing.latest_subscription(g.db, billing.SCOPE_ACCOUNT,
-                                              account_id))
-        sub_plan = (billing.get_plan(g.db, sub["plan_id"])
-                    if sub and sub["plan_id"] else None)
         return render_template(
             "account_detail.html",
             account=dict(account),
@@ -1744,9 +1629,6 @@ def create_app(config):
             pending=push_store.list_pending_pushes(g.db, account_id),
             stats=accounts.stats(g.db, account_id),
             balance=billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id),
-            subscription=sub,
-            sub_plan=sub_plan,
-            notice=request.args.get("notice", ""),
             error=request.args.get("error", ""))
 
     @app.route("/accounts/<account_id>/devices/<device_secret>/block",
@@ -1903,13 +1785,10 @@ def create_app(config):
                        for p in billing.list_plans(g.db)
                        if p["scope"] == billing.SCOPE_SLAVE}
         default_plan = plans_by_id.get(settings.default_server_plan_id(g.db))
-        # Live subscription state per server (for the billing column) plus a
-        # freshly minted PayPal approval link, when one was just created.
-        sub_by_server = {
-            s["account_id"]: dict(s)
-            for s in billing.list_subscriptions(g.db)
-            if s["account_type"] == billing.SCOPE_SLAVE
-            and s["status"] in ("pending", "active", "suspended")}
+        balance_by_server = {r["account_id"]: r["bal"] for r in g.db.execute(
+            "SELECT account_id, SUM(amount_cents) AS bal FROM billing_ledger"
+            " WHERE account_type = ? GROUP BY account_id",
+            (billing.SCOPE_SLAVE,)).fetchall()}
         # A slave shows the plan the master has for it: fetched live over the
         # signed link (design §7) so the page reflects the master's current view.
         plan_state, plan = "none", None
@@ -1932,11 +1811,13 @@ def create_app(config):
             default_plan_id=default_plan["plan_id"] if default_plan else None,
             default_plan_name=default_plan["name"] if default_plan else None,
             error=request.args.get("error", ""),
+            balance_by_server=balance_by_server,
             paypal_url=request.args.get("paypal_url", ""),
-            paypal_ok=bool(request.args.get("paypal_ok")),
+            paypal_ok=bool(request.args.get("paypal_ok") or
+                            request.args.get("ok") == "topup"),
             paypal_cancelled=bool(request.args.get("paypal_cancelled")),
             paypal_enabled=paypal.enabled(config),
-            sub_by_server=sub_by_server,
+            
             master_url=master_url,
             master_host=_master_host(master_url),
             registered=reg is not None,
@@ -2100,7 +1981,7 @@ def create_app(config):
 
     @app.route("/federation/<server_id>/checkout", methods=["POST"])
     def federation_checkout(server_id):
-        """Create a PayPal subscription checkout for a federated server.
+        """Start a PayPal top-up for a federated server's prepaid credit.
 
         Server operators have no session on the master, so the admin gets a
         shareable approval link back on the Federation page (or opens it
@@ -2121,35 +2002,34 @@ def create_app(config):
         plan = billing.slave_effective_plan(g.db, server_id)
         if plan is None or not plan["price_cents"]:
             return _fail("This server's plan is free - no payment needed")
-        live = billing.live_subscription(g.db, billing.SCOPE_SLAVE, server_id)
-        if live is not None and live["status"] in ("active", "suspended"):
-            return _fail("This server already has a subscription")
-        try:
-            paypal_plan_id = billing.paypal_plan_for(g.db, config, plan)
-        except (ValueError, paypal.PaypalError) as exc:
-            return _fail(exc)
-        sub = billing.create_subscription(g.db, billing.SCOPE_SLAVE,
-                                          server_id, plan["plan_id"])
+        amount = _opt_dollars(request.form.get("amount"))
+        if not amount:
+            return _fail("Enter a top-up amount")
+        if amount < getattr(config, "PAYPAL_TOPUP_MIN_CENTS", 500):
+            return _fail("Minimum top-up is "
+                         f"${getattr(config, 'PAYPAL_TOPUP_MIN_CENTS', 500) / 100:g}")
+        if amount > getattr(config, "PAYPAL_TOPUP_MAX_CENTS", 50000):
+            return _fail("Maximum top-up is "
+                         f"${getattr(config, 'PAYPAL_TOPUP_MAX_CENTS', 50000) / 100:g}")
+        currency = getattr(config, "PAYPAL_CURRENCY", "AUD")
+        order = billing.create_order(g.db, billing.SCOPE_SLAVE, server_id,
+                                     amount, currency)
         base = _public_base()
         try:
-            payload = paypal.client(config).create_subscription(
-                plan_id=paypal_plan_id,
-                custom_id=sub["subscription_id"],
-                return_url=(f"{base}/billing/paypal/return"
-                            f"?checkout={sub['subscription_id']}"),
-                cancel_url=(f"{base}/billing/paypal/cancel"
-                            f"?checkout={sub['subscription_id']}"))
+            payload = paypal.client(config).create_order(
+                amount_cents=amount, currency=currency,
+                custom_id=f"order:{order['order_id']}",
+                return_url=f"{base}/billing/paypal/return?checkout={order['order_id']}",
+                cancel_url=f"{base}/billing/paypal/cancel?checkout={order['order_id']}",
+                description="MDRender server prepaid credit")
         except paypal.PaypalError as exc:
             return _fail(exc)
-        approve = paypal.PaypalClient.approve_link(payload)
+        approve = paypal.PaypalClient.approve_link_for_order(payload)
         if not approve:
             return _fail("PayPal returned no approval link")
-        billing.set_subscription_provider_id(g.db, sub["subscription_id"],
-                                             payload.get("id"))
+        billing.attach_order_provider(g.db, order["order_id"], payload.get("id"))
         return redirect("/federation?paypal_url=" +
                         urllib.parse.quote(approve, safe=""), 303)
-
-    # ---- Master: operator consent for a slave (design §5) ------------------
 
     def _consent_blocked():
         """Why this master cannot show a consent page, else None."""
@@ -2312,20 +2192,13 @@ def create_app(config):
         plans = [dict(p) for p in billing.list_plans(g.db)]
         groups = [dict(gr) for gr in billing.list_groups(g.db)]
         plans_by_id = {p["plan_id"]: p for p in plans}
-        subs = [dict(s) for s in billing.list_subscriptions(g.db)]
         orders = [dict(o) for o in billing.list_orders(g.db)]
-        for sub in subs:
-            plan = plans_by_id.get(sub["plan_id"])
-            sub["plan_name"] = plan["name"] if plan else "(removed)"
-            sub["target"] = (sub["account_id"][:12] + "…"
-                             if len(sub["account_id"]) > 13
-                             else sub["account_id"])
         return render_template(
             "billing.html", tab=tab, plans=plans, groups=groups,
             plans_by_id=plans_by_id,
             plan_names={p["plan_id"]: p["name"] for p in plans},
             group_names={gr["group_id"]: gr["name"] for gr in groups},
-            subscriptions=subs, orders=orders,
+            orders=orders,
             paypal_enabled=paypal.enabled(config),
             paypal_mode=getattr(config, "PAYPAL_MODE", "sandbox"),
             paypal_webhook=bool(getattr(config, "PAYPAL_WEBHOOK_ID", "")),
@@ -2456,37 +2329,11 @@ def create_app(config):
                                reason=request.form.get("reason") or "manual")
         return redirect("/billing", 303)
 
-    @app.route("/billing/plans/<plan_id>/provision", methods=["POST"])
-    def billing_plan_provision(plan_id):
-        """Create (or re-create) the PayPal billing plan behind a local plan.
-
-        Runs entirely server-side; the resulting PayPal plan id is pinned on
-        the local row so checkouts never have to provision ad hoc.
-        """
-        auth_error = require_form_session("/billing")
-        if auth_error:
-            return auth_error
-        try:
-            billing.provision_plan(g.db, config, plan_id,
-                                   force=request.form.get("force") == "1")
-            return redirect("/billing?tab=plans&paypal=provisioned", 303)
-        except (ValueError, paypal.PaypalError) as exc:
-            return redirect(
-                "/billing?tab=plans&error=" + urllib.parse.quote(str(exc)[:160]),
-                303)
-
     def _paypal_landing(sub_or_order):
         """Where a PayPal return/cancel goes back to, by checkout scope."""
         if sub_or_order["account_type"] == billing.SCOPE_ACCOUNT:
             return "/account/billing"
         return "/federation"
-
-    def _paypal_return_url(landing, account_type, suffix):
-        """Success redirect using the query vocabulary the landing reads:
-        the account page speaks ``ok=``, the federation page ``paypal_ok=``."""
-        if account_type == billing.SCOPE_ACCOUNT:
-            return f"{landing}?ok={suffix}"
-        return f"{landing}?paypal_ok=1"
 
     def _paypal_cancel_url(landing, account_type):
         if account_type == billing.SCOPE_ACCOUNT:
@@ -2503,43 +2350,6 @@ def create_app(config):
         caller's identity.
         """
         checkout = (request.args.get("checkout") or "").strip()
-        sub = billing.get_subscription(g.db, checkout) if checkout else None
-        if sub is not None:
-            landing = _paypal_landing(sub)
-            if sub["status"] == "pending":
-                if not paypal.enabled(config):
-                    return _fail_landing(landing, "PayPal is not configured")
-                try:
-                    remote = paypal.client(config).get_subscription(
-                        sub["provider_subscription_id"] or "")
-                except paypal.PaypalError as exc:
-                    return _fail_landing(landing, exc)
-                status = paypal.local_status(remote.get("status", ""))
-                if status == "active":
-                    start, end = paypal.PaypalClient.subscription_period(remote)
-                    billing.activate_subscription(
-                        g.db, sub["subscription_id"],
-                        provider_subscription_id=remote.get("id"),
-                        period_start=start, period_end=end)
-                    suffix = "subscribed" if sub["account_type"] == \
-                        billing.SCOPE_ACCOUNT else "paypal_ok"
-                    return redirect(
-                        _paypal_return_url(landing, sub["account_type"],
-                                           suffix), 303)
-                if status == "pending":
-                    return _fail_landing(
-                        landing, "The PayPal payment was not completed")
-                billing.mark_subscription(g.db, sub["subscription_id"], status)
-                return _fail_landing(
-                    landing, f"The PayPal subscription is {status}")
-            row = billing.get_subscription(g.db, checkout)
-            if row["status"] == "active":
-                suffix = "subscribed" if sub["account_type"] == \
-                    billing.SCOPE_ACCOUNT else "paypal_ok"
-                return redirect(
-                    _paypal_return_url(landing, sub["account_type"],
-                                       suffix), 303)
-            return _fail_landing(landing, f"Subscription is {row['status']}")
         order = billing.get_order(g.db, checkout) if checkout else None
         if order is not None:
             landing = _paypal_landing(order)
@@ -2568,13 +2378,6 @@ def create_app(config):
     def paypal_cancel():
         """The buyer backed out of PayPal: drop the abandoned checkout."""
         checkout = (request.args.get("checkout") or "").strip()
-        sub = billing.get_subscription(g.db, checkout) if checkout else None
-        if sub is not None:
-            landing = _paypal_landing(sub)
-            if sub["status"] == "pending":
-                billing.delete_subscription(g.db, sub["subscription_id"])
-            return redirect(
-                _paypal_cancel_url(landing, sub["account_type"]), 303)
         order = billing.get_order(g.db, checkout) if checkout else None
         if order is not None:
             landing = _paypal_landing(order)
@@ -2590,48 +2393,12 @@ def create_app(config):
         """One webhook event -> local bookkeeping. Returns a short note.
 
         Idempotent by construction: every branch re-reads the row, and the
-        webhook's event id is claimed before this runs.
+        webhook's event id is claimed before this runs. Only one-time top-up
+        captures matter now; subscription lifecycle events are ignored.
         """
         etype = event.get("event_type", "")
         res = event.get("resource") or {}
         provider_id = res.get("id", "")
-        info = res.get("billing_info") or {}
-        if etype in ("BILLING.SUBSCRIPTION.ACTIVATED",
-                     "BILLING.SUBSCRIPTION.RE-ACTIVATED",
-                     "BILLING.SUBSCRIPTION.UPDATED"):
-            row = billing.find_subscription_by_provider(conn, provider_id)
-            if row is None:
-                return f"unknown subscription {provider_id}"
-            end = paypal.parse_time(info.get("next_billing_time"))
-            start = paypal.parse_time(res.get("create_time"))
-            billing.activate_subscription(
-                conn, row["subscription_id"],
-                provider_subscription_id=provider_id,
-                period_start=start, period_end=end)
-            return etype
-        if etype in ("BILLING.SUBSCRIPTION.SUSPENDED",
-                     "BILLING.SUBSCRIPTION.PAYMENT.FAILED"):
-            row = billing.find_subscription_by_provider(conn, provider_id)
-            if row is None:
-                return f"unknown subscription {provider_id}"
-            billing.mark_subscription(conn, row["subscription_id"], "suspended",
-                                      period_end=paypal.parse_time(
-                                          info.get("next_billing_time")))
-            return etype
-        if etype == "BILLING.SUBSCRIPTION.CANCELLED":
-            row = billing.find_subscription_by_provider(conn, provider_id)
-            if row is None:
-                return f"unknown subscription {provider_id}"
-            billing.mark_subscription(conn, row["subscription_id"], "cancelled")
-            return etype
-        if etype == "BILLING.SUBSCRIPTION.EXPIRED":
-            row = billing.find_subscription_by_provider(conn, provider_id)
-            if row is None:
-                return f"unknown subscription {provider_id}"
-            billing.mark_subscription(conn, row["subscription_id"], "expired")
-            billing.clear_account_override(conn, row["account_type"],
-                                           row["account_id"], row["plan_id"])
-            return etype
         if etype == "PAYMENT.CAPTURE.COMPLETED":
             custom = res.get("custom_id") or ""
             if not custom:
@@ -2639,8 +2406,9 @@ def create_app(config):
                 custom = (units[0].get("custom_id") or "") if units else ""
             if custom.startswith("order:"):
                 order = billing.get_order(conn, custom[6:])
-                if order is not None and billing.complete_order(
-                        conn, order["order_id"], provider_id):
+                if order is None:
+                    return "unknown order"
+                if billing.complete_order(conn, order["order_id"], provider_id):
                     return "topup credited"
                 return "topup already credited"
         return "ignored"
@@ -3000,17 +2768,14 @@ def create_app(config):
                                          body, request.headers):
             return jsonify({"error": "bad signature"}), 401
         plan = _resolved_plan(g.db, row)
-        sub = billing.live_subscription(g.db, billing.SCOPE_SLAVE, row["server_id"])
+        entitled = billing.slave_entitled(g.db, row["server_id"])
         return jsonify(
             {"server_id": row["server_id"], "hostname": row["hostname"],
              "status": row["status"], "plan": plan,
              "billing": {
                  "required": bool(plan and plan["price_cents"]),
-                 "entitled": billing.slave_entitled(
-                     g.db, row["server_id"],
-                     grace_days=getattr(config, "PAYPAL_GRACE_DAYS", 3)),
-                 "status": sub["status"] if sub else None,
-                 "renews_at": sub["current_period_end"] if sub else None}})
+                 "entitled": entitled,
+                 "status": "in credit" if entitled else "out of credit"}})
 
     @app.route("/api/federation/disconnect", methods=["POST"])
     def federation_disconnect():
@@ -3066,16 +2831,14 @@ def create_app(config):
         if not federation.verify_request(g.db, row, request.method, request.path,
                                          body, request.headers):
             return jsonify({"error": "bad signature"}), 401
-        # Paid plan without a live subscription -> no relay (design F7).
-        # Sync/heartbeat keep working so nothing is lost while unpaid; only
-        # the metered action (ringing the doorbell) is gated.
+        # Paid plan without credit -> no relay (design F7). Sync/heartbeat
+        # keep working so nothing is lost while out of credit; only the
+        # metered action (ringing the doorbell) is gated.
         if bool(getattr(config, "BILLING_ENFORCEMENT", False)) and not \
-                billing.slave_entitled(g.db, row["server_id"],
-                                       grace_days=getattr(config,
-                                                          "PAYPAL_GRACE_DAYS", 3)):
-            return jsonify({"error": "subscription required",
-                            "detail": "this server's plan requires an active"
-                                      " subscription"}), 402
+                billing.slave_entitled(g.db, row["server_id"]):
+            return jsonify({"error": "payment required",
+                            "detail": "this server's plan requires prepaid"
+                                      " credit"}), 402
         data = json.loads(body or b"{}")
         account_id = data.get("account_id")
         device_id = data.get("device_id")
@@ -3273,6 +3036,26 @@ def create_app(config):
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files uploaded"}), 400
+        account_id = device["account_id"] if "account_id" in device.keys() else None
+        if account_id and bool(getattr(config, "BILLING_ENFORCEMENT", False)):
+            credit = billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id)
+            if credit <= 0:
+                return jsonify({"error": "payment required",
+                                "detail": "This account has no credit: top up"
+                                          " on the Billing page."}), 402
+            # Every attached file must fit inside the current credit.
+            for f in uploads:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(0)
+                cost = billing.file_cost_cents(g.db, account_id, size)
+                if cost > credit:
+                    return jsonify({
+                        "error": "payment required",
+                        "detail": f"'{os.path.basename(f.filename or 'file')}'"
+                                  f" costs {cost} cents of credit but this"
+                                  f" account only has {credit} cents: top up"
+                                  " before sending."}), 402
         push_id = uuid.uuid4().hex
         challenge_key = uuid.uuid4().hex
         # Where the device should file these, and what to do if a name is
@@ -3280,7 +3063,6 @@ def create_app(config):
         # "mds" options, and are carried in the signed manifest so the device
         # cannot be redirected between fetching it and importing.
         conflict = push_store.normalise_conflict(request.form.get("conflict"))
-        account_id = device["account_id"] if "account_id" in device.keys() else None
         # The plan caps how much pending storage an account may hold; reject a
         # push that would exceed it (checked here, on the way in).
         policy = billing.pending_policy(g.db, config, account_id) if account_id else None

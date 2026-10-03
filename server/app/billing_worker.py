@@ -1,6 +1,5 @@
 # server/app/billing_worker.py
-"""Periodic billing sweeps: trial-group expiry, pending-file expiry, and
-PayPal subscription lapse (missed webhooks / end-of-grace)."""
+"""Periodic billing sweeps: trial-group expiry and pending-file expiry."""
 import logging
 import os
 import time
@@ -49,11 +48,6 @@ def run_forever(config, db, *, interval_seconds=300):
                 expired = sweep_pending_expiry(conn, config)
                 if expired:
                     log.info("billing: expired %d pending file(s)", expired)
-                lapsed = billing.sweep_subscriptions(
-                    conn,
-                    grace_days=getattr(config, "PAYPAL_GRACE_DAYS", 3))
-                if lapsed:
-                    log.info("billing: expired %d lapsed subscription(s)", lapsed)
         except Exception:  # noqa: BLE001 - the worker must never die
             log.warning("billing: sweep failed", exc_info=True)
         time.sleep(interval_seconds)
