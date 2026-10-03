@@ -1244,8 +1244,11 @@ def create_app(config):
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
+        # Zero-rate plans are exempt: only storage-metered accounts gate.
+        metered = bool(getattr(config, "BILLING_ENFORCEMENT", False)) and \
+            billing.storage_is_metered(g.db, billing.SCOPE_ACCOUNT, account_id)
         credit = billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id)
-        if bool(getattr(config, "BILLING_ENFORCEMENT", False)) and credit <= 0:
+        if metered and credit <= 0:
             return jsonify({"error": "payment required",
                             "detail": "This account has no credit: top up on"
                                       " the Billing page before uploading."}), 402
@@ -1255,7 +1258,7 @@ def create_app(config):
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files"}), 400
-        if bool(getattr(config, "BILLING_ENFORCEMENT", False)):
+        if metered:
             # Every file in the batch must fit inside the current credit.
             for f in uploads:
                 f.seek(0, os.SEEK_END)
@@ -3037,7 +3040,9 @@ def create_app(config):
         if not uploads:
             return jsonify({"error": "no files uploaded"}), 400
         account_id = device["account_id"] if "account_id" in device.keys() else None
-        if account_id and bool(getattr(config, "BILLING_ENFORCEMENT", False)):
+        # Zero-rate plans are exempt: only message-metered accounts gate.
+        if account_id and bool(getattr(config, "BILLING_ENFORCEMENT", False)) and \
+                billing.messages_are_metered(g.db, billing.SCOPE_ACCOUNT, account_id):
             credit = billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id)
             if credit <= 0:
                 return jsonify({"error": "payment required",

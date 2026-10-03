@@ -40,7 +40,7 @@ else activates it.
 | `PAYPAL_BRAND_NAME` | `MDRender Cloud Push` | Name shown on the PayPal checkout page. |
 | `PAYPAL_TOPUP_MIN_CENTS` | `500` | Minimum one-time top-up (5.00). |
 | `PAYPAL_TOPUP_MAX_CENTS` | `50000` | Maximum one-time top-up (500.00). |
-| `BILLING_ENFORCEMENT` | `false` | When `true`: an account with no credit (`balance <= 0`) is refused uploads and pushes with `402`; each file in a batch must also fit inside the remaining credit; a **paid** server plan with no credit is refused at the doorbell (`402`). Free plans are never gated. Leave `false` until payments are proven end-to-end. |
+| `BILLING_ENFORCEMENT` | `false` | When `true`, **metered** usage requires prepaid credit: an account whose plan charges for storage (`storage_cents_per_mb > 0`) is refused uploads at zero credit, one whose plan charges per message (`message_cents_per_1000 > 0`) is refused pushes, and each file in a batch must also fit inside the remaining credit. Zero-rate plans — and accounts with no plan — are exempt, because billing can never charge them; a **paid** server plan with no credit is refused at the doorbell (`402`). Leave `false` until payments are proven end-to-end. |
 
 ```sh
 export PAYPAL_MODE=sandbox
@@ -167,17 +167,26 @@ What each event should do:
 
 ### Enforcement
 
-With `BILLING_ENFORCEMENT=true` (after the flows above pass):
+With `BILLING_ENFORCEMENT=true` (after the flows above pass), a gate
+applies only where the account's effective plan can actually charge —
+**zero-rate plans are exempt**, as is an account with no plan at all:
 
-- **Account uploads** (`POST /api/account/upload`): `402 payment required`
-  while `balance <= 0`; additionally every file in the batch is costed
-  against the credit (`ceil(bytes / 1 MiB) × storage_cents_per_mb`) and a
-  file that costs more than the balance is refused by name.
-- **Push doorbells** (`POST /api/push`): the same credit gate and per-file
-  check apply, so a device cannot be woken without credit behind it.
+- **Account uploads** (`POST /api/account/upload`): gated only when
+  `storage_cents_per_mb > 0`. Then `402 payment required` while
+  `balance <= 0`; additionally every file in the batch is costed against
+  the credit (`ceil(bytes / 1 MiB) × storage_cents_per_mb`) and a file
+  that costs more than the balance is refused by name.
+- **Push doorbells** (`POST /api/push`): gated only when
+  `message_cents_per_1000 > 0` (pushes are metered as messages, not
+  storage). Same credit gate and per-file check, so a device cannot be
+  woken without credit behind it.
 - **Federation doorbell** (`POST /api/federation/doorbell`): refused with
   `402 payment required` only when the server's effective plan is paid and
   its prepaid balance is not positive. Free plans are never gated.
+
+To run a free tier with enforcement on, assign a zero-rate plan (both
+rates 0) as the default group's plan: metered plans gate, free plans
+don't.
 
 ## 7. Going live
 

@@ -52,20 +52,24 @@ def test_upload_enforces_quota(config, db_path):
     assert over.status_code == 413
 
 
-def test_billing_enforcement_gates_uploads_on_credit(config, db_path):
+def test_billing_enforcement_gates_metered_uploads_on_credit(config, db_path):
     config.BILLING_ENFORCEMENT = True
     app = _app(config)
     c = _account_client(app)
+    with app.config["_db"].connect() as conn:
+        account_id = conn.execute(
+            "SELECT account_id FROM accounts").fetchone()["account_id"]
+        plan = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
+                                   storage_cents_per_mb=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, plan)
 
-    # No credit: every upload is refused, plan or not.
+    # Storage-metered plan + no credit: refused.
     blocked = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
                      content_type="multipart/form-data")
     assert blocked.status_code == 402
     assert blocked.get_json()["error"] == "payment required"
 
     with app.config["_db"].connect() as conn:
-        account_id = conn.execute(
-            "SELECT account_id FROM accounts").fetchone()["account_id"]
         billing.add_credit(conn, billing.SCOPE_ACCOUNT, account_id, 500,
                            reason="topup")
 
@@ -80,6 +84,37 @@ def test_billing_enforcement_gates_uploads_on_credit(config, db_path):
     again = c.post("/api/account/upload", data={"file": (io.BytesIO(b"x"), "x.txt")},
                    content_type="multipart/form-data")
     assert again.status_code == 402
+
+
+def test_zero_rate_plans_are_exempt_from_the_upload_gate(config, db_path):
+    config.BILLING_ENFORCEMENT = True
+    app = _app(config)
+    c = _account_client(app)
+    with app.config["_db"].connect() as conn:
+        account_id = conn.execute(
+            "SELECT account_id FROM accounts").fetchone()["account_id"]
+
+    def upload():
+        return c.post("/api/account/upload",
+                      data={"file": (io.BytesIO(b"x"), "x.txt")},
+                      content_type="multipart/form-data")
+
+    # No plan at all: nothing meters storage, so no credit is required.
+    assert upload().status_code == 200
+
+    # An explicit zero-storage plan (message rates only) is exempt too.
+    with app.config["_db"].connect() as conn:
+        free = billing.create_plan(conn, "MsgOnly", billing.SCOPE_ACCOUNT,
+                                   message_cents_per_1000=500)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, free)
+    assert upload().status_code == 200
+
+    # Flip the storage rate on and the gate binds immediately.
+    with app.config["_db"].connect() as conn:
+        metered = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
+                                      storage_cents_per_mb=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, metered)
+    assert upload().status_code == 402
 
 
 def test_upload_rejects_files_more_expensive_than_credit(config, db_path):

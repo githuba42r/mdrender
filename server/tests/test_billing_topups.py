@@ -328,16 +328,19 @@ def test_push_requires_credit_and_each_file_must_fit(app_, gateway):
                            data={"target_device": device, "file": files},
                            content_type="multipart/form-data")
 
+    # Assign a plan that meters both storage and messages, still unfunded.
+    with app_.config["_db"].connect() as conn:
+        plan = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
+                                   price_cents=500, storage_cents_per_mb=100,
+                                   message_cents_per_1000=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, plan)
+
     # Out of credit: no doorbell at all.
     r = push([(io.BytesIO(b"x"), "a.txt")])
     assert r.status_code == 402
     assert r.get_json()["error"] == "payment required"
 
-    # Fund the account against a metered storage plan.
     with app_.config["_db"].connect() as conn:
-        plan = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
-                                   price_cents=500, storage_cents_per_mb=100)
-        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, plan)
         billing.add_credit(conn, billing.SCOPE_ACCOUNT, account_id, 250,
                            reason="topup")
 
@@ -358,6 +361,43 @@ def test_push_requires_credit_and_each_file_must_fit(app_, gateway):
         billing.debit(conn, billing.SCOPE_ACCOUNT, account_id, 250,
                       reason="usage")
     assert push([(io.BytesIO(b"x"), "c.txt")]).status_code == 402
+
+
+def test_push_gate_skips_unmetered_plans(app_, gateway):
+    app_.config["_cfg"].BILLING_ENFORCEMENT = True
+    _account_client(app_)
+    account_id = _account_id(app_)
+    device = _seed_account_device(app_, account_id)
+    app_.config["_fcm"] = _FakeFcm()
+    client, tok = _push_client(app_)
+
+    def push():
+        return client.post("/api/push",
+                           headers={"Authorization": f"Bearer {tok}"},
+                           data={"target_device": device,
+                                 "file": [(io.BytesIO(b"x"), "a.txt")]},
+                           content_type="multipart/form-data")
+
+    # No plan: nothing meters messages, so zero credit still rings.
+    assert push().status_code == 200
+
+    # A storage-metered plan does not gate pushes (messages are free).
+    with app_.config["_db"].connect() as conn:
+        storage_only = billing.create_plan(conn, "StorageOnly",
+                                           billing.SCOPE_ACCOUNT,
+                                           storage_cents_per_mb=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id,
+                                 storage_only)
+    assert push().status_code == 200
+
+    # The moment messages are metered, the credit gate binds.
+    with app_.config["_db"].connect() as conn:
+        metered = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
+                                      storage_cents_per_mb=100,
+                                      message_cents_per_1000=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id,
+                                 metered)
+    assert push().status_code == 402
 
 
 # ---- User pages ------------------------------------------------------------

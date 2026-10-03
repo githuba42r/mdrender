@@ -307,6 +307,27 @@ def file_cost_cents(conn, account_id, size_bytes) -> int:
     return int(rate) * math.ceil(size_bytes / (1024 * 1024))
 
 
+def storage_is_metered(conn, account_type, account_id) -> bool:
+    """True when the account's effective plan can charge for stored bytes.
+
+    Enforcement gates only what billing can actually charge: a zero-rate
+    plan (or no plan at all) never meters storage, so it is exempt from
+    the upload credit gate - there is nothing to prepay.
+    """
+    plan = effective_plan(conn, account_type, account_id)
+    return bool(plan and plan["storage_cents_per_mb"])
+
+
+def messages_are_metered(conn, account_type, account_id) -> bool:
+    """True when the account's effective plan can charge per doorbell.
+
+    Same exemption as ``storage_is_metered``: with a zero message rate a
+    push can never move the ledger, so no credit is required to send one.
+    """
+    plan = effective_plan(conn, account_type, account_id)
+    return bool(plan and plan["message_cents_per_1000"])
+
+
 def bill_messages(conn, config, *, now=None) -> list[str]:
     """Charge accounts for doorbells sent since the last billing.
 
