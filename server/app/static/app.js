@@ -373,6 +373,19 @@
     });
   });
 
+  // ---- Exclusive accordion cards ------------------------------------------
+  // details[name] already groups cards natively; this covers older engines.
+
+  document.querySelectorAll("details[name]").forEach(function (card) {
+    card.addEventListener("toggle", function () {
+      if (!card.open) return;
+      document.querySelectorAll('details[name="' + card.name + '"]')
+        .forEach(function (other) {
+          if (other !== card) other.open = false;
+        });
+    });
+  });
+
   // ---- Table labels for the small-screen card layout ----------------------
   // Below the card breakpoint each table row restacks as label/value blocks;
   // copy the column headings onto the cells so the templates stay

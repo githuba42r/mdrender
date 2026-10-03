@@ -669,15 +669,61 @@ dialog.confirm p { margin: 0 0 1.2rem; color: var(--muted); }
 .pw-toggle:active { transform: translateY(-50%) translateY(1px); }
 button[disabled], .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
 
-/* ---- Pending groups ---- */
+/* ---- Accordion cards (pushes / pending) ---- */
 
-section.push-group {
+/* One short card per push: date + status in the summary, the full record
+   behind it. details[name] keeps a single card open per list. */
+.acc {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 1rem 1.1rem 1.2rem;
-  margin-top: 1.2rem;
+  margin-top: 0.8rem;
+  overflow: hidden;
 }
+.acc > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.75rem 1rem;
+  min-height: 46px;
+}
+.acc > summary::-webkit-details-marker { display: none; }
+.acc > summary:hover { background: var(--surface-2); }
+/* Date and who wrap together as one cluster; chip + chevron stay put. */
+.acc-lead {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.65rem;
+}
+.acc-when { font-weight: 600; }
+.acc-who { color: var(--muted); overflow-wrap: break-word; min-width: 0; }
+.acc > summary .chip { flex: none; }
+/* Closed: chevron right; open: chevron down. */
+.acc > summary::after {
+  content: "";
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.acc[open] > summary::after { transform: rotate(45deg); }
+.acc > .acc-body {
+  padding: 0.7rem 1rem 1rem;
+  border-top: 1px solid var(--line);
+}
+.acc-actions { margin-top: 0.9rem; }
+
+/* ---- Pending groups ---- */
+
+section.push-group { margin-top: 0.8rem; }
 section.push-group h2 {
   margin: 0 0 0.5rem;
   text-transform: none;

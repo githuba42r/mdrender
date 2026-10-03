@@ -46,26 +46,21 @@
 
 <h2>Recent pushes</h2>
 {% if pushes %}
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th>Push ID</th>
-      <th>Device</th>
-      <th>Destination folder</th>
-      <th>Conflict</th>
-      <th>Files</th>
-      <th>Date</th>
-      <th>Status</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for p in pushes %}
-    <tr>
-      <td><code>{{ p.push_id }}</code></td>
-      <td>{{ p.target_device }}</td>
-      <td>
+{% for p in pushes %}
+<details class="acc" name="push-acc">
+  <summary>
+    <span class="acc-lead">
+      <span class="acc-when">{{ p.date | dt }}</span>
+      <span class="acc-who">{{ p.target_device }}</span>
+    </span>
+    <span class="chip {{ p.status }}">{{ p.status }}</span>
+  </summary>
+  <div class="acc-body">
+    <dl class="details">
+      <dt>Push ID</dt>
+      <dd><code>{{ p.push_id }}</code></dd>
+      <dt>Destination</dt>
+      <dd>
         {% if encryption_on %}
           <span class="empty">(encrypted)</span>
         {% elif p.target_folder %}
@@ -73,9 +68,11 @@
         {% else %}
           <span class="empty">(app default)</span>
         {% endif %}
-      </td>
-      <td>{{ p.conflict }}</td>
-      <td>
+      </dd>
+      <dt>Conflict</dt>
+      <dd>{{ p.conflict }}</dd>
+      <dt>Files</dt>
+      <dd>
         {% if encryption_on %}
           <span class="empty">(encrypted)</span>
           <span class="empty">({{ p.acked_count }}/{{ p.file_count }} acked)</span>
@@ -85,24 +82,21 @@
         {% else %}
           <span class="empty">none</span>
         {% endif %}
-      </td>
-      <td>{{ p.date | dt }}</td>
-      <td><span class="chip {{ p.status }}">{{ p.status }}</span></td>
-      <td>
-        <form method="POST" action="/api/push/{{ p.push_id }}/retry" class="inline">
-          <button type="submit" class="icon-btn" title="Re-push pending">{{ icons.retry() }}</button>
-        </form>
-        <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
-              data-confirm="Remove this push and any stored files?"
-              data-confirm-ok="Remove">
-          <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
+      </dd>
+    </dl>
+    <div class="acc-actions">
+      <form method="POST" action="/api/push/{{ p.push_id }}/retry" class="inline">
+        <button type="submit" class="icon-btn" title="Re-push pending">{{ icons.retry() }}</button>
+      </form>
+      <form method="POST" action="/pushes/{{ p.push_id }}/delete" class="inline"
+            data-confirm="Remove this push and any stored files?"
+            data-confirm-ok="Remove">
+        <button type="submit" class="icon-btn btn-danger" title="Remove">{{ icons.trash() }}</button>
+      </form>
+    </div>
+  </div>
+</details>
+{% endfor %}
 {% else %}
 <p class="empty">No pushes yet. Send a file to a paired device.</p>
 {% endif %}
