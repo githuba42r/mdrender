@@ -562,6 +562,123 @@ def test_free_slave_plans_are_never_gated(app_, gateway):
     assert resp.status_code == 200
 
 
+# ---- Credit gate controls (plan checkbox + account override) ---------------
+
+def test_plan_require_credit_checkbox_gates_zero_rate_plans(app_, gateway):
+    app_.config["_cfg"].BILLING_ENFORCEMENT = True
+    c = _account_client(app_)
+    account_id = _account_id(app_)
+    admin = _admin_client(app_)
+
+    # The admin creates a zero-rate plan with the checkbox ticked.
+    resp = admin.post("/billing/plans", data={
+        "name": "Strict", "scope": "account", "price": "0",
+        "require_credit": "1"})
+    assert resp.status_code == 303
+    with app_.config["_db"].connect() as conn:
+        plan = conn.execute("SELECT * FROM billing_plans WHERE name = 'Strict'"
+                            ).fetchone()
+    assert plan["require_credit"] == 1
+    assert b"requires credit" in admin.get("/billing?tab=plans").data
+    with app_.config["_db"].connect() as conn:
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id,
+                                 plan["plan_id"])
+
+    # Zero usage rates, but the plan says always-in-credit: gate binds.
+    blocked = c.post("/api/account/upload",
+                     data={"file": (io.BytesIO(b"x"), "x.txt")},
+                     content_type="multipart/form-data")
+    assert blocked.status_code == 402
+    assert blocked.get_json()["error"] == "payment required"
+
+    with app_.config["_db"].connect() as conn:
+        billing.add_credit(conn, billing.SCOPE_ACCOUNT, account_id, 100,
+                           reason="topup")
+    assert c.post("/api/account/upload",
+                  data={"file": (io.BytesIO(b"x"), "x.txt")},
+                  content_type="multipart/form-data").status_code == 200
+
+    # Untick the checkbox (no require_credit field posted) and the
+    # zero-rate plan is exempt again: no credit needed.
+    resp = admin.post(f"/billing/plans/{plan['plan_id']}", data={
+        "name": "Strict", "scope": "account", "price": "0"})
+    assert resp.status_code == 303
+    with app_.config["_db"].connect() as conn:
+        assert billing.get_plan(conn, plan["plan_id"])["require_credit"] == 0
+        billing.debit(conn, billing.SCOPE_ACCOUNT, account_id, 100,
+                      reason="storage")
+    assert b"requires credit" not in admin.get("/billing?tab=plans").data
+    assert c.post("/api/account/upload",
+                  data={"file": (io.BytesIO(b"x"), "x.txt")},
+                  content_type="multipart/form-data").status_code == 200
+
+    # The JSON snapshot reports both controls.
+    snap = c.get("/api/billing/subscription")
+    assert snap.status_code == 200
+    assert snap.get_json()["plan"]["require_credit"] is False
+    assert snap.get_json()["credit_gate_exempt"] is False
+
+
+def test_account_override_beats_the_plan_regardless_of_balance(app_, gateway):
+    app_.config["_cfg"].BILLING_ENFORCEMENT = True
+    c = _account_client(app_)
+    account_id = _account_id(app_)
+    device = _seed_account_device(app_, account_id)
+    app_.config["_fcm"] = _FakeFcm()
+    push_client, tok = _push_client(app_)
+    admin = _admin_client(app_)
+
+    def upload():
+        return c.post("/api/account/upload",
+                      data={"file": (io.BytesIO(b"x"), "x.txt")},
+                      content_type="multipart/form-data")
+
+    def push():
+        return push_client.post("/api/push",
+                                headers={"Authorization": f"Bearer {tok}"},
+                                data={"target_device": device,
+                                      "file": [(io.BytesIO(b"x"), "a.txt")]},
+                                content_type="multipart/form-data")
+
+    with app_.config["_db"].connect() as conn:
+        plan = billing.create_plan(conn, "Metered", billing.SCOPE_ACCOUNT,
+                                   storage_cents_per_mb=100,
+                                   message_cents_per_1000=100)
+        billing.set_account_plan(conn, billing.SCOPE_ACCOUNT, account_id, plan)
+
+    # Metered plan, no credit: both gates bind.
+    assert upload().status_code == 402
+    assert push().status_code == 402
+
+    # Admin ticks the override on the User page.
+    resp = admin.post(f"/accounts/{account_id}/credit-gate-exempt",
+                      data={"exempt": "1", "next": f"/accounts/{account_id}"})
+    assert resp.status_code == 303
+    detail = admin.get(f"/accounts/{account_id}").data
+    assert b"credit-gate exempt" in detail
+
+    # Even deep in debit, uploads and pushes go through.
+    with app_.config["_db"].connect() as conn:
+        billing.debit(conn, billing.SCOPE_ACCOUNT, account_id, 500,
+                      reason="messages")
+    assert c.get("/account/billing").data.count(b"gate exempt") >= 1
+    assert upload().status_code == 200
+    assert push().status_code == 200
+
+    # Exemption skips the gate, not the metering: the doorbell still bills.
+    with app_.config["_db"].connect() as conn:
+        charged = billing.bill_messages(conn, app_.config["_cfg"])
+    assert charged == [account_id]
+    with app_.config["_db"].connect() as conn:
+        assert billing.balance(conn, billing.SCOPE_ACCOUNT, account_id) == -600
+
+    # Untick: the plan's gates apply again immediately.
+    admin.post(f"/accounts/{account_id}/credit-gate-exempt",
+               data={"exempt": "0", "next": f"/accounts/{account_id}"})
+    assert upload().status_code == 402
+    assert push().status_code == 402
+
+
 # ---- Admin UI --------------------------------------------------------------
 
 def test_payments_tab_lists_topup_orders(app_, gateway):

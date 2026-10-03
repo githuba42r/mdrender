@@ -22,7 +22,7 @@
   <tbody>
     {% for p in plans %}
     <tr>
-      <td>{{ p.name }}</td>
+      <td>{{ p.name }}{% if p.require_credit %} <span class="chip pending">requires credit</span>{% endif %}</td>
       <td>{{ 'server (host)' if p.scope == 'slave' else 'account' }}</td>
       <td>{{ p.price_cents | money }}</td>
       <td>{{ p.included_messages }}</td>
@@ -34,6 +34,7 @@
       <td>
         <button type="button" class="inline icon-btn" data-edit-plan data-id="{{ p.plan_id }}"
                 data-name="{{ p.name }}" data-scope="{{ p.scope }}"
+                data-require-credit="{{ p.require_credit }}"
                 data-price="{{ p.price_cents | dollars }}"
                 data-included-messages="{{ p.included_messages }}"
                 data-message-cost="{{ p.message_cents_per_1000 | dollars }}"
@@ -207,6 +208,12 @@
              aria-label="Storage grace period in days">
       <span class="unit">days grace</span>
     </div>
+    <label class="plan-account-only">
+      <input type="checkbox" name="require_credit" value="1" id="pl-require-credit">
+      Always require credit - accounts on this plan must be in credit to
+      upload or push, even when the usage rates above are zero (an
+      individual account can still be exempted from its User page)
+    </label>
     <div class="confirm-actions">
       <button type="button" data-close-dialog>Cancel</button>
       <button type="submit" class="btn-primary">Save plan</button>

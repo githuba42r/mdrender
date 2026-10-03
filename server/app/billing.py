@@ -26,18 +26,21 @@ def create_plan(conn, name, scope, *, price_cents=0, currency="AUD",
                 interval="month", included_bytes=0, included_messages=0,
                 storage_cents_per_mb=0, message_cents_per_1000=0,
                 max_messages_per_month=0, storage_grace_days=0,
-                max_pending_bytes=0, pending_expiry_hours=0) -> str:
+                max_pending_bytes=0, pending_expiry_hours=0,
+                require_credit=0) -> str:
     plan_id = uuid.uuid4().hex
     conn.execute(
         "INSERT INTO billing_plans (plan_id, name, scope, price_cents, currency,"
         " interval, included_bytes, included_messages, storage_cents_per_mb,"
         " message_cents_per_1000, max_messages_per_month, storage_grace_days,"
-        " max_pending_bytes, pending_expiry_hours, active, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        " max_pending_bytes, pending_expiry_hours, require_credit, active,"
+        " created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
         (plan_id, name, scope, price_cents, currency, interval,
          included_bytes, included_messages, storage_cents_per_mb,
          message_cents_per_1000, max_messages_per_month, storage_grace_days,
-         max_pending_bytes, pending_expiry_hours, int(time.time())))
+         max_pending_bytes, pending_expiry_hours, int(require_credit) != 0,
+         int(time.time())))
     conn.commit()
     return plan_id
 
@@ -57,7 +60,7 @@ def update_plan(conn, plan_id, **fields) -> None:
                "included_bytes", "included_messages", "storage_cents_per_mb",
                "message_cents_per_1000", "max_messages_per_month",
                "storage_grace_days", "max_pending_bytes", "pending_expiry_hours",
-               "active")
+               "require_credit", "active")
     pairs = [(k, v) for k, v in fields.items() if k in allowed and v is not None]
     if not pairs:
         return
@@ -307,25 +310,42 @@ def file_cost_cents(conn, account_id, size_bytes) -> int:
     return int(rate) * math.ceil(size_bytes / (1024 * 1024))
 
 
-def storage_is_metered(conn, account_type, account_id) -> bool:
-    """True when the account's effective plan can charge for stored bytes.
+def account_credit_exempt(conn, account_id) -> bool:
+    """Per-account override: skip the credit gate whatever the plan says."""
+    row = conn.execute(
+        "SELECT credit_gate_exempt FROM accounts WHERE account_id = ?",
+        (account_id,)).fetchone()
+    return bool(row and row["credit_gate_exempt"])
 
-    Enforcement gates only what billing can actually charge: a zero-rate
-    plan (or no plan at all) never meters storage, so it is exempt from
-    the upload credit gate - there is nothing to prepay.
+
+def set_account_credit_exempt(conn, account_id, exempt: bool) -> None:
+    conn.execute(
+        "UPDATE accounts SET credit_gate_exempt = ? WHERE account_id = ?",
+        (1 if exempt else 0, account_id))
+    conn.commit()
+
+
+def storage_credit_gate(conn, account_id) -> bool:
+    """Must uploads be prepaid? (Enforcement switch applied by callers.)
+
+    Precedence: the account's exemption override wins regardless of plan;
+    otherwise the effective plan gates when it either always requires
+    credit (``require_credit``) or meters storage. Zero-rate plans stay
+    exempt until the checkbox says otherwise; a planless account never
+    gates (nothing metered, nothing to require).
     """
-    plan = effective_plan(conn, account_type, account_id)
-    return bool(plan and plan["storage_cents_per_mb"])
+    if account_credit_exempt(conn, account_id):
+        return False
+    plan = effective_plan(conn, SCOPE_ACCOUNT, account_id)
+    return bool(plan and (plan["require_credit"] or plan["storage_cents_per_mb"]))
 
 
-def messages_are_metered(conn, account_type, account_id) -> bool:
-    """True when the account's effective plan can charge per doorbell.
-
-    Same exemption as ``storage_is_metered``: with a zero message rate a
-    push can never move the ledger, so no credit is required to send one.
-    """
-    plan = effective_plan(conn, account_type, account_id)
-    return bool(plan and plan["message_cents_per_1000"])
+def message_credit_gate(conn, account_id) -> bool:
+    """Same as ``storage_credit_gate`` but for push doorbells (messages)."""
+    if account_credit_exempt(conn, account_id):
+        return False
+    plan = effective_plan(conn, SCOPE_ACCOUNT, account_id)
+    return bool(plan and (plan["require_credit"] or plan["message_cents_per_1000"]))
 
 
 def bill_messages(conn, config, *, now=None) -> list[str]:

@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   host TEXT NOT NULL DEFAULT 'master',
   status TEXT NOT NULL DEFAULT 'active',
   balance INTEGER NOT NULL DEFAULT 0,
+  credit_gate_exempt INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   last_login_at INTEGER
 );
@@ -224,6 +225,7 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   storage_grace_days INTEGER NOT NULL DEFAULT 0,
   max_pending_bytes INTEGER NOT NULL DEFAULT 0,
   pending_expiry_hours INTEGER NOT NULL DEFAULT 0,
+  require_credit INTEGER NOT NULL DEFAULT 0,
   paypal_plan_id TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
@@ -365,6 +367,7 @@ class Database:
                 "firebase_phone": "TEXT",
             },
             "billing_plans": {
+                "require_credit": "INTEGER NOT NULL DEFAULT 0",
                 "storage_cents_per_mb": "INTEGER NOT NULL DEFAULT 0",
                 "message_cents_per_1000": "INTEGER NOT NULL DEFAULT 0",
                 "max_messages_per_month": "INTEGER NOT NULL DEFAULT 0",
@@ -383,6 +386,7 @@ class Database:
                 "assigned_at": "INTEGER",
             },
             "accounts": {
+                "credit_gate_exempt": "INTEGER NOT NULL DEFAULT 0",
                 "messages_sent": "INTEGER NOT NULL DEFAULT 0",
                 "name": "TEXT",
                 "phone": "TEXT",

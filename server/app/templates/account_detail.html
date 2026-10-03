@@ -26,6 +26,29 @@
   &middot; Devices: {{ devices | length }}
   &middot; Pending: {{ stats.pending_files }} file(s), {{ stats.pending_bytes | filesize }}
   &middot; Pushes this month: {{ stats.messages_month }}
+  {% if account.credit_gate_exempt %}&middot; <span class="chip acked">credit-gate exempt</span>{% endif %}
+</p>
+<p>
+  Credit gate:
+  {% if account.credit_gate_exempt %}
+  <span class="chip acked">exempt</span>
+  <form method="POST" action="/accounts/{{ account.account_id }}/credit-gate-exempt" class="inline"
+        data-confirm="Return {{ account.email }} to the credit gate? Their plan (and any metering) applies again."
+        data-confirm-ok="Remove exemption">
+    <input type="hidden" name="exempt" value="0">
+    <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+    <button type="submit" class="btn">Remove exemption</button>
+  </form>
+  {% else %}
+  <span class="chip pending">per plan</span>
+  <form method="POST" action="/accounts/{{ account.account_id }}/credit-gate-exempt" class="inline"
+        data-confirm="Exempt {{ account.email }} from the credit gate? Uploads and pushes work whatever their balance, regardless of plan (usage still meters)."
+        data-confirm-ok="Exempt">
+    <input type="hidden" name="exempt" value="1">
+    <input type="hidden" name="next" value="/accounts/{{ account.account_id }}">
+    <button type="submit" class="btn">Exempt from credit gate</button>
+  </form>
+  {% endif %}
 </p>
 <p>
   {% if account.status == 'active' %}

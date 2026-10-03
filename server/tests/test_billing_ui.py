@@ -151,9 +151,9 @@ def test_groups_attach_plans_and_default_group_is_fixed(config, db_path):
 
 
 def test_server_plan_form_keeps_message_fees_and_hides_only_pending_storage(config, db_path):
-    """The Message fees row applies to every plan type; only Pending and
-    Storage fees are account-only, so only those two rows carry the class the
-    scope toggle hides."""
+    """The Message fees row applies to every plan type; only Pending,
+    Storage fees and the Always-require-credit checkbox are account-only,
+    so only those carry the class the scope toggle hides."""
     import re
 
     app = _app(config)
@@ -169,7 +169,8 @@ def test_server_plan_form_keeps_message_fees_and_hides_only_pending_storage(conf
             r'<div class="([^"]*)">\s*<span class="row-title">' + title, page)
         assert row, f"the {title} row is missing"
         assert "plan-account-only" in row.group(1)
-    assert page.count("plan-account-only") == 2
+    # Two field rows plus the require-credit checkbox label.
+    assert page.count("plan-account-only") == 3
 
 
 def test_server_plan_stores_and_shows_message_fees(config, db_path):

@@ -236,6 +236,7 @@
        "pending_expiry_hours"].forEach(function (f) {
         newPlanDialog.querySelector('[name="' + f + '"]').value = "";
       });
+      newPlanDialog.querySelector('[name="require_credit"]').checked = false;
       newPlanDialog._applyScope && newPlanDialog._applyScope();
       newPlanDialog.querySelector("form")._validate &&
         newPlanDialog.querySelector("form")._validate();
@@ -259,6 +260,8 @@
       planDialog.querySelector('[name="max_messages_per_month"]').value = editPlan.getAttribute("data-max-messages") || "0";
       planDialog.querySelector('[name="pending_mb"]').value = editPlan.getAttribute("data-pending-mb") || "0";
       planDialog.querySelector('[name="pending_expiry_hours"]').value = editPlan.getAttribute("data-pending-expiry") || "0";
+      planDialog.querySelector('[name="require_credit"]').checked =
+        editPlan.getAttribute("data-require-credit") === "1";
       planDialog._applyScope && planDialog._applyScope();
       planDialog.querySelector("form")._validate &&
         planDialog.querySelector("form")._validate();

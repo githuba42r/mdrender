@@ -36,7 +36,9 @@
   <div class="stat">
     <span class="stat-label">Service</span>
     <span class="stat-value">
-      {% if balance > 0 %}<span class="chip acked">in credit</span>{% else %}<span class="chip failed">out of credit</span>{% endif %}
+      {% if exempt %}<span class="chip acked">gate exempt</span>
+      {%- elif balance > 0 %} <span class="chip acked">in credit</span>
+      {%- else %} <span class="chip failed">out of credit</span>{% endif %}
     </span>
   </div>
 </div>

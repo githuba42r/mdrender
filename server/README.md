@@ -80,7 +80,7 @@ All configuration is via environment variables. Defaults come from
 | `PUSH_RETRY_COUNT` | `5` | FCM re-push attempts per file not acked within the retry window. |
 | `PUSH_RETRY_INTERVAL_MINUTES` | `30` | Delay between FCM retries. |
 | `DEVICE_TTL_DAYS` | `90` | Devices not seen in this long are swept. |
-| `BILLING_ENFORCEMENT` | `false` | When `true`, usage that the plan meters requires prepaid credit: storage-metered accounts are refused uploads at zero credit (`402`), message-metered accounts are refused pushes, and each file must fit the credit too. Zero-rate plans (and planless accounts) are exempt — billing can never charge them. A paid server plan with no credit is refused at the doorbell (`402`). |
+| `BILLING_ENFORCEMENT` | `false` | When `true`, the plan decides who needs prepaid credit: storage-metered accounts (or plans with **Always require credit**) are refused uploads at zero credit (`402`), message-metered accounts are refused pushes, and each file must fit the credit too. Zero-rate plans (and planless accounts) are exempt unless the checkbox is set; a per-account exemption override on the User page beats the plan (metering still runs). A paid server plan with no credit is refused at the doorbell (`402`). |
 | `PAYPAL_MODE` | `sandbox` | PayPal API host: `sandbox` or `live`. |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal REST app credentials; both set ⇒ payments enabled (see [PayPal setup](#paypal-setup)). |
 | `PAYPAL_WEBHOOK_ID` | *(empty)* | Webhook id from the PayPal app, needed to verify event signatures. |

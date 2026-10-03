@@ -1159,6 +1159,7 @@ def create_app(config):
             ledger=ledger,
             plan=billing.effective_plan(g.db, billing.SCOPE_ACCOUNT, account_id),
             paypal_enabled=paypal.enabled(config),
+            exempt=billing.account_credit_exempt(g.db, account_id),
             topup_min=getattr(config, "PAYPAL_TOPUP_MIN_CENTS", 500),
             topup_max=getattr(config, "PAYPAL_TOPUP_MAX_CENTS", 50000),
             currency=getattr(config, "PAYPAL_CURRENCY", "AUD"),
@@ -1222,9 +1223,12 @@ def create_app(config):
         return jsonify({
             "balance_cents": billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id),
             "entitled": billing.entitled(g.db, billing.SCOPE_ACCOUNT, account_id),
+            "credit_gate_exempt": billing.account_credit_exempt(g.db, account_id),
             "plan": ({"id": plan["plan_id"], "name": plan["name"],
                       "price_cents": plan["price_cents"],
-                      "currency": plan["currency"]} if plan else None),
+                      "currency": plan["currency"],
+                      "require_credit": bool(plan["require_credit"])}
+                     if plan else None),
         })
 
     def require_account_api():
@@ -1244,11 +1248,13 @@ def create_app(config):
         if auth_error:
             return auth_error
         account_id = _principal()["id"]
-        # Zero-rate plans are exempt: only storage-metered accounts gate.
-        metered = bool(getattr(config, "BILLING_ENFORCEMENT", False)) and \
-            billing.storage_is_metered(g.db, billing.SCOPE_ACCOUNT, account_id)
+        # Gated only when the plan says so (require_credit or a storage
+        # rate) and the account is not exempt - enforcement is the master
+        # switch on top.
+        gated = bool(getattr(config, "BILLING_ENFORCEMENT", False)) and \
+            billing.storage_credit_gate(g.db, account_id)
         credit = billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id)
-        if metered and credit <= 0:
+        if gated and credit <= 0:
             return jsonify({"error": "payment required",
                             "detail": "This account has no credit: top up on"
                                       " the Billing page before uploading."}), 402
@@ -1258,7 +1264,7 @@ def create_app(config):
         uploads = request.files.getlist("file")
         if not uploads:
             return jsonify({"error": "no files"}), 400
-        if metered:
+        if gated:
             # Every file in the batch must fit inside the current credit.
             for f in uploads:
                 f.seek(0, os.SEEK_END)
@@ -1646,6 +1652,22 @@ def create_app(config):
             return redirect(f"/accounts/{account_id}", 303)
         set_device_blocked(g.db, device_secret,
                            request.form.get("blocked", "") == "1")
+        return redirect(_return_to(f"/accounts/{account_id}"), 303)
+
+    @app.route("/accounts/<account_id>/credit-gate-exempt", methods=["POST"])
+    def accounts_credit_gate_exempt(account_id):
+        """Per-account override: exempt from / return to the credit gate.
+
+        Wins over the plan's ``require_credit`` checkbox and metering: an
+        exempt account may upload and push whatever its balance says.
+        """
+        auth_error = require_form_session(f"/accounts/{account_id}")
+        if auth_error:
+            return auth_error
+        if accounts.get_account(g.db, account_id) is None:
+            return redirect(f"/accounts/{account_id}", 303)
+        billing.set_account_credit_exempt(
+            g.db, account_id, request.form.get("exempt") == "1")
         return redirect(_return_to(f"/accounts/{account_id}"), 303)
 
     @app.route("/accounts/<account_id>/devices/<device_secret>/revoke",
@@ -2226,7 +2248,8 @@ def create_app(config):
                 storage_grace_days=_opt_int(request.form.get("storage_grace_days")) or 0,
                 max_messages_per_month=_opt_int(request.form.get("max_messages_per_month")) or 0,
                 max_pending_bytes=_opt_mb(request.form.get("pending_mb")) or 0,
-                pending_expiry_hours=_opt_int(request.form.get("pending_expiry_hours")) or 0)
+                pending_expiry_hours=_opt_int(request.form.get("pending_expiry_hours")) or 0,
+                require_credit=1 if request.form.get("require_credit") else 0)
         return redirect("/billing?tab=plans", 303)
 
     @app.route("/billing/plans/<plan_id>", methods=["POST"])
@@ -2248,6 +2271,7 @@ def create_app(config):
             storage_grace_days=_opt_int(request.form.get("storage_grace_days")),
             max_pending_bytes=_opt_mb(request.form.get("pending_mb")),
             pending_expiry_hours=_opt_int(request.form.get("pending_expiry_hours")),
+            require_credit=1 if request.form.get("require_credit") else 0,
         )
         return redirect("/billing?tab=plans", 303)
 
@@ -3040,9 +3064,10 @@ def create_app(config):
         if not uploads:
             return jsonify({"error": "no files uploaded"}), 400
         account_id = device["account_id"] if "account_id" in device.keys() else None
-        # Zero-rate plans are exempt: only message-metered accounts gate.
+        # Same gate as uploads: plan requires credit (or meters messages)
+        # and the account is not exempt, behind the enforcement switch.
         if account_id and bool(getattr(config, "BILLING_ENFORCEMENT", False)) and \
-                billing.messages_are_metered(g.db, billing.SCOPE_ACCOUNT, account_id):
+                billing.message_credit_gate(g.db, account_id):
             credit = billing.balance(g.db, billing.SCOPE_ACCOUNT, account_id)
             if credit <= 0:
                 return jsonify({"error": "payment required",

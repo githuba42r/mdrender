@@ -40,7 +40,7 @@ else activates it.
 | `PAYPAL_BRAND_NAME` | `MDRender Cloud Push` | Name shown on the PayPal checkout page. |
 | `PAYPAL_TOPUP_MIN_CENTS` | `500` | Minimum one-time top-up (5.00). |
 | `PAYPAL_TOPUP_MAX_CENTS` | `50000` | Maximum one-time top-up (500.00). |
-| `BILLING_ENFORCEMENT` | `false` | When `true`, **metered** usage requires prepaid credit: an account whose plan charges for storage (`storage_cents_per_mb > 0`) is refused uploads at zero credit, one whose plan charges per message (`message_cents_per_1000 > 0`) is refused pushes, and each file in a batch must also fit inside the remaining credit. Zero-rate plans — and accounts with no plan — are exempt, because billing can never charge them; a **paid** server plan with no credit is refused at the doorbell (`402`). Leave `false` until payments are proven end-to-end. |
+| `BILLING_ENFORCEMENT` | `false` | When `true`, prepaid credit is required where the plan says so: an account whose plan meters storage (`storage_cents_per_mb > 0`) or carries the **Always require credit** checkbox is refused uploads at zero credit; one that meters messages (`message_cents_per_1000 > 0`) or requires credit is refused pushes; each file in a batch must also fit inside the remaining credit. Zero-rate plans — and accounts with no plan — are exempt unless the checkbox is set, because billing can never charge them, and a per-account **exemption override** on the User page beats the plan entirely. A **paid** server plan with no credit is refused at the doorbell (`402`). Leave `false` until payments are proven end-to-end. |
 
 ```sh
 export PAYPAL_MODE=sandbox
@@ -76,7 +76,14 @@ for a federation server (non-zero ⇒ that server's doorbell requires prepaid
 credit), while its message/storage rates meter usage into the ledger.
 
 - Free plans (`price_cents = 0`) and zero-rate account plans simply charge
-  nothing; entitlement is decided purely by the credit balance.
+  nothing; with enforcement on they are exempt from the credit gate.
+- **Always require credit** (checkbox, account plans) flips that: accounts
+  on the plan must be in credit to upload or push even when every usage
+  rate is zero. It never disables metering and never bypasses
+  `BILLING_ENFORCEMENT` — it only widens the gate.
+- A single account can be exempted from the gate regardless of plan from
+  its **User → Credit gate** control (usage still meters; only the
+  prepayment requirement is skipped).
 - Changing a plan's price or rates takes effect immediately — there is no
   provider-side plan to re-create.
 
@@ -167,26 +174,34 @@ What each event should do:
 
 ### Enforcement
 
-With `BILLING_ENFORCEMENT=true` (after the flows above pass), a gate
-applies only where the account's effective plan can actually charge —
-**zero-rate plans are exempt**, as is an account with no plan at all:
+With `BILLING_ENFORCEMENT=true` (after the flows above pass), the per-account
+credit gate applies when the account's effective plan says so — it meters the
+operation, or the plan carries **Always require credit** — and the account is
+not exempt:
 
-- **Account uploads** (`POST /api/account/upload`): gated only when
-  `storage_cents_per_mb > 0`. Then `402 payment required` while
-  `balance <= 0`; additionally every file in the batch is costed against
-  the credit (`ceil(bytes / 1 MiB) × storage_cents_per_mb`) and a file
-  that costs more than the balance is refused by name.
-- **Push doorbells** (`POST /api/push`): gated only when
-  `message_cents_per_1000 > 0` (pushes are metered as messages, not
-  storage). Same credit gate and per-file check, so a device cannot be
-  woken without credit behind it.
+- **Account uploads** (`POST /api/account/upload`): gated when
+  `storage_cents_per_mb > 0` **or** `require_credit`. Then
+  `402 payment required` while `balance <= 0`; additionally every file in
+  the batch is costed against the credit (`ceil(bytes / 1 MiB) ×
+  storage_cents_per_mb`) and a file that costs more than the balance is
+  refused by name.
+- **Push doorbells** (`POST /api/push`): gated when
+  `message_cents_per_1000 > 0` **or** `require_credit` (pushes are metered
+  as messages, not storage). Same credit gate and per-file check, so a
+  device cannot be woken without credit behind it.
+- **Account exemption override**: on **Users → *user***, *Exempt from
+  credit gate* clears the gate for that one account **regardless of plan**
+  (uploads and pushes work at zero or negative balance). Usage keeps
+  metering — exemption skips the prepayment check, never the charges.
 - **Federation doorbell** (`POST /api/federation/doorbell`): refused with
   `402 payment required` only when the server's effective plan is paid and
   its prepaid balance is not positive. Free plans are never gated.
 
-To run a free tier with enforcement on, assign a zero-rate plan (both
-rates 0) as the default group's plan: metered plans gate, free plans
-don't.
+Precedence, top down: `BILLING_ENFORCEMENT` (master switch) → account
+exemption override → plan (`require_credit` / metering rates). To run a
+free tier with enforcement on, assign a zero-rate plan without the
+checkbox as the default group's plan: metered or strict plans gate, free
+plans don't.
 
 ## 7. Going live
 
