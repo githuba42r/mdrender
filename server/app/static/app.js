@@ -363,6 +363,25 @@
     }
   });
 
+  // ---- Table labels for the small-screen card layout ----------------------
+  // Below the card breakpoint each table row restacks as label/value blocks;
+  // copy the column headings onto the cells so the templates stay
+  // markup-only. Tables without a thead (key-value pairs) are left alone.
+
+  document.querySelectorAll(".table-wrap table").forEach(function (table) {
+    var heads = Array.prototype.map.call(
+      table.querySelectorAll("thead th"),
+      function (th) { return th.textContent.replace(/\s+/g, " ").trim(); }
+    );
+    if (!heads.length) return;
+    table.querySelectorAll("tbody tr").forEach(function (row) {
+      Array.prototype.forEach.call(row.cells, function (cell) {
+        var head = heads[cell.cellIndex];
+        if (head) cell.setAttribute("data-label", head);
+      });
+    });
+  });
+
   // ---- Billing plan dialog: account-only fields depend on the type --------
 
   var planDialogEl = document.getElementById("plan-dialog");

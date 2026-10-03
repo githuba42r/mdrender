@@ -221,7 +221,7 @@ dl.details {
   margin: 0.6rem 0 0;
 }
 dl.details dt { color: var(--muted); }
-dl.details dd { margin: 0; }
+dl.details dd { margin: 0; overflow-wrap: anywhere; }
 
 /* Inline "label units" field rows (e.g. the billing plan dialog). */
 .field-row {
@@ -246,6 +246,7 @@ dl.details dd { margin: 0; }
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   margin: 1rem 0 1.4rem;
   border-bottom: 1px solid var(--line);
@@ -301,13 +302,23 @@ thead th {
   white-space: nowrap;
 }
 
-tbody td {
+tbody td,
+tbody th {
   padding: 0.72rem 0.9rem;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
 
-tbody tr:last-child td { border-bottom: 0; }
+/* Key-value tables (Status, server details) put the row label in a th. */
+tbody th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.925rem;
+  color: var(--muted);
+}
+
+tbody tr:last-child td,
+tbody tr:last-child th { border-bottom: 0; }
 tbody tr:hover { background: var(--surface-2); }
 
 /* ---- Forms & buttons ---- */
@@ -685,17 +696,74 @@ section.push-group .table-wrap { border: 0; background: transparent; }
 
 @media (max-width: 760px) {
   body { grid-template-columns: 1fr; }
+
+  /* Compact top bar: brand and log out share the first row, the section
+     links become a swipeable strip beneath them. */
   aside.side {
     position: static;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    padding: 1rem;
-    gap: 0.9rem;
+    display: grid;
+    grid-template-columns: auto auto;
+    grid-template-areas: "brand logout" "nav nav";
+    align-items: center;
+    padding: 0.7rem 0.9rem;
+    gap: 0.55rem 0.8rem;
   }
-  .side .logout { margin-top: 0; }
-  .side nav { flex-direction: row; flex-wrap: wrap; }
+  .brand { grid-area: brand; }
+  .side .logout { grid-area: logout; margin-top: 0; justify-self: end; }
+  .side nav {
+    grid-area: nav;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.1rem;
+    overflow-x: auto;
+    min-width: 0;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .side nav::-webkit-scrollbar { display: none; }
+  .side nav a { flex: none; white-space: nowrap; padding: 0.5rem 0.7rem; }
   .side nav a.active::before { display: none; }
+
   main { padding: 1.2rem; }
-  thead th { position: sticky; top: 0; background: var(--surface); }
+
+  /* Data tables restack: each row becomes a block of labelled values
+     (app.js copies the column headings into data-label). Key-value tables
+     without a thead keep their two-column shape; browsers without :has()
+     keep the horizontal scroll fallback. */
+  .table-wrap table:has(thead) { display: block; }
+  .table-wrap table:has(thead) thead { display: none; }
+  .table-wrap table:has(thead) tbody,
+  .table-wrap table:has(thead) tr,
+  .table-wrap table:has(thead) td { display: block; width: 100%; }
+  .table-wrap table:has(thead) tr {
+    padding: 0.6rem 0 0.15rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .table-wrap table:has(thead) tr:last-child { border-bottom: 0; }
+  .table-wrap table:has(thead) td {
+    padding: 0.15rem 1rem;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  .table-wrap table:has(thead) td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 600;
+    margin-bottom: 0.05rem;
+  }
+  .table-wrap table:not(:has(thead)) td { overflow-wrap: anywhere; }
+
+  /* Comfortable tap targets, and 16px fields so iOS Safari does not zoom
+     into an input on focus. */
+  button, .btn { padding: 0.55rem 0.95rem; }
+  button.icon-btn { padding: 0.5rem 0.6rem; }
+  input[type="text"], input[type="email"], input[type="password"],
+  input[type="search"], select { font-size: 16px; }
+
+  .login-card { margin-top: 6vh; padding: 1.3rem 1.2rem; }
 }
