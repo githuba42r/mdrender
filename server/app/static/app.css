@@ -702,6 +702,7 @@ button[disabled], .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
 }
 .acc-when { font-weight: 600; }
 .acc-who { color: var(--muted); overflow-wrap: break-word; min-width: 0; }
+.acc-amt { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
 .acc > summary .chip { flex: none; }
 /* Closed: chevron right; open: chevron down. */
 .acc > summary::after {

@@ -59,21 +59,24 @@
 
 <h2>Payment history</h2>
 {% if ledger %}
-<div class="table-wrap">
-<table>
-  <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Reference</th></tr></thead>
-  <tbody>
-    {% for row in ledger %}
-    <tr>
-      <td>{{ row.created_at | dt }}</td>
-      <td>{{ row.reason or '-' }}</td>
-      <td>{{ row.amount_cents | money }}</td>
-      <td>{% if row.provider_ref %}<code>{{ row.provider_ref[:16] }}…</code>{% else %}<span class="empty">manual</span>{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
+{% for row in ledger %}
+<details class="acc" name="pay-acc">
+  <summary>
+    <span class="acc-lead">
+      <span class="acc-when">{{ row.created_at | dt }}</span>
+    </span>
+    <span class="acc-amt">{{ row.amount_cents | money }}</span>
+  </summary>
+  <div class="acc-body">
+    <dl class="details">
+      <dt>Description</dt>
+      <dd>{{ row.reason or '-' }}</dd>
+      <dt>Reference</dt>
+      <dd>{% if row.provider_ref %}<code>{{ row.provider_ref }}</code>{% else %}<span class="empty">manual</span>{% endif %}</dd>
+    </dl>
+  </div>
+</details>
+{% endfor %}
 {% else %}
 <p class="empty">No payments or usage charges yet.</p>
 {% endif %}
