@@ -16,7 +16,11 @@
       <img class="brand-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="34" height="34">
       <span class="brand-text"><b>MDRender</b><span>Cloud Push</span></span>
     </a>
-    <nav>
+    <button type="button" class="nav-toggle" aria-expanded="false"
+            aria-controls="side-nav" aria-label="Menu">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <nav id="side-nav">
       <a href="/accounts" class="{{ 'active' if request.path.startswith('/accounts') else '' }}">Users</a>
       <a href="/pushes" class="{{ 'active' if request.path.startswith('/pushes') else '' }}">Pushes</a>
       <a href="/pending" class="{{ 'active' if request.path.startswith('/pending') else '' }}">Pending</a>
@@ -37,7 +41,11 @@
       <img class="brand-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="34" height="34">
       <span class="brand-text"><b>MDRender</b><span>{{ account_name or 'My account' }}</span></span>
     </a>
-    <nav>
+    <button type="button" class="nav-toggle" aria-expanded="false"
+            aria-controls="side-nav" aria-label="Menu">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <nav id="side-nav">
       <a href="/account/pair" class="{{ 'active' if request.path.startswith('/account/pair') else '' }}">Pair device</a>
       <a href="/account/devices" class="{{ 'active' if request.path.startswith('/account/devices') else '' }}">Devices</a>
       <a href="/account/clients" class="{{ 'active' if request.path.startswith('/account/clients') else '' }}">Clients</a>

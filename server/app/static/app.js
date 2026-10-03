@@ -363,6 +363,16 @@
     }
   });
 
+  // ---- Small-screen nav (hamburger) ---------------------------------------
+
+  document.querySelectorAll(".nav-toggle").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var open = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", String(!open));
+      btn.closest(".side").classList.toggle("nav-open", !open);
+    });
+  });
+
   // ---- Table labels for the small-screen card layout ----------------------
   // Below the card breakpoint each table row restacks as label/value blocks;
   // copy the column headings onto the cells so the templates stay
