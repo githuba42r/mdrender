@@ -593,6 +593,16 @@ def create_app(config):
         return redirect("/account" if not _is_admin()
                         else _post_login_target())
 
+    @app.route("/terms")
+    def terms_page():
+        """Terms and conditions - legal pages are public, no session."""
+        return render_template("terms.html")
+
+    @app.route("/privacy")
+    def privacy_page():
+        """Privacy policy - legal pages are public, no session."""
+        return render_template("privacy.html")
+
     @app.route("/setup", methods=["GET"])
     def setup_page():
         """First-run admin creation; only while no admin exists."""

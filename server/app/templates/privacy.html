@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Privacy policy &middot; Cloud Push Server{% endblock %}
+{% block content %}
+<h1>Privacy policy</h1>
+<p class="lede">Last updated 3 October 2026. What this server collects, why,
+  and what happens to it &mdash; for MDRender Cloud Push (the &ldquo;Service&rdquo;),
+  operated by this server&rsquo;s operator (the &ldquo;operator&rdquo;).</p>
+
+<h2>1. What we collect</h2>
+<ul>
+  <li><b>Account details</b> &mdash; your email address and a salted hash of
+    your password.</li>
+  <li><b>Devices</b> &mdash; names and models you give them, push tokens,
+    pairing and encryption keys, and activity timestamps.</li>
+  <li><b>Content you send</b> &mdash; messages and files pushed to your
+    devices, including anything waiting to be delivered. Pushes to an
+    encrypted device are end-to-end encrypted and unreadable to the operator.</li>
+  <li><b>Billing records</b> &mdash; orders, top-ups, credit movements, and
+    PayPal transaction identifiers, amounts and dates.</li>
+  <li><b>Technical logs</b> &mdash; IP addresses and request logs, used for
+    security, ban enforcement and diagnosing faults.</li>
+  <li><b>A session cookie</b> &mdash; to keep you signed in.</li>
+</ul>
+
+<h2>2. How it is used</h2>
+<ul>
+  <li>to run the Service: delivering pushes, storing what is pending, and
+    showing your devices, pushes and history;</li>
+  <li>to manage your account and answer support requests;</li>
+  <li>to bill correctly: credit balances, metered usage and payment records;</li>
+  <li>to keep the Service safe: detecting abuse, enforcing bans, and
+    investigating faults.</li>
+</ul>
+
+<h2>3. Payments</h2>
+<p>Payments are handled by PayPal under PayPal&rsquo;s own privacy policy. This
+  server receives only the payment outcome, amount, date and a transaction
+  reference &mdash; card numbers never reach this server.</p>
+
+<h2>4. Sharing</h2>
+<p>Personal data is not sold. It is shared only with PayPal to process
+  payments, with a federated peer server if the operator has federation
+  enabled (limited server metadata: identifier, hostname, public key and
+  last-seen time), and where the operator is legally required to disclose it.</p>
+
+<h2>5. Retention</h2>
+<p>Data is kept while your account is active. Undelivered pushes are purged
+  after they are delivered or expire. Billing records are kept as long as
+  needed for accounting. When an account is deleted, its data is removed
+  within a reasonable period, except records the operator must keep by law.</p>
+
+<h2>6. Security</h2>
+<p>Connections are encrypted with TLS. Passwords are stored as hashes. Where a
+  device is encrypted, pushes and files are end-to-end encrypted so the
+  operator cannot read them. No system is perfectly secure, and the operator
+  cannot guarantee absolute security.</p>
+
+<h2>7. Your choices</h2>
+<p>You can manage your details from the account pages, revoke any paired device
+  at any time, and ask the operator to delete your account. You may also
+  request a copy of the personal data held about you.</p>
+
+<h2>8. Cookies</h2>
+<p>The Service uses a single session cookie to keep you signed in. There are no
+  third-party advertising or tracking cookies on this console.</p>
+
+<h2>9. Changes and contact</h2>
+<p>This policy may be updated from time to time; the date at the top shows when
+  it last changed. Questions about privacy, or requests about your data, go to
+  the operator of this server through the support contact published for this
+  deployment.</p>
+{% endblock %}
