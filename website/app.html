@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MDRender app — the encrypted Android document viewer</title>
+<meta name="description" content="MDRender is an encrypted document viewer for Android: folder browser, Markdown with table of contents, image, text and audio viewers, LocalSend peer-to-peer transfers, app lock and hidden folders. It works with no server at all.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="index.html" aria-label="MDRender home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      <span class="brand-name">MDRender</span>
+    </a>
+    <nav class="head-nav" aria-label="Main">
+      <a href="app.html" aria-current="page">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a class="btn btn-small" href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero hero-page">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <h1>The reader that needs no server.</h1>
+        <p class="lede">Everything MDRender does lives on your phone: an encrypted
+        library, viewers for Markdown, images, text, and audio, and direct transfers
+        with devices on your network. A server is optional — it only adds the ability
+        to push files in from anywhere, with the cloud push master delivering the
+        wake-up to your phone.</p>
+        <div class="cta-row">
+          <a class="btn" href="https://github.com/githuba42r/mdrender/releases">Download the app</a>
+          <a class="btn btn-ghost" href="clients.html">Get the clients</a>
+        </div>
+        <p class="cta-note">Every release ships versioned APKs and source — build a
+        signed install in one command, or sign the release APK with your own keystore.</p>
+      </div>
+      <div class="hero-shot app-hero-shot">
+        <figure class="phone hero-phone-static">
+          <img src="images/app-browser.png" alt="MDRender file browser on Android showing folders and documents in a grid.">
+        </figure>
+        <figure class="phone">
+          <img src="images/app-markdown.png" alt="A Markdown document rendered inside the MDRender app with its table of contents.">
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="standalone">
+    <div class="wrap">
+      <h2>Works without the server</h2>
+      <p class="section-lede">The server is one optional feature — Cloud Push. Cut the
+      network entirely and the app still opens, reads, plays, locks, and transfers.</p>
+      <dl class="cases">
+        <div class="case">
+          <dt>Encrypted storage</dt>
+          <dd>Files are stored encrypted at rest with AES-256 through the Android
+          Keystore; large files live as encrypted blobs on disk, not in the database.
+          A per-file toggle is there for compatibility when you need it.</dd>
+        </div>
+        <div class="case">
+          <dt>File browser</dt>
+          <dd>Folders with breadcrumbs, grid or list view, import from any app's share
+          sheet, multi-select move and delete with conflict handling, thumbnails, and
+          a five-second undo before anything is really gone.</dd>
+        </div>
+        <div class="case">
+          <dt>Viewers</dt>
+          <dd>Markdown renders with a table of contents driven by each folder's
+          <code>INDEX.md</code>; images pinch and swipe; text opens raw; audio plays in
+          the background with lock-screen controls, skip buttons, and a
+          headphones-only mode.</dd>
+        </div>
+        <div class="case">
+          <dt>LocalSend, built in</dt>
+          <dd>An in-app LocalSend server discovers phones and computers on your network
+          and transfers directly — PIN-protected, with skip, replace, or rename on
+          conflicts. No internet, no account, no server in the middle.</dd>
+        </div>
+        <div class="case">
+          <dt>Lock and hide</dt>
+          <dd>App lock on background or screen-off, biometric or PIN on resume, secure
+          screen flag against screenshots in recents, and hidden folders behind a
+          gesture you configure yourself — the shipped default is documented, so set a
+          custom tap sequence for anything that matters.</dd>
+        </div>
+        <div class="case">
+          <dt>Share in and out</dt>
+          <dd>Import from other apps through the share sheet, send files back out
+          plain or as an encrypted blob, with a warning when the file came from a
+          hidden folder.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="band" id="shots">
+    <div class="wrap">
+      <h2>On the phone</h2>
+      <div class="app-shots">
+        <figure class="shot">
+          <span class="phone"><img src="images/app-browser.png" alt="A folder in MDRender opening as a table of contents built from its INDEX.md: preamble, chapter list, and notes."></span>
+          <figcaption>The library — a folder with an <code>INDEX.md</code> opens as a
+          table of contents, chapter links included.</figcaption>
+        </figure>
+        <figure class="shot">
+          <span class="phone"><img src="images/app-markdown.png" alt="Markdown rendered in the app: headings, a numbered list, bullets, and an italic blockquote."></span>
+          <figcaption>Markdown rendered on the page — headings, lists, quotes.</figcaption>
+        </figure>
+        <figure class="shot">
+          <span class="phone"><img src="images/app-push.png" alt="The Cloud Push screen showing 'Not paired with a server yet' and a Pair with server button."></span>
+          <figcaption>Cloud Push — the one feature that wants a server, and only
+          when you pair one.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="download">
+    <div class="wrap run-grid">
+      <div>
+        <h2>Install it</h2>
+        <p>Releases are cut automatically on every push: an APK, the server image, and
+        every client package attached to one GitHub Release. CI has no keystore, so
+        release APKs are unsigned — sign one with your own keystore, or build a
+        ready-to-install debug APK from source.</p>
+        <div class="cta-row">
+          <a class="btn" href="https://github.com/githuba42r/mdrender/releases">GitHub Releases</a>
+          <a class="btn btn-ghost" href="https://github.com/githuba42r/mdrender#build-setup">Build guide</a>
+        </div>
+      </div>
+      <pre class="code" tabindex="0"><code># clone and install a signed debug build
+git clone https://github.com/githuba42r/mdrender
+cd MDRender
+./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk</code></pre>
+    </div>
+  </section>
+
+  <section class="band" id="push">
+    <div class="wrap own-band">
+      <div>
+        <h2>Add Cloud Push when you want it</h2>
+        <p>Pair the app with a server — yours, a friend's, one per office — and
+        <code>mdrender-send</code> or the web console can hand files to your phone from
+        anywhere. The app keeps its keys in the Keystore; with encryption mode on the
+        server only ever sees sealed blobs &mdash; not the file contents, names,
+        folders, or types. Nothing changes about how the app works when it's
+        unpaired.</p>
+        <div class="cta-row">
+          <a class="btn" href="server.html">Run your own server</a>
+          <a class="btn btn-ghost" href="clients.html">Push from your machine</a>
+        </div>
+      </div>
+      <figure class="frame browser">
+        <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pair</span></div>
+        <img src="images/pair-desktop.png" alt="Pair a device page showing an inline QR code ready to be scanned by the app.">
+      </figure>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span class="foot-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      MDRender — source on GitHub · © 2026 Phil Gersekowski. All rights reserved.
+    </span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

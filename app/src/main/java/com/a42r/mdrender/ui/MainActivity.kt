@@ -63,9 +63,9 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         if (localSendPrefs.enabled) {
-            // Starting a dataSync foreground service from onCreate on the main
-            // thread can throw synchronously (e.g. ForegroundServiceStartNotAllowedException
-            // after Android 15's dataSync time limit is exhausted on a restart).
+            // Starting a foreground service from onCreate on the main thread
+            // can throw synchronously (e.g. ForegroundServiceStartNotAllowedException
+            // when the system refuses a start).
             // Defer to a background thread and swallow the failure so a refused
             // start degrades to "receiver unavailable" instead of killing the app.
             Thread {

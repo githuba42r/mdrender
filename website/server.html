@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run your own MDRender push server — Docker, federation, prepaid credit</title>
+<meta name="description" content="One Docker container from ghcr.io: pair your devices, host your own pending downloads, keep pushes end-to-end encrypted, and register your server with the cloud push master under operator consent. Prepaid credit, no subscriptions.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="index.html" aria-label="MDRender home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      <span class="brand-name">MDRender</span>
+    </a>
+    <nav class="head-nav" aria-label="Main">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html" aria-current="page">Server</a>
+      <a class="btn btn-small" href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero hero-page">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <h1>Run your own federated server.</h1>
+        <p class="lede">Your devices. Your clients. Your pending downloads. One Docker
+        container holds the accounts, the QR pairing, and the files waiting to be
+        delivered &mdash; sealed to your phones when encryption is on, so even the box
+        you host can't read them. The app pairs with the cloud push master; your box
+        registers with it too, so pushes reach your phone from anywhere without
+        handing your traffic to anyone else.</p>
+        <div class="cta-row">
+          <a class="btn" href="#quickstart">Start with docker run</a>
+          <a class="btn btn-ghost" href="https://github.com/githuba42r/mdrender/blob/master/server/README.md">Full server guide</a>
+        </div>
+      </div>
+      <div class="hero-shot">
+        <figure class="frame browser hero-browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/users</span></div>
+          <img src="images/accounts-desktop.png" alt="Users page of the console listing accounts with host, device counts, statuses, prepaid balances, and per-row actions.">
+        </figure>
+        <figure class="frame phone hero-phone">
+          <img src="images/billing-mobile.png" alt="Billing at phone width showing prepaid balance, PayPal top-up, and payment history.">
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="quickstart">
+    <div class="wrap run-grid">
+      <div>
+        <h2>Start it in one command</h2>
+        <p>The image is published to GitHub's container registry on every release —
+        <code>ghcr.io/githuba42r/mdrender-server</code>. All state lives in one volume
+        (<code>/data/push</code>): the SQLite database, the server keypair, and the
+        encrypted files waiting for delivery. Back that volume up and you have
+        everything. A box like this runs as a <strong>federated slave</strong>: it
+        holds your accounts and pending files, and registers with the cloud push
+        master, which delivers the wake-ups.</p>
+        <p class="note">The registry serves public pulls anonymously for public
+        repositories; for a private one, <code>docker login ghcr.io</code> with a
+        token that has <code>read:packages</code>.</p>
+        <div class="cta-row">
+          <a class="btn" href="https://github.com/githuba42r/mdrender/pkgs/container/mdrender-server">Image on GHCR</a>
+          <a class="btn btn-ghost" href="https://github.com/githuba42r/mdrender/blob/master/server/docker-compose.example.yml">Compose example</a>
+        </div>
+      </div>
+      <pre class="code" tabindex="0"><code>docker run -d --name mdrender-push \
+  -p 8080:8080 \
+  -v mdrender-data:/data/push \
+  -e SERVER_PASSWORD='choose-a-password' \
+  -e PUSH_PUBLIC_URL='https://push.example.com' \
+  -e ENCRYPTION_MODE=on \
+  ghcr.io/githuba42r/mdrender-server:latest</code></pre>
+    </div>
+  </section>
+
+  <section class="band" id="configure">
+    <div class="wrap">
+      <h2>The settings that matter</h2>
+      <dl class="cases">
+        <div class="case">
+          <dt><code>SERVER_PASSWORD</code></dt>
+          <dd>The password for the browser console. Sign-ins are rate-limited and
+          lock out after repeated failures.</dd>
+        </div>
+        <div class="case">
+          <dt><code>PUSH_PUBLIC_URL</code></dt>
+          <dd>The public URL clients and phones reach you at — also what a federated
+          master probes to verify a slave.</dd>
+        </div>
+        <div class="case">
+          <dt><code>ENCRYPTION_MODE=on</code></dt>
+          <dd>Requires clients to seal every file to the receiving device before
+          upload; the server then stores ciphertext it cannot read. The file name,
+          folder, and type travel inside the sealed envelope, so the operator sees
+          an opaque blob and nothing else — not even the file names.</dd>
+        </div>
+        <div class="case">
+          <dt><code>FCM_SERVER_KEY</code></dt>
+          <dd>Path to a Firebase service-account JSON for wake-up notifications.
+          This is the cloud push master's credential — the master sends every
+          doorbell, for its own accounts and for registered federated servers.
+          Without it your box runs as a federated slave: a store-and-hold relay
+          whose pushes wait on the download endpoints for the app to collect
+          until it registers with the master.</dd>
+        </div>
+        <div class="case">
+          <dt><code>PAYPAL_CLIENT_ID</code> / <code>PAYPAL_CLIENT_SECRET</code></dt>
+          <dd>Activates prepaid top-ups for accounts and paid server plans. One-time
+          orders through PayPal — no subscriptions, no card data on your box.</dd>
+        </div>
+        <div class="case">
+          <dt><code>DELETION_GRACE_DAYS</code></dt>
+          <dd>How long a confirmed account deletion waits before the worker purges it
+          (14 days by default) — long enough to change your mind.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="band" id="screens">
+    <div class="wrap">
+      <h2>The console you get</h2>
+      <div class="gallery">
+        <figure class="frame browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pair</span></div>
+          <img src="images/pair-desktop.png" alt="Pair a device page showing an inline QR code, the server URL, and a waiting-for-scan status.">
+          <figcaption>Pair a device — the QR carries the server URL and public key; it
+          is single-use and expires in fifteen minutes.</figcaption>
+        </figure>
+        <figure class="frame browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/users</span></div>
+          <img src="images/accounts-desktop.png" alt="Users page listing accounts with host, device counts, active status, prepaid balances, and per-row actions.">
+          <figcaption>Users — accounts, paired devices, prepaid balances, and confirmed
+          deletions waiting out their fourteen-day hold.</figcaption>
+        </figure>
+        <figure class="frame browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/account/billing</span></div>
+          <img src="images/billing-desktop.png" alt="Account billing page with prepaid balance, plan and service tiles, a PayPal top-up form, and expandable payment history.">
+          <figcaption>Billing — balance at a glance, a PayPal top-up, and payment
+          history that expands to the PayPal order.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="federation">
+    <div class="wrap split">
+      <div class="split-copy">
+        <h2>Federation: servers that trust each other, one handshake at a time</h2>
+        <p>The app is built around the cloud push master: when you pair your phone, it
+        registers with the master that sends the notifications, and a self-hosted box
+        cannot substitute its own FCM project in its place. That is why a second
+        instance of the same image runs as a <strong>slave</strong>: it hosts its own
+        accounts and devices, then <strong>registers with the master</strong> so its
+        doorbells are relayed to phones it cannot reach itself. And registration is
+        deliberately tiny: the master only ever sees a sealed wake-up ping &mdash;
+        opaque device ids and nothing else. No file contents, names, folders, or
+        types ever leave your box.</p>
+        <ol class="mini-steps">
+          <li><strong>Ask.</strong> The slave signs a connect request with its
+          federation key and sends its operator to the master's consent page.</li>
+          <li><strong>Approve.</strong> The master's operator reviews the server, the
+          plan, and the terms, then issues a single-use code. Declining stops the flow
+          there.</li>
+          <li><strong>Enrol.</strong> The code exchanges over an authenticated
+          endpoint and the master lists the slave as active — revocable at any time,
+          and nothing ever enrols without that approval.</li>
+        </ol>
+        <p class="note">Each approval covers the exact server, address, and public key
+        that were consented to; if any of them change, the operators connect
+        again.</p>
+        <p class="note">A server that has not yet registered with the master stays
+        usable as a store-and-hold relay — pushes wait on the server for the app to
+        collect — but nothing wakes the phone until it enrols with the master.</p>
+      </div>
+      <figure class="frame browser split-shot">
+        <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/federation</span></div>
+        <img src="images/federation-desktop.png" alt="Federation page of a slave server showing master URL field, connection status, last heartbeat, billing plan, and a Connect to a master button.">
+        <figcaption>A slave's federation page: connection state, heartbeat, and the
+        connect button that starts consent.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="payments">
+    <div class="wrap split split-reverse">
+      <div class="split-copy">
+        <h2>Prepaid credit, not subscriptions</h2>
+        <p>If you host for others, the server takes <strong>PayPal top-ups as
+        one-time orders</strong> — no recurring charges, and your box never sees card
+        details. Credit covers metered usage: messages sent and storage held draw the
+        balance down as they are used.</p>
+        <ol class="mini-steps">
+          <li><strong>Top up.</strong> Choose an amount between $5 and $500 and pay
+          through PayPal; the webhook credits the account when the capture lands.</li>
+          <li><strong>Use.</strong> Pushes and uploads draw down the balance against
+          the account's plan, with per-account exemptions for your own devices.</li>
+          <li><strong>Gate.</strong> Plans can require credit, so an account at zero
+          stops at the door while everything already stored stays readable.</li>
+        </ol>
+        <p class="note">Watch it from <strong>Billing → Payments</strong>: gateway
+        state, webhook health, and every top-up order with its provider reference.</p>
+      </div>
+      <div class="split-shots">
+        <figure class="frame browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/billing?tab=payments</span></div>
+          <img src="images/payments-desktop.png" alt="Admin billing payments tab: a connected PayPal gateway notice and a table of top-up orders with amount, status, provider id, and date.">
+          <figcaption>Gateway state and top-up orders, per account.</figcaption>
+        </figure>
+        <figure class="frame phone">
+          <img src="images/billing-mobile.png" alt="Billing page at phone width with prepaid balance, top-up amount field, a Top up with PayPal button, and payment history.">
+          <figcaption>Top-ups from a phone.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="own">
+    <div class="wrap own-band">
+      <div>
+        <h2>Keep the middle of the internet out of it</h2>
+        <p>A push server only has to do three things: remember your devices, hold
+        what's waiting, and wake the phone. Run those three things on your own host
+        and the pending downloads sit on your disk and the encryption keys stay on
+        the devices. The master registers one narrow role: hand it a wake-up ping
+        and it rings your phone — no files, names, folders, or types ever leave
+        your box. Use the master itself for pushes instead, and with encryption
+        mode on even its operator sees only sealed ciphertext — no file contents,
+        names, folders, or types.</p>
+        <div class="cta-row">
+          <a class="btn" href="app.html">Pair the app</a>
+          <a class="btn btn-ghost" href="clients.html">Enrol your clients</a>
+        </div>
+      </div>
+      <figure class="frame browser">
+        <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pending</span></div>
+        <img src="images/pending-desktop.png" alt="The Pending page listing files waiting to be delivered, with sizes, targets, and download controls.">
+      </figure>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span class="foot-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      MDRender — source on GitHub · © 2026 Phil Gersekowski. All rights reserved.
+    </span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

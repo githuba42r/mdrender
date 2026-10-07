@@ -468,4 +468,8 @@ private fun AboutSection(uiState: SettingsUiState) {
         headlineContent = { Text("App version") },
         supportingContent = { Text(uiState.appVersion) }
     )
+    ListItem(
+        headlineContent = { Text("Copyright") },
+        supportingContent = { Text("© 2026 Phil Gersekowski. All rights reserved.") }
+    )
 }

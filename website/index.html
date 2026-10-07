@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MDRender — encrypted documents and a push server you own</title>
+<meta name="description" content="MDRender is an open-source Android document viewer with encrypted storage. The app and its clients work with no server at all; run your own Cloud Push server — registering with the cloud push master — when you want pushes from anywhere.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="index.html" aria-label="MDRender home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      <span class="brand-name">MDRender</span>
+    </a>
+    <nav class="head-nav" aria-label="Main">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a class="btn btn-small" href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <h1>Documents that move between your own devices.</h1>
+        <p class="lede">MDRender is an open-source Android document viewer with
+        encrypted storage. The app works on its own: run standalone with the client
+        and app on the same LAN to transfer files seamlessly from your system to
+        your phone for review, using the common LocalSend protocol — or the
+        included LocalSend client with some additional features. Connect to the
+        Cloud Push Server to send files to a device anywhere. Set up and run your
+        own server for complete privacy and security.</p>
+        <div class="cta-row">
+          <a class="btn" href="app.html">Get the app</a>
+          <a class="btn btn-ghost" href="server.html">Run your own server</a>
+        </div>
+      </div>
+      <div class="hero-shot">
+        <figure class="frame browser hero-browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pushes</span></div>
+          <img src="images/pushes-desktop.png" alt="The Cloud Push console on desktop: push totals per period, a per-account breakdown, and a list of recent pushes with pending status.">
+        </figure>
+        <figure class="frame phone hero-phone">
+          <img src="images/push-mobile-nav.png" alt="The same console at phone width with the navigation menu open: Users, Pushes, Pending, Federation, and the rest.">
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="pillars">
+    <div class="wrap">
+      <h2>Three pieces, each useful alone</h2>
+      <div class="pillars">
+        <a class="pillar" href="app.html">
+          <h3>The app</h3>
+          <p>An encrypted reader for Android: folders, Markdown, images, audio, and
+          peer-to-peer transfers on your network. No account, no server, no
+          connection required.</p>
+          <span class="pillar-link">About the app</span>
+        </a>
+        <a class="pillar" href="clients.html">
+          <h3>The clients</h3>
+          <p><code>mdrender-send</code> for Linux, Windows, and macOS pushes files
+          straight to a phone over your LAN — or enrols once and reaches it from
+          anywhere through your server.</p>
+          <span class="pillar-link">About the clients</span>
+        </a>
+        <a class="pillar" href="server.html">
+          <h3>The server</h3>
+          <p>One Docker container you run: pair devices with a QR code, host pending
+          downloads, link servers into a federation that registers with the cloud
+          push master — which sees only a wake-up ping, never your data. It only
+          ever holds what you told it to hold.</p>
+          <span class="pillar-link">Run your own server</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="how">
+    <div class="wrap">
+      <h2>How a file reaches your pocket</h2>
+      <ol class="steps">
+        <li>
+          <span class="step-num" aria-hidden="true">1</span>
+          <h3>Pair (optional)</h3>
+          <p>Open <code>/pair</code> in a browser and scan the QR with the app. The token is
+          single-use and expires in minutes; the phone registers its own public keys
+          and keeps them in the Android Keystore. Skip this and everything local
+          still works.</p>
+        </li>
+        <li>
+          <span class="step-num" aria-hidden="true">2</span>
+          <h3>Send</h3>
+          <p>From a script or desktop, <code>mdrender-send</code> talks to the phone directly
+          on the LAN. Point it at your server instead and the same command works
+          from anywhere — encrypted to the device when the server demands it.</p>
+        </li>
+        <li>
+          <span class="step-num" aria-hidden="true">3</span>
+          <h3>Open</h3>
+          <p>The phone verifies the signed manifest, downloads the file, and decrypts
+          it on the device. A server with encryption mode on stores only the sealed
+          blob — it relays bytes it cannot read.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band" id="use-cases">
+    <div class="wrap">
+      <h2>Where it fits</h2>
+      <dl class="cases">
+        <div class="case">
+          <dt>Specs and reviews from your coding agents</dt>
+          <dd>You manage AI coding and support agents remotely — through
+          <a href="https://herdr.dev">herdr</a> or tmux attached via
+          <a href="https://github.com/moezakura/mux-pod">MuxPod</a>. When an agent
+          writes a spec, a review, or a support investigation, a skill pushes the
+          document straight to MDRender on your phone — read and approve it there
+          before the spec is implemented or the fault is rectified.</dd>
+        </div>
+        <div class="case">
+          <dt>Read later, on the right screen</dt>
+          <dd>Push a PDF, report, or chapter from your desk browser to the phone in your
+          pocket before you leave — it waits in the encrypted library until you open it.</dd>
+        </div>
+        <div class="case">
+          <dt>A drop box that isn't a cloud drive</dt>
+          <dd>Give a family member or client a server account and they can push files to a
+          paired device you chose, without anyone hosting your documents for you.</dd>
+        </div>
+        <div class="case">
+          <dt>Scripts that talk to your pocket</dt>
+          <dd>Enrol CI jobs, backup scripts, or a NAS once; they push build logs and
+          artefacts to a named device wherever the device is.</dd>
+        </div>
+        <div class="case">
+          <dt>Two offices, one delivery path</dt>
+          <dd>Run a server at each site and federate them: pushes land on either
+          server and still reach the paired phone — each box registers with the
+          master so its doorbells are delivered through one shared setup.</dd>
+        </div>
+        <div class="case">
+          <dt>Same room, no server</dt>
+          <dd>Built-in LocalSend discovers devices on the local network and transfers
+          directly, with a PIN — nothing in between, no account, works offline.</dd>
+        </div>
+        <div class="case">
+          <dt>Push as a service</dt>
+          <dd>Host one server for a group or customer base and charge prepaid credit:
+          accounts, plans, per-device quotas, and gates that close when the balance does.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="band" id="own">
+    <div class="wrap own-band">
+      <div>
+        <h2>Run your own federated server</h2>
+        <p>Your devices. Your clients. Your pending downloads. Host the whole thing
+        yourself — one container, one volume — and keep the privacy of files that
+        never touch a third party: your box registers with the cloud push master,
+        but the master only ever sees a wake-up ping — no data leaves your server.
+        Use the master directly and encryption seals every file end-to-end, so not
+        even its operator can see file names or contents.</p>
+        <div class="cta-row">
+          <a class="btn" href="server.html">Server setup</a>
+          <a class="btn btn-ghost" href="https://github.com/githuba42r/mdrender/blob/master/server/README.md">Server guide</a>
+        </div>
+      </div>
+      <figure class="frame browser">
+        <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/federation</span></div>
+        <img src="images/federation-desktop.png" alt="Federation page of a slave server showing master URL field, connection status, last heartbeat, and a Connect to a master button.">
+      </figure>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span class="foot-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      MDRender — source on GitHub · © 2026 Phil Gersekowski. All rights reserved.
+    </span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

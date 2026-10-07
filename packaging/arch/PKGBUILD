@@ -2,20 +2,21 @@
 # Local package. build.sh stages the tool source beside this file, then runs
 # makepkg; for an AUR package, replace `source` with the repo tarball URL.
 pkgname=mdrender-send
-pkgver=1.1.2
+pkgver=1.1.3
 pkgrel=1
 pkgdesc="Send files to MDRender (or any LocalSend receiver) from the command line"
 arch=('any')
 url="https://github.com/a42r/MDRender"
 license=('custom:Proprietary')
-depends=('python' 'python-cryptography')
+depends=('python' 'python-cryptography' 'curl')
 provides=('localsend-send')
 conflicts=('localsend-send')
-source=("localsend-send.py" "README.md")
-sha256sums=('SKIP' 'SKIP')
+source=("localsend-send.py" "README.md" "push-to-phone.sh")
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 package() {
   install -Dm755 "$srcdir/localsend-send.py" "$pkgdir/usr/bin/mdrender-send"
+  install -Dm755 "$srcdir/push-to-phone.sh" "$pkgdir/usr/bin/mdrender-push"
   install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -d "$pkgdir/usr/share/bash-completion/completions"
   python3 "$srcdir/localsend-send.py" --completion bash \

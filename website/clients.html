@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MDRender clients — mdrender-send for Linux, Windows, macOS</title>
+<meta name="description" content="mdrender-send pushes files to a paired MDRender phone from any machine: direct over the LAN with no server involved, or enrolled once with your own server to push from anywhere — the server registers with the cloud push master for delivery. Packages for Linux, Windows and macOS.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="index.html" aria-label="MDRender home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      <span class="brand-name">MDRender</span>
+    </a>
+    <nav class="head-nav" aria-label="Main">
+      <a href="app.html">App</a>
+      <a href="clients.html" aria-current="page">Clients</a>
+      <a href="server.html">Server</a>
+      <a class="btn btn-small" href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero hero-page">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <h1>Push from any machine you own.</h1>
+        <p class="lede"><code>mdrender-send</code> is the desktop and script client for
+        MDRender. On its own it talks straight to your phone over the network — no
+        server, no account. Enrol it once with a server you host and the same command
+        reaches the phone from anywhere — the server holds the files end-to-end
+        encrypted, and the cloud push master delivers only a wake-up ping once
+        the server has registered with it. No data leaves your server.</p>
+        <div class="cta-row">
+          <a class="btn" href="https://github.com/githuba42r/mdrender/releases">Download clients</a>
+          <a class="btn btn-ghost" href="#usage">See usage</a>
+        </div>
+      </div>
+      <div class="hero-shot">
+        <figure class="frame browser hero-browser">
+          <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/clients</span></div>
+          <img src="images/clients-desktop.png" alt="The server's Clients page listing enrolled clients with revoke controls and registration steps.">
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="packs">
+    <div class="wrap">
+      <h2>Every platform, one release</h2>
+      <p class="section-lede">Each release attaches all the client packages to the same
+      GitHub Release as the APK and the server image — pick your machine.</p>
+      <dl class="cases">
+        <div class="case">
+          <dt>Linux</dt>
+          <dd>A standalone binary plus <code>.deb</code>, <code>.rpm</code>, and Alpine
+          <code>.apk</code> packages built with nfpm, and a native
+          <code>.pkg.tar.zst</code> for Arch's pacman — each installs both
+          <code>mdrender-send</code> and <code>mdrender-push</code>.</dd>
+        </div>
+        <div class="case">
+          <dt>Windows</dt>
+          <dd>An <code>.exe</code> installer built with Inno Setup.</dd>
+        </div>
+        <div class="case">
+          <dt>macOS</dt>
+          <dd>A signed <code>.pkg</code> installer (Developer ID, notarisation-friendly)
+          installing <code>mdrender-send</code> and <code>mdrender-push</code>.</dd>
+        </div>
+      </dl>
+      <div class="cta-row">
+        <a class="btn" href="https://github.com/githuba42r/mdrender/releases">Get them from Releases</a>
+      </div>
+      <p class="note">Prefer the source? The client is a single dependency-free Python
+      file at <code>tools/localsend-send/localsend-send.py</code> — Python 3.8+ runs it as
+     -is; encrypted servers additionally want the <code>cryptography</code> package, which
+      every packaged build already declares.</p>
+    </div>
+  </section>
+
+  <section class="band" id="usage">
+    <div class="wrap">
+      <h2>Without a server: direct on the network</h2>
+      <p class="section-lede">The phone runs a LocalSend server; the client finds it or
+      you point it at the IP. Nothing else is involved — this works fully offline.</p>
+      <pre class="code" tabindex="0"><code># send to a receiver that requires PIN 1964
+mdrender-send --host 10.0.1.226 --pin 1964 notes.md photo.jpg
+
+# into a subfolder, renaming on name conflicts
+mdrender-send --host 10.0.1.226 --pin 1964 --folder "Tax/2025" receipts.pdf
+
+# skip files that already exist on the phone
+mdrender-send --host 10.0.1.226 --pin 1964 --conflict skip *.jpg</code></pre>
+    </div>
+  </section>
+
+  <section class="band" id="cloud">
+    <div class="wrap run-grid">
+      <div>
+        <h2>With your server: push from anywhere</h2>
+        <p>Enrol the machine once — the server hands you a verification link or a
+        six-character code, and the client stores its credentials in
+        <code>~/.config/mdrender/push-credentials.json</code>. After that, targeting a
+        device by name tries the LAN first and falls back to your server, so the same
+        script works at home and on the road. On an encryption-enabled server the
+        payload is sealed to the phone before it ever leaves your machine. Pick a
+        server that has registered with the master — that is who sends the
+        notifications.</p>
+        <p class="note">The server's <strong>Clients</strong> page lists every enrolled
+        client with revoke buttons, and can mint a new enrolment for you.</p>
+      </div>
+      <pre class="code" tabindex="0"><code># one-time enrolment against your server
+mdrender-send --enrol --server https://push.example.com
+
+# list the devices you may send to
+mdrender-send --list
+
+# LAN first, cloud fallback — same command anywhere
+mdrender-send --name "Pixel" report.pdf build.log</code></pre>
+    </div>
+  </section>
+
+  <section class="band" id="scripts">
+    <div class="wrap">
+      <h2>From a cron job or CI</h2>
+      <p class="section-lede">Anything that can read the credentials file can push: the
+      HTTP API is a client-credentials token plus one POST, and the packages ship a
+      shell helper that does exactly that — <code>mdrender-push</code> (cloud push
+      only, no LAN step).</p>
+      <div class="script-grid">
+        <pre class="code" tabindex="0"><code># installed by the Linux/macOS packages
+# (tools/push-to-phone.sh in the repository)
+mdrender-push --target "Pixel" report.pdf</code></pre>
+        <pre class="code" tabindex="0"><code># or the two calls yourself — client_id, client_secret and the
+# server URL all come from the enrolment file
+CREDS=~/.config/mdrender/push-credentials.json
+URL=$(jq -r .server_url "$CREDS")
+
+TOKEN=$(curl -s -d grant_type=client_credentials \
+  -d "client_id=$(jq -r .client_id "$CREDS")" \
+  -d "client_secret=$(jq -r .client_secret "$CREDS")" \
+  "$URL/oauth/token" | jq -r .access_token)
+
+curl -H "Authorization: Bearer $TOKEN" \
+  -F target_device=Pixel \
+  -F file=@report.pdf \
+  "$URL/api/push"</code></pre>
+      </div>
+      <p class="note">Both raw paths — this curl example and
+      <code>mdrender-push</code> — send plaintext payloads: on a server with
+      encryption required they're refused, and the wrapper points you at
+      <code>mdrender-send --cloud</code>, which seals each file to the phone first.</p>
+      <div class="cta-row">
+        <a class="btn" href="https://github.com/githuba42r/mdrender/tree/master/tools">Browse the tools</a>
+        <a class="btn btn-ghost" href="server.html">Run a server for it</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span class="foot-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      MDRender — source on GitHub · © 2026 Phil Gersekowski. All rights reserved.
+    </span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

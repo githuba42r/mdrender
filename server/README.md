@@ -128,11 +128,22 @@ Push clients can list the targets they may send to with
 `{"devices": [{name, registered_at, last_seen}]}` and never the device secret.
 `localsend-send.py --list` uses it.
 
+**Client scope.** A client approved by an account may target only that
+account's devices: `/api/devices` lists just those, and `POST /api/push`,
+`GET /api/push/content-key` and `GET /api/push/<id>/status` answer exactly as
+if a foreign device or push did not exist — a client token cannot enumerate
+device names across accounts. Admin-approved clients (no account) keep the
+every-device scope. Devices paired from `/account/pair` belong to that
+account; admin `/pair` devices belong to no account and are reachable only
+by admin clients.
+
 ## Tool enrolment (CLI)
 
 The browser `/clients` page lists the enrolled clients and shows the steps
 below; it can also mint an enrolment for you with **Register a new client**.
-The flow, which the server already implements:
+Approval from an account binds the resulting client to that account (both
+the browser-approve and the short-code path); an admin approval leaves it
+unbound. The flow, which the server already implements:
 
 ```bash
 # One-time: enrol this machine → writes ~/.config/mdrender/push-credentials.json
@@ -140,6 +151,11 @@ tools/localsend-send/localsend-send.py --enrol --server <url>
 
 # Push files to a paired device by name (LAN first, cloud fallback)
 tools/localsend-send/localsend-send.py --name <device-name> file.pdf
+
+# Cloud push only — no LAN step. Installed as `mdrender-push` by the Linux
+# and macOS packages (tools/push-to-phone.sh in the repository). Refuses
+# with a clear error on encryption-required servers (use mdrender-send --cloud).
+tools/push-to-phone.sh --target <device-name> file.pdf
 ```
 
 Server-side, enrolment is:

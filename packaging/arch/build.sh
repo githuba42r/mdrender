@@ -10,7 +10,8 @@ repo="$(cd "$here/../.." && pwd)"
 
 cp "$repo/tools/localsend-send/localsend-send.py" "$here/localsend-send.py"
 cp "$repo/tools/localsend-send/README.md" "$here/README.md"
-trap 'rm -f "$here/localsend-send.py" "$here/README.md"' EXIT
+cp "$repo/tools/push-to-phone.sh" "$here/push-to-phone.sh"
+trap 'rm -f "$here/localsend-send.py" "$here/README.md" "$here/push-to-phone.sh"' EXIT
 
 cd "$here"
 makepkg -f "$@"

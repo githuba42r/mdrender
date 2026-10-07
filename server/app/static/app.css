@@ -750,6 +750,7 @@ section.push-group .table-wrap { border: 0; background: transparent; }
 }
 .site-footer a { color: var(--muted); }
 .site-footer a:hover { color: var(--text); }
+.site-footer span { color: var(--muted); }
 
 /* ---- Legal pages ---- */
 main ul { margin: 0 0 1rem; padding-left: 1.3rem; }

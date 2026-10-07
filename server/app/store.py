@@ -185,7 +185,8 @@ def set_device_blocked(conn, device_secret, blocked) -> bool:
 
 def list_devices(conn):
     return conn.execute(
-        "SELECT device_secret, device_name, registered_at, last_seen FROM devices ORDER BY registered_at"
+        "SELECT device_secret, device_name, account_id, registered_at, last_seen"
+        " FROM devices ORDER BY registered_at"
     ).fetchall()
 
 

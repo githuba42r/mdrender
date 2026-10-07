@@ -333,7 +333,8 @@ def create_app(config):
         return redirect(f"/admin-login?next={nxt}", 303)
 
     def client_denied():
-        """None when the bearer client is valid and active, else a 401 response.
+        """(None, client_row) when the bearer client is valid and active, else
+        ((response, status), None).
 
         A revoked/deleted client gets a distinct `client_revoked` error so a tool
         can tell its user to re-register instead of retrying forever. The row is
@@ -342,22 +343,43 @@ def create_app(config):
         """
         header = request.headers.get("Authorization", "")
         if not header.startswith("Bearer "):
-            return jsonify({"error": "unauthorized", "detail":
-                            "No client token. Register this client with --enrol."}), 401
+            return (jsonify({"error": "unauthorized", "detail":
+                             "No client token. Register this client with --enrol."}),
+                    401), None
         client_id = validate_access_token(config, header[7:])
         if client_id is None:
-            return jsonify({"error": "unauthorized", "detail":
-                            "Client token missing or expired. Re-register with --enrol."}), 401
+            return (jsonify({"error": "unauthorized", "detail":
+                             "Client token missing or expired. Re-register with --enrol."}),
+                    401), None
         row = get_client(g.db, client_id)
         if row is None or row["revoked_at"] is not None:
-            return jsonify({"error": "client_revoked", "detail":
-                            "This client was removed from the server. "
-                            "Re-register it with --enrol."}), 401
+            return (jsonify({"error": "client_revoked", "detail":
+                             "This client was removed from the server. "
+                             "Re-register it with --enrol."}), 401), None
         if row["blocked_at"] is not None:
-            return jsonify({"error": "client_blocked", "detail":
-                            "This client has been blocked by an administrator. "
-                            "Ask them to unblock it."}), 401
-        return None
+            return (jsonify({"error": "client_blocked", "detail":
+                             "This client has been blocked by an administrator. "
+                             "Ask them to unblock it."}), 401), None
+        return None, row
+
+    def client_may_target(client, device):
+        """True when *client* is allowed to target *device*.
+
+        An account-bound client reaches only devices bound to that same
+        account — never another account's devices, and never admin-paired
+        devices that belong to no account. Admin-unbound clients (operator
+        tooling) keep the every-device scope they have always had. *device*
+        may be None (device gone or unlisted): only an unbound client still
+        passes then.
+        """
+        account_id = client["account_id"] if "account_id" in client.keys() else None
+        if account_id is None:
+            return True
+        if device is None:
+            return False
+        device_account = (device["account_id"]
+                          if "account_id" in device.keys() else None)
+        return device_account == account_id
 
     def _new_code() -> str:
         """Six characters from an unambiguous set, for typing by hand.
@@ -1506,10 +1528,19 @@ def create_app(config):
     @app.route("/enrol/<eid>", methods=["GET"])
     def enrol_page(eid):
         # An admin (CLI tools) or an account (own CLI clients) may approve.
-        if _enrol_actor() is None:
+        actor = _enrol_actor()
+        if actor is None:
             nxt = urllib.parse.quote(request.path, safe="/")
             return redirect(f"/login?next={nxt}", 303)
         entry = app.config["_enrol_keys"].get(eid)
+        # An account reading the enrol page claims the entry for its own
+        # client scope: the short code the page shows then mints a client
+        # bound to that account when the CLI exchanges it at /api/enrol (the
+        # browser-approve path binds at approve time instead). First account
+        # wins; an admin view never claims; a binding can only narrow what
+        # the resulting client may reach.
+        if entry is not None and not entry["approved"] and actor[1] is not None:
+            entry.setdefault("account_id", actor[1])
         if (entry is not None and not entry["approved"]
                 and time.time() > entry["code_expires"]):
             # The code's clock starts when it was minted, but the operator has
@@ -3068,15 +3099,22 @@ def create_app(config):
         """List registered push targets so a client can see where it can send.
 
         Bearer-gated like /api/push; the device secret is never returned.
+        An account-bound client sees only its own account's devices, so the
+        list never becomes a cross-account device-name oracle.
         """
-        denied = client_denied()
+        denied, client = client_denied()
         if denied is not None:
             return denied
+        devices = list_devices(g.db)
+        client_account = (client["account_id"]
+                          if "account_id" in client.keys() else None)
+        if client_account is not None:
+            devices = [r for r in devices if r["account_id"] == client_account]
         return jsonify({"devices": [
             {"name": r["device_name"],
              "registered_at": r["registered_at"],
              "last_seen": r["last_seen"]}
-            for r in list_devices(g.db)
+            for r in devices
         ]})
 
     @app.route("/api/enrol/start", methods=["POST"])
@@ -3151,11 +3189,11 @@ def create_app(config):
         it. Only public material travels here — the server relays keys it
         can never open.
         """
-        denied = client_denied()
+        denied, client = client_denied()
         if denied is not None:
             return denied
         device = get_device_by_name(g.db, request.args.get("device", ""))
-        if device is None:
+        if device is None or not client_may_target(client, device):
             return jsonify({"error": "device not found"}), 404
         if not device["content_pubkey"]:
             return jsonify({"error": "no content key", "detail":
@@ -3170,14 +3208,16 @@ def create_app(config):
 
     @app.route("/api/push", methods=["POST"])
     def api_push():
-        denied = client_denied()
+        denied, client = client_denied()
         if denied is not None:
             return denied
         target_device = request.form.get("target_device")
         if not target_device:
             return jsonify({"error": "device not found"}), 400
         device = get_device_by_name(g.db, target_device)
-        if device is None:
+        # Another account's device answers exactly like one that does not
+        # exist, so a client token cannot enumerate device names.
+        if device is None or not client_may_target(client, device):
             return jsonify({"error": "device not found"}), 400
         if "blocked_at" in device.keys() and device["blocked_at"] is not None:
             return jsonify({"error": "device blocked", "detail":
@@ -3445,9 +3485,15 @@ def create_app(config):
 
     @app.route("/api/push/<push_id>/status", methods=["GET"])
     def push_status(push_id):
-        denied = client_denied()
+        denied, client = client_denied()
         if denied is not None:
             return denied
+        push = push_store.get_push_by_id(g.db, push_id)
+        if push is None or not client_may_target(
+                client, get_device_by_name(g.db, push["target_device"])):
+            # Unknown pushes and other accounts' pushes answer alike: no
+            # file names, no existence signal.
+            return jsonify({"push_id": push_id, "files": []})
         rows = push_store.get_push_files(g.db, push_id)
         return jsonify({"push_id": push_id, "files": [
             {"file_id": r["file_id"], "name": r["file_name"],

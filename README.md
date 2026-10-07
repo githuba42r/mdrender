@@ -172,4 +172,4 @@ Uses Room with schema versioning. Current version: 7. Migration objects in `AppD
 
 ## License
 
-Proprietary — all rights reserved.
+Proprietary — see [LICENSE](LICENSE). All rights reserved.

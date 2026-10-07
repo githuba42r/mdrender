@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — MDRender</title>
+<meta name="description" content="Privacy policy for MDRender: the Android app and any cloud push server it pairs with. What is stored, what is transmitted, how payments work, and your choices.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="brand" href="index.html" aria-label="MDRender home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      <span class="brand-name">MDRender</span>
+    </a>
+    <nav class="head-nav" aria-label="Main">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a class="btn btn-small" href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap legal">
+
+    <h1>Privacy policy</h1>
+    <p class="lede">Last updated 3 October 2026. This policy covers both parts of
+    MDRender: the <strong>Android app</strong> and any <strong>cloud push server</strong>
+    it pairs with (together, the &ldquo;Service&rdquo;). Each server is run by its own
+    operator (the &ldquo;operator&rdquo;).</p>
+
+    <h2>1. The two parts of the Service</h2>
+    <p>The MDRender Android app is a document viewer that runs entirely on your
+    device: your files stay there, encrypted, and the app contains no analytics,
+    advertising, or crash-reporting code. An optional <strong>Cloud Push</strong>
+    feature pairs the app with a cloud push server so the web console and your other
+    devices can deliver notifications and files to it. Pairing is off until you
+    choose it, and can be undone at any time.</p>
+
+    <h2>2. What the Android app does</h2>
+    <ul>
+      <li>Files you import are stored encrypted on the device (AES-256 with keys in
+      the Android Keystore). They are never uploaded, and the app transmits no usage
+      data, analytics, or telemetry.</li>
+      <li>When you pair via Cloud Push, the app sends the server: the pairing code
+      scanned from the QR, the device name and model, a Firebase Cloud Messaging
+      (FCM) registration token so notifications can wake the app, and device public
+      keys for encryption.</li>
+      <li>Notification messages are delivered through Google FCM; the message itself
+      carries no file content, only the cue to fetch. Pushed files are downloaded
+      from the server and decrypted on the device when end-to-end encryption is on
+      &mdash; the server never sees the plaintext.</li>
+      <li>If your server is a self-hosted federated server, it registers with the
+      cloud push master, and the master sees nothing from it but an encrypted
+      wake-up ping with opaque device identifiers. Files and their metadata stay
+      on your server; no data leaves it to the master.</li>
+      <li>The optional LocalSend feature transfers files to devices on your local
+      network only; nothing leaves your network.</li>
+    </ul>
+
+    <h2>3. What the cloud push server collects</h2>
+    <ul>
+      <li><strong>Account details</strong> &mdash; your email address and a salted
+      hash of your password.</li>
+      <li><strong>Devices</strong> &mdash; the names and models you give them when
+      pairing, their FCM tokens, pairing and encryption keys, and activity
+      timestamps.</li>
+      <li><strong>Content you send</strong> &mdash; messages and files pushed to your
+      devices, including anything waiting to be delivered. Pushes to an encrypted
+      device are end-to-end encrypted: the operator sees an unreadable, opaque
+      blob &mdash; not the file contents, names, folders, or types.</li>
+      <li><strong>Billing records</strong> &mdash; orders, top-ups, credit movements,
+      and PayPal transaction identifiers, amounts and dates.</li>
+      <li><strong>Technical logs</strong> &mdash; IP addresses and request logs, used
+      for security, ban enforcement and diagnosing faults.</li>
+      <li><strong>A session cookie</strong> &mdash; to keep you signed in.</li>
+    </ul>
+
+    <h2>4. How it is used</h2>
+    <ul>
+      <li>to run the Service: delivering pushes, storing what is pending, and showing
+      your devices, pushes and history;</li>
+      <li>to manage your account and answer support requests;</li>
+      <li>to bill correctly: credit balances, metered usage and payment records;</li>
+      <li>to keep the Service safe: detecting abuse, enforcing bans, and
+      investigating faults.</li>
+    </ul>
+
+    <h2>5. Payments</h2>
+    <p>Payments are handled by PayPal under PayPal&rsquo;s own privacy policy. The
+    server receives only the payment outcome, amount, date and a transaction
+    reference &mdash; card numbers never reach the server.</p>
+
+    <h2>6. Sharing</h2>
+    <p>Personal data is not sold. It is shared only with Google (FCM delivery of
+    wake-up messages to paired devices, under Google&rsquo;s policies), with PayPal to
+    process payments, with a federated peer server if the operator has federation
+    enabled (limited server metadata: identifier, hostname, public key and last-seen
+    time), and where the operator is legally required to disclose it.</p>
+
+    <h2>7. Retention</h2>
+    <p>The app keeps your files and settings only on your device: deleting them in
+    the app or uninstalling removes them. On the server, data is kept while your
+    account is active. Undelivered pushes are purged after they are delivered or
+    expire. Billing records are kept as long as needed for accounting. When an
+    account is deleted, its data is removed within a reasonable period, except
+    records the operator must keep by law.</p>
+
+    <h2>8. Security</h2>
+    <p>On the device: files are encrypted at rest, backups of app data are disabled,
+    an app lock (biometric or PIN) is available, and the window can be protected
+    from screenshots. On the server: connections are encrypted with TLS, passwords
+    are stored as hashes, and where a device is encrypted, pushes and files are
+    end-to-end encrypted so the operator cannot read them. No system is perfectly
+    secure, and the operator cannot guarantee absolute security.</p>
+
+    <h2>9. Your choices</h2>
+    <p>You can turn Cloud Push off and unpair the device from the app at any time,
+    manage your details from the account pages, revoke any paired device from the
+    server, and ask the operator to delete your account (confirmed by email, held
+    for a grace period, then purged). You may also request a copy of the personal
+    data held about you.</p>
+
+    <h2>10. Cookies</h2>
+    <p>The Service uses a single session cookie to keep you signed in on the web
+    console. There are no third-party advertising or tracking cookies on the
+    console.</p>
+
+    <h2>11. Changes and contact</h2>
+    <p>This policy may be updated from time to time; the date at the top shows when
+    it last changed. Questions about the server, or requests about your data, go to
+    the operator of the server you paired with (each deployment publishes its own
+    support contact). Questions about the Android app may be raised at
+    <a href="https://github.com/githuba42r/mdrender/issues">github.com/githuba42r/mdrender</a>.</p>
+
+    <p class="legal-links">Also see the <a href="terms.html">Terms &amp;
+    conditions</a>.</p>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span class="foot-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z" fill="#E94560"/><rect x="11" y="12" width="10" height="10" rx="1.5" fill="#141420"/><path d="M13.5 14.5v5h1.7v-3l1.8 3h1.7v-5h-1.7v3l-1.8-3z" fill="#E94560"/></svg>
+      MDRender — source on GitHub · © 2026 Phil Gersekowski. All rights reserved.
+    </span>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="app.html">App</a>
+      <a href="clients.html">Clients</a>
+      <a href="server.html">Server</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/githuba42r/mdrender">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -95,6 +95,15 @@ class CloudPushDownloadService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
+    /** Android 15+ dataSync budget (6h per 24h) exhausted mid-download: stop
+     *  within the grace period or the process is killed. The download is
+     *  abandoned via scope.cancel() in onDestroy. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "CloudPush: foreground service timed out; stopping")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()

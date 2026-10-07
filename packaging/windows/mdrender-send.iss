@@ -7,7 +7,7 @@
 ; optionally adding the install dir to the user PATH.
 
 #define AppName "MDRender Send"
-#define AppVersion "1.1.2"
+#define AppVersion "1.1.3"
 #define ExeName "mdrender-send.exe"
 
 [Setup]

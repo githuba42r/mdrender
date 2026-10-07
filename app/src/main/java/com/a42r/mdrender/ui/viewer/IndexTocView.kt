@@ -67,13 +67,8 @@ fun parseIndexToc(markdown: String): IndexTocData {
     }
 
     val preambleEnd = if (separatorIndices.isNotEmpty()) separatorIndices.first() else lines.size
-    val notesStart = if (separatorIndices.size >= 2) separatorIndices.last() + 1 else lines.size
 
     val preambleLines = lines.take(preambleEnd)
-    val tableLines = lines.subList(preambleEnd + 1, notesStart - 1).let { sub ->
-        if (preambleEnd == lines.size) emptyList() else sub
-    }
-    // Actually handle the case more carefully:
     val tableContent: List<String>
     val notesLines: List<String>
     when (separatorIndices.size) {

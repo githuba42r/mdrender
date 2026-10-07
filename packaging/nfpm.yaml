@@ -6,20 +6,26 @@
 name: mdrender-send
 arch: all
 platform: linux
-version: "1.1.2"
+version: "1.1.3"
 section: utils
 priority: optional
 maintainer: Phil Gersekowski <philg@aspedia.net>
 description: |
   Send files to MDRender (or any LocalSend receiver) from the command line.
-  LAN discovery, local DNS resolution, and cloud-push.
+  LAN discovery, local DNS resolution, and cloud-push. Installs mdrender-send
+  and mdrender-push (cloud push only).
 license: Proprietary
 depends:
   - python3
   - python3-cryptography
+  - curl
 contents:
   - src: tools/localsend-send/localsend-send.py
     dst: /usr/bin/mdrender-send
+    file_info:
+      mode: 0755
+  - src: tools/push-to-phone.sh
+    dst: /usr/bin/mdrender-push
     file_info:
       mode: 0755
   - src: tools/localsend-send/README.md

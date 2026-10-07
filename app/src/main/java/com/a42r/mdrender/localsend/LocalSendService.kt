@@ -134,6 +134,16 @@ class LocalSendService : Service() {
         return START_STICKY
     }
 
+    /** Android 15+ calls this when a time-limited foreground service type runs
+     *  out of budget; the service must stop within seconds or the process is
+     *  killed with ForegroundServiceDidNotStopInTimeException. connectedDevice
+     *  has no such limit today, but stop gracefully if the platform adds one. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timed out (type $fgsType); stopping receiver")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
         scope.cancel()
         server?.stop()
@@ -143,10 +153,12 @@ class LocalSendService : Service() {
         super.onDestroy()
     }
 
-    /** Promotes the service to foreground. Returns false (and stops the service)
-     *  when the system refuses, e.g. Android 15+ dataSync time limit exhausted on
-     *  a restart. A thrown exception here would become "Unable to create service"
-     *  → process death, so it is caught and converted to a graceful stop. */
+    /** Promotes the service to foreground as connectedDevice — the receiver is a
+     *  long-lived LAN endpoint, and dataSync is capped at 6h per 24h on Android
+     *  15+. Returns false (and stops the service) when the system refuses, e.g. a
+     *  background start restriction. A thrown exception here would become "Unable
+     *  to create service" → process death, so it is caught and converted to a
+     *  graceful stop. */
     private fun startInForeground(): Boolean {
         val openApp = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
@@ -161,7 +173,7 @@ class LocalSendService : Service() {
             .build()
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIF_ID_STATUS, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                startForeground(NOTIF_ID_STATUS, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
             } else {
                 startForeground(NOTIF_ID_STATUS, notification)
             }
