@@ -28,7 +28,12 @@ def main():
     from waitress import serve
     # Headroom for long-lived Server-Sent Event streams (pairing page) alongside
     # ordinary requests; waitress keeps each stream on its own thread.
-    serve(app, host=host, port=int(port), threads=24)
+    # Waitress clears X-Forwarded-*/Forwarded as "untrusted" unless it is told
+    # to trust the hop itself, so ProxyFix would never see the proxy chain.
+    # With TRUST_PROXY on (loopback nginx that overwrites the headers), let
+    # them through; direct deployments keep waitress's safe default.
+    serve(app, host=host, port=int(port), threads=24,
+          clear_untrusted_proxy_headers=not config.TRUST_PROXY)
 
 
 if __name__ == "__main__":
