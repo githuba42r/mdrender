@@ -20,6 +20,10 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 SCOPE = "https://www.googleapis.com/auth/identitytoolkit"
 ACCOUNTS = "https://identitytoolkit.googleapis.com/v1/projects/{project}/accounts"
+# signUp is the one call that is *not* project-scoped: the
+# .../projects/{project}/accounts:signUp path 404s, and the API key (which
+# belongs to this project) selects the project on the global endpoint.
+SIGNUP = "https://identitytoolkit.googleapis.com/v1/accounts:signUp"
 _token_cache = {"token": None, "expires": 0.0}
 
 
@@ -136,11 +140,13 @@ def create_user(config, *, email, display_name=None):
     """
     if not _project(config):
         return None, "identity provider not configured"
+    key = getattr(config, "FIREBASE_API_KEY", "")
+    if not key:
+        return None, "FIREBASE_API_KEY not configured"
     payload = {"email": email, "returnSecureToken": False}
     if display_name:
         payload["displayName"] = display_name
-    result, error = _post(config, f"{ACCOUNTS.format(project=_project(config))}:signUp",
-                          payload)
+    result, error = _post(config, f"{SIGNUP}?key={key}", payload)
     if error:
         return None, error
     uid = (result or {}).get("localId")
