@@ -19,6 +19,7 @@ import qrcode
 from flask import (Flask, Response, g, jsonify, make_response, redirect,
                    render_template, request, send_file)
 from qrcode.image.svg import SvgPathImage
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from cryptography.hazmat.primitives import serialization
 
@@ -116,6 +117,13 @@ def encryption_required(config) -> bool:
 
 def create_app(config):
     app = Flask(__name__)
+    if getattr(config, "TRUST_PROXY", False):
+        # Behind the reverse proxy: nginx overwrites X-Forwarded-For with the
+        # real client IP it vouched for (realip) and X-Forwarded-Proto with
+        # the connection scheme, so the last entry is authoritative. Without
+        # this, request.remote_addr is the proxy's 127.0.0.1 and bans,
+        # GeoIP and the login lockout all key on the wrong address.
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
     db = Database(config.DB_PATH)
     with db.connect() as conn:

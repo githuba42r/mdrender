@@ -38,6 +38,10 @@ DEFAULTS = {
     "STORAGE_BILL_AFTER_HOURS": 1,    # bill storage once pending longer than this
     "BAN_ENFORCEMENT": True,
     "BILLING_ENFORCEMENT": False,
+    # Trust X-Forwarded-For / X-Forwarded-Proto from the reverse proxy. Only
+    # safe when every request arrives through a proxy that *overwrites* those
+    # headers (our loopback nginx) — never when the app is reachable directly.
+    "TRUST_PROXY": False,
     # Identity provider for account logins: "local" (default) or a hosted IdP
     # such as "firebase". Admins always use local username/password.
     "IDENTITY_PROVIDER": "local",
@@ -119,7 +123,8 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "PAYPAL_TOPUP_MAX_CENTS"):
             env[k] = int(env[k])
     for flag in ("BAN_ENFORCEMENT", "BILLING_ENFORCEMENT", "FEDERATION_ENABLED",
-                 "ADMIN_FIREBASE_LOGIN", "PAYPAL_VERIFY_WEBHOOKS"):
+                 "ADMIN_FIREBASE_LOGIN", "PAYPAL_VERIFY_WEBHOOKS",
+                 "TRUST_PROXY"):
         env[flag] = str(env.get(flag, DEFAULTS.get(flag, False))).lower() in (
             "1", "true", "yes", "on")
     if overrides:

@@ -86,6 +86,7 @@ All configuration is via environment variables. Defaults come from
 | `SMTP_USER` / `SMTP_PASSWORD` | *(empty)* | SMTP credentials (optional for unauthenticated relays). |
 | `SMTP_FROM` | *(empty)* | From address; falls back to `SMTP_USER`, then `no-reply@localhost`. |
 | `BILLING_ENFORCEMENT` | `false` | When `true`, the plan decides who needs prepaid credit: storage-metered accounts (or plans with **Always require credit**) are refused uploads at zero credit (`402`), message-metered accounts are refused pushes, and each file must fit the credit too. Zero-rate plans (and planless accounts) are exempt unless the checkbox is set; a per-account exemption override on the User page beats the plan (metering still runs). A paid server plan with no credit is refused at the doorbell (`402`). |
+| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` / `X-Forwarded-Proto` from the reverse proxy (`request.remote_addr` then becomes the real client, not the proxy). Set `true` **only** when every request reaches the app through a proxy that *overwrites* those headers (our loopback nginx does) — never when the app is reachable directly, or clients can forge their own IP for bans and the login lockout. |
 | `PAYPAL_MODE` | `sandbox` | PayPal API host: `sandbox` or `live`. |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal REST app credentials; both set ⇒ payments enabled (see [PayPal setup](#paypal-setup)). |
 | `PAYPAL_WEBHOOK_ID` | *(empty)* | Webhook id from the PayPal app, needed to verify event signatures. |
