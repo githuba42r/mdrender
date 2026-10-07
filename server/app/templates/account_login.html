@@ -22,13 +22,14 @@
   <p class="lede">Sign in with a social account, phone code, or magic email link.</p>
   {% set auth_action = 'signin' %}{% set auth_next = next %}
   {% include "_firebase_auth.html" %}
-  {% if signup_open %}<p class="login-foot">No account? <a href="/signup{% if next %}?next={{ next | urlencode }}{% endif %}">Create one</a>.</p>{% endif %}
+  <div class="divider"><span>or sign in with your server password</span></div>
   {% else %}
   <p class="lede">Sign in with your email to manage your devices and pending files.</p>
+  {% endif %}
   <form method="POST" action="/login">
     <input type="hidden" name="next" value="{{ next }}">
     <label for="email">Email</label>
-    <div class="field"><input type="text" id="email" name="email" autocomplete="email" autofocus required></div>
+    <div class="field"><input type="text" id="email" name="email" autocomplete="email"{% if not firebase %} autofocus{% endif %} required></div>
     <label for="password">Password</label>
     <div class="field"><input type="password" id="password" name="password" autocomplete="current-password" required></div>
     {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
@@ -36,6 +37,5 @@
   </form>
   {% if signup_open %}<p class="login-foot">No account? <a href="/signup{% if next %}?next={{ next | urlencode }}{% endif %}">Create one</a>.</p>{% endif %}
   <p class="login-foot">Operator? <a href="/admin-login{% if next %}?next={{ next | urlencode }}{% endif %}">Administrator sign-in</a>.</p>
-  {% endif %}
 </div>
 {% endblock %}
