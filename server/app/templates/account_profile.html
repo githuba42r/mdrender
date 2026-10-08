@@ -59,9 +59,14 @@
   </ul>
   {% endif %}
   {% if 'email_link' in firebase.providers %}
-  <p class="lede">Add another email address to sign in with:</p>
-  {% set email_only = true %}
-  {% include "_firebase_auth.html" %}
+  <p><button type="button" class="btn" data-open-dialog="#add-email-dialog">Add another email</button></p>
+  <dialog id="add-email-dialog" class="confirm">
+    <h2>Add another email</h2>
+    <p>Send a sign-in link to the address you want to add. Opening it links
+      that email to this account.</p>
+    {% set email_only = true %}
+    {% include "_firebase_auth.html" %}
+  </dialog>
   {% endif %}
 {% else %}
 <p class="lede">Link this account to a sign-in so you can come back with an

@@ -55,8 +55,8 @@ def test_profile_offers_linking_when_firebase_is_enabled(config, db_path):
     assert b'window.__FIREBASE_ACTION__ = "link"' in page
     assert b"mdrenderGoogle()" in page
     assert b"Send link" in page
-    # The add-another-email form belongs to the linked state only.
-    assert b"Add another email address" not in page
+    # The add-another-email button belongs to the linked state only.
+    assert b"Add another email" not in page
 
 
 def test_profile_shows_the_linked_status(config, db_path):
@@ -74,20 +74,26 @@ def test_profile_lists_linked_methods_and_hides_options(config, db_path,
     monkeypatch.setattr(identity_admin, "available", lambda config: True)
     monkeypatch.setattr(identity_admin, "get_user", lambda config, uid: ({
         "localId": uid,
+        "phoneNumber": "+61400000001",
         "providerData": [
             {"providerId": "google.com", "email": "philg@gmail.com"},
             {"providerId": "password", "email": "user@example.com"},
         ]}, None))
     page = client.get("/account/profile").data
 
-    # Each method Firebase holds is listed with its address.
+    # Each method Firebase holds is listed with its address: emails, the
+    # mobile number (from the user record) and the Google account.
     assert b"philg@gmail.com" in page
     assert b"Email &amp; password" in page
+    assert b"+61400000001" in page
+    # Every row can be removed.
+    assert b'action="/account/link/remove"' in page
     # The general link options are withheld while linked: only the
-    # add-another-email send remains.
+    # add-another-email button (opening its dialog) remains.
     assert b"mdrenderGoogle()" not in page
     assert b"Link this account to a sign-in" not in page
-    assert b"Add another email address" in page
+    assert b"Add another email</button>" in page
+    assert b'id="add-email-dialog"' in page
     assert b"mdrenderSend()" in page
 
 
@@ -103,7 +109,7 @@ def test_profile_falls_back_when_the_lookup_fails(config, db_path,
     # even though the method list is unknown.
     assert b"Linked to your sign-in account." in page
     assert b"mdrenderGoogle()" not in page
-    assert b"Add another email address" in page
+    assert b"Add another email</button>" in page
 
 
 def test_profile_hides_linking_without_firebase(config, db_path):

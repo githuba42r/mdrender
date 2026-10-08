@@ -115,7 +115,13 @@
     (function () {
       if (!new URLSearchParams(window.location.search).has("oobCode")) return;
       var busy = document.getElementById("auth-busy");
-      if (busy) busy.hidden = false;
+      if (busy) {
+        busy.hidden = false;
+        /* The block can live inside a dialog (add-another-email): open it so
+           the completion spinner is actually visible. */
+        var host = busy.closest("dialog");
+        if (host && !host.open) host.showModal();
+      }
       setTimeout(function () { if (busy) busy.hidden = true; }, 20000);
     })();
   </script>

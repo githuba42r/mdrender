@@ -625,10 +625,16 @@ button.social {
 }
 button.social:hover { border-color: var(--accent); }
 
-/* Linked sign-in methods listed on the profile page. */
+/* Linked sign-in methods listed on the profile page: identity on the left,
+   Remove pushed to the row's right edge. */
 .linked-signins { margin: 0 0 1rem; padding-left: 1.1rem; }
-.linked-signins li { margin: 0.3rem 0; }
-.linked-signins form.inline { margin: 0 0 0 0.5rem; }
+.linked-signins li {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.45rem 0;
+}
+.linked-signins form.inline { margin: 0 0 0 auto; }
 .linked-signins .btn { padding: 0.15rem 0.55rem; font-size: 0.8rem; }
 .login-msg { margin: 0.9rem 0 0; font-size: 0.88rem; color: var(--muted); }
 .login-msg:empty { display: none; }

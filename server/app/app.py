@@ -1120,6 +1120,12 @@ def create_app(config):
                 if row not in seen:
                     seen.add(row)
                     rows.append(row)
+            # The mobile number often lives on the user record rather than in
+            # providerData — surface it either way.
+            phone = (user.get("phoneNumber") or "").strip()
+            if phone and ("Phone", phone, uid) not in seen:
+                seen.add(("Phone", phone, uid))
+                rows.append(("Phone", phone, uid))
         return rows
 
     @app.route("/account/profile", methods=["GET"])
