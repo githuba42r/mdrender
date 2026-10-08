@@ -25,7 +25,8 @@ from cryptography.hazmat.primitives import serialization
 
 from server.app import (accounts, bans, billing, crypto, data_export,
                         deletions, encryption, events,
-                        federation, federation_client, fcm as fcm_mod, geoip,
+                        federation, federation_client, fcm as fcm_mod,
+                        firebase_signin, geoip,
                         identity_admin, mail, oidc, pairing, paypal,
                         push_store,
                         releases, settings, storage, trigger)
@@ -583,6 +584,14 @@ def create_app(config):
         firebase = None
         if api_key and auth_domain and (getattr(config, "IDENTITY_PROVIDER", "local")
                                         == "firebase"):
+            # The console, not the config, decides whether SMS login works:
+            # when Firebase refuses phone sign-in, drop it from the offered
+            # methods so the form says "Email", not "Email or phone number"
+            # (firebase_signin probes and caches the answer; None = unknown,
+            # keep the configured list).
+            if "phone" in providers and \
+                    firebase_signin.phone_allowed(api_key) is False:
+                providers = [p for p in providers if p != "phone"]
             firebase = {"apiKey": api_key, "authDomain": auth_domain,
                         "projectId": project,
                         "appId": getattr(config, "FIREBASE_APP_ID", ""),

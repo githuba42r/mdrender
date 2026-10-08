@@ -25,6 +25,19 @@ def _offline_releases(monkeypatch):
     monkeypatch.setattr(releases, "_fetch", _offline)
 
 
+@pytest.fixture(autouse=True)
+def _offline_firebase_signin(monkeypatch):
+    """Keep tests off the network: login pages probe phone sign-in availability.
+
+    Stubbed as "unknown" so tests fail open to the configured FIREBASE_PROVIDERS;
+    the discovery behaviour itself is tested in test_firebase_signin_probe.py.
+    """
+    from server.app import firebase_signin
+
+    monkeypatch.setattr(firebase_signin, "_cache", {"at": 0.0, "allowed": None})
+    monkeypatch.setattr(firebase_signin, "_fetch", lambda api_key: None)
+
+
 @pytest.fixture()
 def config(db_path):
     from server.app.config import load_config
