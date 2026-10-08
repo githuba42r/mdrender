@@ -65,11 +65,16 @@ def account_zip(conn, config, account_id) -> tuple[bytes, str]:
                    " AND account_id = ? ORDER BY created_at", (account_id,))
     deletions = _rows(conn, "SELECT * FROM account_deletions WHERE account_id = ?",
                       (account_id,))
+    signins = _rows(conn,
+                    "SELECT link_id, firebase_uid, email, created_at"
+                    " FROM account_firebase_links WHERE account_id = ?",
+                    (account_id,))
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         _add_json(zf, "account.json", {"account": account, "plan": plan,
                                        "group": group,
+                                       "signins": signins,
                                        "balance_cents": billing.balance(
                                            conn, billing.SCOPE_ACCOUNT,
                                            account_id)})

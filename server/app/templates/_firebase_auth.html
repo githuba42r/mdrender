@@ -7,20 +7,22 @@
    "link" mode the ID token binds to the signed-in account at POST
    /account/link instead of opening a session. Arriving from an email
    magic link (an `oobCode` in the URL) swaps the form for a completion
-   spinner until the sign-in finishes. `linked_providers` (provider ids
-   Firebase already holds for the signed-in user) greys those social methods
-   out with a "linked" note instead of offering them again. #}
+   spinner until the sign-in finishes. `email_only` narrows the block to the
+   email-link send alone — used on an already-linked account's profile, where
+   the only option offered is adding another email. #}
 {% set auth_action = auth_action | default('signin') %}
 {% set auth_next = auth_next | default('') %}
-{% set linked_providers = linked_providers | default([]) %}
+{% set email_only = email_only | default(false) %}
 {% set providers = firebase.providers if firebase else [] %}
+{% if email_only %}
+  {# Hide every other method from both the markup and the JS. #}
+  {% set providers = ['email_link'] %}
+{% endif %}
 {% set can_email = 'email_link' in providers %}
 {% set can_phone = 'phone' in providers %}
 {% set can_password = 'password' in providers %}
 {% set can_google = 'google' in providers %}
 {% set can_github = 'github' in providers %}
-{% set google_linked = 'google.com' in linked_providers %}
-{% set github_linked = 'github.com' in linked_providers %}
 {% set has_social = can_google or can_github %}
 
 {% macro google_icon() %}
@@ -73,8 +75,8 @@
 
   <div id="auth-email-link-panel" hidden>
     <p class="login-alt">Every account needs an email. Add one to finish.</p>
-    {% if can_google and not google_linked %}<button type="button" class="social" onclick="mdrenderAttachGoogle()">{{ google_icon() }} Google</button>{% endif %}
-    {% if can_github and not github_linked %}<button type="button" class="social" onclick="mdrenderAttachGithub()">{{ github_icon() }} GitHub</button>{% endif %}
+    {% if can_google %}<button type="button" class="social" onclick="mdrenderAttachGoogle()">{{ google_icon() }} Google</button>{% endif %}
+    {% if can_github %}<button type="button" class="social" onclick="mdrenderAttachGithub()">{{ github_icon() }} GitHub</button>{% endif %}
     <label for="attach-email">Email</label>
     <div class="field"><input type="text" id="attach-email" autocomplete="email" onkeydown="if(event.key==='Enter'){mdrenderAttachEmail();return false;}"></div>
     <label for="attach-password">Password (6+)</label>
@@ -85,20 +87,8 @@
   {% if has_social %}
   <div class="divider"><span>or continue with</span></div>
   <div class="social-row">
-    {% if can_google %}
-      {% if google_linked %}
-      <button type="button" class="social" disabled title="Google is already linked to this account.">{{ google_icon() }} Google &middot; linked</button>
-      {% else %}
-      <button type="button" class="social" onclick="mdrenderGoogle()">{{ google_icon() }} Google</button>
-      {% endif %}
-    {% endif %}
-    {% if can_github %}
-      {% if github_linked %}
-      <button type="button" class="social" disabled title="GitHub is already linked to this account.">{{ github_icon() }} GitHub &middot; linked</button>
-      {% else %}
-      <button type="button" class="social" onclick="mdrenderGithub()">{{ github_icon() }} GitHub</button>
-      {% endif %}
-    {% endif %}
+    {% if can_google %}<button type="button" class="social" onclick="mdrenderGoogle()">{{ google_icon() }} Google</button>{% endif %}
+    {% if can_github %}<button type="button" class="social" onclick="mdrenderGithub()">{{ github_icon() }} GitHub</button>{% endif %}
   </div>
   {% endif %}
 

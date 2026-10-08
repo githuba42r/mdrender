@@ -68,13 +68,61 @@ def get_account_by_phone(conn, phone):
 def get_account_by_firebase_uid(conn, uid):
     if not uid:
         return None
-    return conn.execute("SELECT * FROM accounts WHERE firebase_uid = ?",
-                        (uid,)).fetchone()
+    row = conn.execute("SELECT * FROM accounts WHERE firebase_uid = ?",
+                       (uid,)).fetchone()
+    if row is not None:
+        return row
+    return conn.execute(
+        "SELECT a.* FROM accounts a"
+        " JOIN account_firebase_links l ON l.account_id = a.account_id"
+        " WHERE l.firebase_uid = ?", (uid,)).fetchone()
 
 
 def set_firebase_uid(conn, account_id, uid) -> None:
     conn.execute("UPDATE accounts SET firebase_uid = ? WHERE account_id = ?",
                  (uid, account_id))
+    conn.commit()
+
+
+def firebase_links(conn, account_id):
+    """Additional Firebase identities bound to an account.
+
+    The account's primary identity lives in accounts.firebase_uid, not here.
+    """
+    return conn.execute(
+        "SELECT * FROM account_firebase_links WHERE account_id = ?"
+        " ORDER BY link_id", (account_id,)).fetchall()
+
+
+def add_firebase_link(conn, account_id, uid, email=None) -> None:
+    """Bind one more Firebase identity to the account (idempotent)."""
+    conn.execute(
+        "INSERT OR IGNORE INTO account_firebase_links"
+        " (account_id, firebase_uid, email, created_at) VALUES (?, ?, ?, ?)",
+        (account_id, uid, email, int(time.time())))
+    conn.commit()
+
+
+def remove_firebase_link(conn, account_id, uid) -> None:
+    """Unbind an identity. Removing the primary promotes the oldest link."""
+    conn.execute(
+        "DELETE FROM account_firebase_links WHERE account_id = ?"
+        " AND firebase_uid = ?", (account_id, uid))
+    row = conn.execute("SELECT firebase_uid FROM accounts WHERE account_id = ?",
+                       (account_id,)).fetchone()
+    if row is not None and row["firebase_uid"] == uid:
+        nxt = conn.execute(
+            "SELECT firebase_uid FROM account_firebase_links"
+            " WHERE account_id = ? ORDER BY link_id LIMIT 1",
+            (account_id,)).fetchone()
+        promoted = nxt["firebase_uid"] if nxt else None
+        conn.execute("UPDATE accounts SET firebase_uid = ? WHERE account_id = ?",
+                     (promoted, account_id))
+        if promoted is not None:
+            # A promoted identity lives in the primary column only.
+            conn.execute(
+                "DELETE FROM account_firebase_links WHERE account_id = ?"
+                " AND firebase_uid = ?", (account_id, promoted))
     conn.commit()
 
 

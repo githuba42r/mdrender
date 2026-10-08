@@ -16,10 +16,12 @@
   <div class="field"><input type="text" id="email" name="email" autocomplete="email" value="{{ account.email or '' }}" required></div>
   <label for="phone">Phone</label>
   <div class="field"><input type="text" id="phone" name="phone" autocomplete="tel" value="{{ account.phone or '' }}" placeholder="+61 400 000 000"></div>
-  <button type="submit" class="btn-primary">Save changes</button>
+  <div class="form-actions">
+    <button type="submit" class="btn-primary">Save changes</button>
+    <button type="button" class="btn" data-open-dialog="#password-dialog">Change password</button>
+  </div>
 </form>
 {% if ok == 'password-saved' %}<p class="login-msg">Password updated.</p>{% endif %}
-<p><button type="button" class="btn" data-open-dialog="#password-dialog">Change password</button></p>
 
 <dialog id="password-dialog" class="confirm">
   <form method="POST" action="/account/password" data-validate>
@@ -39,24 +41,34 @@
 {% if request.args.get('linked') %}
 <p class="login-msg">Sign-in account linked.</p>
 {% endif %}
-{% if linked_signins %}
-<p class="lede">You can sign in with:</p>
-<ul class="linked-signins">
-  {% for label, ident in linked_signins %}
-  <li><strong>{{ label }}</strong>{% if ident %} &mdash; {{ ident }}{% endif %}</li>
-  {% endfor %}
-</ul>
-<p class="lede">Link another method below to sign in with it next time:</p>
-{% elif account.firebase_uid %}
-<p class="lede">Linked to your sign-in account. Link another method below to
-  sign in with it next time:</p>
+{% set auth_action = 'link' %}{% set auth_next = '/account/profile' %}
+{% if account.firebase_uid %}
+  {% if linked_signins %}
+  <p class="lede">Linked &mdash; you can sign in with:</p>
+  <ul class="linked-signins">
+    {% for label, ident, uid in linked_signins %}
+    <li><strong>{{ label }}</strong>{% if ident %} &mdash; {{ ident }}{% endif %}
+      <form method="POST" action="/account/link/remove" class="inline"
+            data-confirm="Remove this sign-in method? You can link it again at any time."
+            data-confirm-ok="Remove">
+        <input type="hidden" name="firebase_uid" value="{{ uid }}">
+        <button type="submit" class="btn">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if 'email_link' in firebase.providers %}
+  <p class="lede">Add another email address to sign in with:</p>
+  {% set email_only = true %}
+  {% include "_firebase_auth.html" %}
+  {% endif %}
 {% else %}
 <p class="lede">Link this account to a sign-in so you can come back with an
   email link, a password, or a social account. Your local password keeps
   working either way:</p>
-{% endif %}
-{% set auth_action = 'link' %}{% set auth_next = '/account/profile' %}
 {% include "_firebase_auth.html" %}
+{% endif %}
 {% endif %}
 
 <h2>Export and deletion</h2>

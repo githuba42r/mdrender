@@ -1089,30 +1089,38 @@ def create_app(config):
     }
 
     def _linked_signins(account):
-        """What Firebase has linked to this account -> (rows, provider ids).
+        """(label, address, uid) rows for every Firebase identity bound here.
 
-        Best effort: without a uid, credentials or a working lookup the page
-        falls back to its plain "Linked to your sign-in account." wording.
+        Best effort: without identities, credentials or a working lookup the
+        page falls back to its plain wording and still offers the add form.
         """
-        uid = account["firebase_uid"]
-        if not uid or not identity_admin.available(config):
-            return [], []
-        try:
-            user, err = identity_admin.get_user(config, uid)
-        except Exception:  # noqa: BLE001
-            return [], []
-        if err or not user:
-            return [], []
-        rows, ids = [], []
-        for provider in user.get("providerData") or []:
-            pid = provider.get("providerId") or ""
-            if not pid:
+        if not identity_admin.available(config):
+            return []
+        uids = []
+        if account["firebase_uid"]:
+            uids.append(account["firebase_uid"])
+        uids.extend(r["firebase_uid"] for r in
+                    accounts.firebase_links(g.db, account["account_id"])
+                    if r["firebase_uid"] != account["firebase_uid"])
+        rows, seen = [], set()
+        for uid in uids:
+            try:
+                user, err = identity_admin.get_user(config, uid)
+            except Exception:  # noqa: BLE001
                 continue
-            ids.append(pid)
-            ident = provider.get("email") or (
-                provider.get("rawId") or "" if pid == "phone" else "")
-            rows.append((_PROVIDER_LABELS.get(pid, pid), ident))
-        return rows, ids
+            if err or not user:
+                continue
+            for provider in user.get("providerData") or []:
+                pid = provider.get("providerId") or ""
+                if not pid:
+                    continue
+                ident = provider.get("email") or (
+                    provider.get("rawId") or "" if pid == "phone" else "")
+                row = (_PROVIDER_LABELS.get(pid, pid), ident, uid)
+                if row not in seen:
+                    seen.add(row)
+                    rows.append(row)
+        return rows
 
     @app.route("/account/profile", methods=["GET"])
     def account_profile():
@@ -1121,11 +1129,9 @@ def create_app(config):
         if auth_error:
             return auth_error
         account = accounts.get_account(g.db, _principal()["id"])
-        linked_signins, linked_providers = _linked_signins(account)
         return render_template("account_profile.html", account=account,
                                ok=request.args.get("ok", ""),
-                               linked_signins=linked_signins,
-                               linked_providers=linked_providers)
+                               linked_signins=_linked_signins(account))
 
     @app.route("/account/profile", methods=["POST"])
     def account_profile_update():
@@ -1269,10 +1275,12 @@ def create_app(config):
 
         The browser runs a Firebase sign-in (magic link, password, or a social
         provider) and posts the ID token here; the account is bound by `sub`
-        (uid), so a later email change cannot re-target it. An identity already
-        bound elsewhere - another account, or an administrator - is refused,
-        and a token that merely *matches* this account's email is still bound
-        only by its uid.
+        (uid), so a later email change cannot re-target it. The FIRST identity
+        binds as the account's primary; further identities append as links, so
+        adding an email never unlinks the method already in place. An identity
+        already bound elsewhere - another account, or an administrator - is
+        refused, and a token that merely *matches* this account's email is
+        still bound only by its uid.
         """
         principal = _principal()
         if principal is None or principal["type"] != "account":
@@ -1303,8 +1311,28 @@ def create_app(config):
             other = accounts.get_account_by_email(g.db, email)
             if other is not None and other["account_id"] != account_id:
                 return jsonify({"error": "that email belongs to another account"}), 409
-        accounts.set_firebase_uid(g.db, account_id, uid)
+        if account["firebase_uid"] == uid:
+            return jsonify({"ok": True, "uid": uid})
+        if account["firebase_uid"]:
+            accounts.add_firebase_link(g.db, account_id, uid, email=email)
+        else:
+            accounts.set_firebase_uid(g.db, account_id, uid)
         return jsonify({"ok": True, "uid": uid})
+
+    @app.route("/account/link/remove", methods=["POST"])
+    def account_link_remove():
+        """Unbind a Firebase identity from the signed-in account.
+
+        Scoped to the caller's own account: `remove_firebase_link` matches on
+        (account_id, uid), so a foreign identity is a silent no-op.
+        """
+        auth_error = require_account_form("/account/profile")
+        if auth_error:
+            return auth_error
+        uid = (request.form.get("firebase_uid") or "").strip()
+        if uid:
+            accounts.remove_firebase_link(g.db, _principal()["id"], uid)
+        return redirect("/account/profile", 303)
 
     @app.route("/account/pushes", methods=["GET"])
     def account_pushes():
@@ -2919,7 +2947,14 @@ def create_app(config):
             _assign_signup_group(account_id, (data.get("affiliate_code") or "").strip())
             account = accounts.get_account(g.db, account_id)
         elif uid and account["firebase_uid"] != uid:
-            accounts.set_firebase_uid(g.db, account["account_id"], uid)
+            if account["firebase_uid"]:
+                # Already linked: this identity joins as an extra link rather
+                # than re-targeting the primary (e.g. signing in through a
+                # second linked email).
+                accounts.add_firebase_link(g.db, account["account_id"], uid,
+                                           email=email)
+            else:
+                accounts.set_firebase_uid(g.db, account["account_id"], uid)
         if account["status"] != accounts.ACTIVE:
             return jsonify({"error": f"account {account['status']}"}), 403
         accounts.touch_login(g.db, account["account_id"])

@@ -55,6 +55,8 @@ def test_profile_offers_linking_when_firebase_is_enabled(config, db_path):
     assert b'window.__FIREBASE_ACTION__ = "link"' in page
     assert b"mdrenderGoogle()" in page
     assert b"Send link" in page
+    # The add-another-email form belongs to the linked state only.
+    assert b"Add another email address" not in page
 
 
 def test_profile_shows_the_linked_status(config, db_path):
@@ -65,8 +67,8 @@ def test_profile_shows_the_linked_status(config, db_path):
     assert b"Sign-in account linked." not in page  # until ?linked=1
 
 
-def test_profile_lists_linked_methods_and_disables_google(config, db_path,
-                                                          monkeypatch):
+def test_profile_lists_linked_methods_and_hides_options(config, db_path,
+                                                        monkeypatch):
     app = _app(config, **_firebase(config))
     client, _ = _account(app, uid="uid-linked")
     monkeypatch.setattr(identity_admin, "available", lambda config: True)
@@ -81,9 +83,12 @@ def test_profile_lists_linked_methods_and_disables_google(config, db_path,
     # Each method Firebase holds is listed with its address.
     assert b"philg@gmail.com" in page
     assert b"Email &amp; password" in page
-    # Google is already linked: its link button is disabled, not offered.
+    # The general link options are withheld while linked: only the
+    # add-another-email send remains.
     assert b"mdrenderGoogle()" not in page
-    assert b"Google &middot; linked" in page
+    assert b"Link this account to a sign-in" not in page
+    assert b"Add another email address" in page
+    assert b"mdrenderSend()" in page
 
 
 def test_profile_falls_back_when_the_lookup_fails(config, db_path,
@@ -94,10 +99,11 @@ def test_profile_falls_back_when_the_lookup_fails(config, db_path,
     monkeypatch.setattr(identity_admin, "get_user",
                         lambda config, uid: (None, "PERMISSION_DENIED"))
     page = client.get("/account/profile").data
-    # The plain wording stands in, and the social buttons stay usable — the
-    # already-linked message from Firebase covers a late double-link attempt.
+    # The plain linked wording stands in — and the link options stay withheld
+    # even though the method list is unknown.
     assert b"Linked to your sign-in account." in page
-    assert b"mdrenderGoogle()" in page
+    assert b"mdrenderGoogle()" not in page
+    assert b"Add another email address" in page
 
 
 def test_profile_hides_linking_without_firebase(config, db_path):
@@ -185,6 +191,96 @@ def test_account_link_ignores_an_unverified_email(config, db_path, monkeypatch):
     assert resp.status_code == 200
     with app.config["_db"].connect() as conn:
         assert accounts.get_account(conn, account_id)["firebase_uid"] == "uid-1"
+
+
+def test_account_link_appends_a_second_identity(config, db_path, monkeypatch):
+    app = _app(config, **_firebase(config))
+    client, account_id = _account(app, uid="uid-1")
+    monkeypatch.setattr(
+        oidc, "verify_firebase_id_token",
+        lambda config, token, **k: _claims(sub="uid-2",
+                                           email="second@example.com"))
+
+    resp = client.post("/account/link", json={"id_token": "x"})
+    assert resp.status_code == 200
+    with app.config["_db"].connect() as conn:
+        # The first identity stays primary; the new one joins as a link.
+        assert accounts.get_account(conn, account_id)["firebase_uid"] == "uid-1"
+        assert [r["firebase_uid"]
+                for r in accounts.firebase_links(conn, account_id)] == ["uid-2"]
+        # Both identities resolve to this account.
+        for uid in ("uid-1", "uid-2"):
+            found = accounts.get_account_by_firebase_uid(conn, uid)
+            assert found is not None and found["account_id"] == account_id
+
+    # Re-running the same link is idempotent.
+    again = client.post("/account/link", json={"id_token": "x"})
+    assert again.status_code == 200
+    with app.config["_db"].connect() as conn:
+        assert len(accounts.firebase_links(conn, account_id)) == 1
+
+
+def test_oidc_signs_in_through_a_linked_identity(config, db_path, monkeypatch):
+    app = _app(config, **_firebase(config))
+    _, account_id = _account(app, uid="uid-1")
+    with app.config["_db"].connect() as conn:
+        accounts.add_firebase_link(conn, account_id, "uid-2")
+    monkeypatch.setattr(
+        oidc, "verify_firebase_id_token",
+        lambda config, token, **k: _claims(sub="uid-2"))
+
+    client = app.test_client()
+    resp = client.post("/auth/oidc", json={"id_token": "x"})
+    assert resp.status_code == 200
+    assert client.get("/account/profile").status_code == 200
+    with app.config["_db"].connect() as conn:
+        # Signing in through a link never re-targets the primary.
+        assert accounts.get_account(conn, account_id)["firebase_uid"] == "uid-1"
+        assert [r["firebase_uid"]
+                for r in accounts.firebase_links(conn, account_id)] == ["uid-2"]
+
+
+def test_remove_unlinks_and_the_options_return(config, db_path):
+    app = _app(config, **_firebase(config))
+    client, account_id = _account(app, uid="uid-1")
+    with app.config["_db"].connect() as conn:
+        accounts.add_firebase_link(conn, account_id, "uid-2")
+
+    # Removing a secondary link leaves the primary alone.
+    assert client.post("/account/link/remove",
+                       data={"firebase_uid": "uid-2"}).status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id)["firebase_uid"] == "uid-1"
+        assert accounts.firebase_links(conn, account_id) == []
+
+    # Removing the primary with a link remaining promotes that link.
+    with app.config["_db"].connect() as conn:
+        accounts.add_firebase_link(conn, account_id, "uid-3")
+    client.post("/account/link/remove", data={"firebase_uid": "uid-1"})
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id)["firebase_uid"] == "uid-3"
+        assert accounts.firebase_links(conn, account_id) == []
+
+    # With everything unlinked, the full link options are offered again.
+    client.post("/account/link/remove", data={"firebase_uid": "uid-3"})
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id)["firebase_uid"] is None
+    page = client.get("/account/profile").data
+    assert b"Link this account to a sign-in" in page
+    assert b"mdrenderGoogle()" in page
+
+
+def test_link_removal_needs_a_session(config, db_path):
+    app = _app(config, **_firebase(config))
+    with app.config["_db"].connect() as conn:
+        account_id = accounts.create_account(conn, "nobody@example.com",
+                                             "longenough1")
+        accounts.set_firebase_uid(conn, account_id, "uid-x")
+    resp = app.test_client().post("/account/link/remove",
+                                  data={"firebase_uid": "uid-x"})
+    assert resp.status_code == 303 and "/account/login" in resp.headers["Location"]
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id)["firebase_uid"] == "uid-x"
 
 
 # ---- Users page: indicator + Sync to Firebase ------------------------------

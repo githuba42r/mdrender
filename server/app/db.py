@@ -173,6 +173,15 @@ CREATE TABLE IF NOT EXISTS account_quotas (
   max_files INTEGER,
   max_age_hours INTEGER
 );
+CREATE TABLE IF NOT EXISTS account_firebase_links (
+  link_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL,
+  firebase_uid TEXT NOT NULL UNIQUE,
+  email TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_account_firebase_links_account
+  ON account_firebase_links(account_id);
 CREATE TABLE IF NOT EXISTS account_keys (
   account_id TEXT PRIMARY KEY,
   public_key TEXT NOT NULL,
