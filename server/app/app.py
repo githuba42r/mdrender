@@ -1103,6 +1103,14 @@ def create_app(config):
                     accounts.firebase_links(g.db, account["account_id"])
                     if r["firebase_uid"] != account["firebase_uid"])
         rows, seen = [], set()
+
+        def _email_label(user):
+            # A magic-link-only user carries providerId "password" too; say
+            # what you can actually sign in with.
+            if user.get("emailLinkSignin") and not user.get("passwordUpdatedAt"):
+                return "Email link"
+            return "Email & password"
+
         for uid in uids:
             try:
                 user, err = identity_admin.get_user(config, uid)
@@ -1110,22 +1118,37 @@ def create_app(config):
                 continue
             if err or not user:
                 continue
-            for provider in user.get("providerData") or []:
+            # The raw REST lookup calls it providerUserInfo; the Admin SDK
+            # maps that to providerData. Accept either.
+            provs = (user.get("providerData") or user.get("providerUserInfo")
+                     or [])
+            for provider in provs:
                 pid = provider.get("providerId") or ""
                 if not pid:
                     continue
-                ident = provider.get("email") or (
-                    provider.get("rawId") or "" if pid == "phone" else "")
-                row = (_PROVIDER_LABELS.get(pid, pid), ident, uid)
+                ident = provider.get("email") or ""
+                if not ident and pid in ("phone", "password"):
+                    ident = provider.get("rawId") or ""
+                label = (_email_label(user) if pid == "password"
+                         else _PROVIDER_LABELS.get(pid, pid))
+                row = (label, ident, uid)
                 if row not in seen:
                     seen.add(row)
                     rows.append(row)
             # The mobile number often lives on the user record rather than in
-            # providerData — surface it either way.
+            # the provider list — surface it either way.
             phone = (user.get("phoneNumber") or "").strip()
             if phone and ("Phone", phone, uid) not in seen:
                 seen.add(("Phone", phone, uid))
                 rows.append(("Phone", phone, uid))
+            # Likewise the primary email, if no provider row already carries it.
+            email = (user.get("email") or "").strip()
+            if email:
+                row = (_email_label(user), email, uid)
+                if row not in seen and not any(
+                        r[1] == email and r[2] == uid for r in rows):
+                    seen.add(row)
+                    rows.append(row)
         return rows
 
     @app.route("/account/profile", methods=["GET"])

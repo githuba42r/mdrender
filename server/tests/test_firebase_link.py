@@ -74,8 +74,9 @@ def test_profile_lists_linked_methods_and_hides_options(config, db_path,
     monkeypatch.setattr(identity_admin, "available", lambda config: True)
     monkeypatch.setattr(identity_admin, "get_user", lambda config, uid: ({
         "localId": uid,
+        "email": "user@example.com",
         "phoneNumber": "+61400000001",
-        "providerData": [
+        "providerUserInfo": [
             {"providerId": "google.com", "email": "philg@gmail.com"},
             {"providerId": "password", "email": "user@example.com"},
         ]}, None))
@@ -110,6 +111,25 @@ def test_profile_falls_back_when_the_lookup_fails(config, db_path,
     assert b"Linked to your sign-in account." in page
     assert b"mdrenderGoogle()" not in page
     assert b"Add another email</button>" in page
+
+
+def test_profile_labels_a_magic_link_identity(config, db_path, monkeypatch):
+    """The raw lookup shape (providerUserInfo, rawId) renders too, and a
+    link-only user is labelled for the sign-in it actually offers."""
+    app = _app(config, **_firebase(config))
+    client, _ = _account(app, uid="uid-linked")
+    monkeypatch.setattr(identity_admin, "available", lambda config: True)
+    monkeypatch.setattr(identity_admin, "get_user", lambda config, uid: ({
+        "localId": uid,
+        "email": "magic@example.com",
+        "emailLinkSignin": True,
+        "providerUserInfo": [
+            {"providerId": "password", "rawId": "magic@example.com"},
+        ]}, None))
+    page = client.get("/account/profile").data
+    assert b"Email link" in page
+    assert b"magic@example.com" in page
+    assert b"Email &amp; password" not in page
 
 
 def test_profile_hides_linking_without_firebase(config, db_path):
