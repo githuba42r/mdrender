@@ -16,18 +16,38 @@
   <div class="field"><input type="text" id="email" name="email" autocomplete="email" value="{{ account.email or '' }}" required></div>
   <label for="phone">Phone</label>
   <div class="field"><input type="text" id="phone" name="phone" autocomplete="tel" value="{{ account.phone or '' }}" placeholder="+61 400 000 000"></div>
-  <label for="password">New password (leave blank to keep)</label>
-  <div class="field"><input type="password" id="password" name="password" autocomplete="new-password"></div>
-  <label for="password_confirm">Confirm new password</label>
-  <div class="field"><input type="password" id="password_confirm" name="password_confirm" autocomplete="new-password"></div>
   <button type="submit" class="btn-primary">Save changes</button>
 </form>
+{% if ok == 'password-saved' %}<p class="login-msg">Password updated.</p>{% endif %}
+<p><button type="button" class="btn" data-open-dialog="#password-dialog">Change password</button></p>
+
+<dialog id="password-dialog" class="confirm">
+  <form method="POST" action="/account/password" data-validate>
+    <h2>Change password</h2>
+    <label for="chg-password">New password</label>
+    <div class="field"><input type="password" id="chg-password" name="password" autocomplete="new-password" required minlength="8"></div>
+    <label for="chg-password-confirm">Confirm new password</label>
+    <div class="field"><input type="password" id="chg-password-confirm" name="password_confirm" autocomplete="new-password" required></div>
+    <div class="confirm-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn-primary">Save password</button>
+    </div>
+  </form>
+</dialog>
 {% if firebase %}
 <h2>Sign-in linking</h2>
 {% if request.args.get('linked') %}
 <p class="login-msg">Sign-in account linked.</p>
 {% endif %}
-{% if account.firebase_uid %}
+{% if linked_signins %}
+<p class="lede">You can sign in with:</p>
+<ul class="linked-signins">
+  {% for label, ident in linked_signins %}
+  <li><strong>{{ label }}</strong>{% if ident %} &mdash; {{ ident }}{% endif %}</li>
+  {% endfor %}
+</ul>
+<p class="lede">Link another method below to sign in with it next time:</p>
+{% elif account.firebase_uid %}
 <p class="lede">Linked to your sign-in account. Link another method below to
   sign in with it next time:</p>
 {% else %}

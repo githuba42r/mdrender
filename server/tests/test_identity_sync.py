@@ -47,19 +47,35 @@ def test_profile_writes_through_to_firebase(config, db_path, monkeypatch):
                         lambda config, uid, **f: (calls.append((uid, f)), ({"localId": uid}, None))[1])
 
     resp = c.post("/account/profile", data={
-        "name": "Sam", "email": "sam@example.com", "phone": "+61400000000",
-        "password": "newpassword1", "password_confirm": "newpassword1"})
+        "name": "Sam", "email": "sam@example.com", "phone": "+61400000000"})
     assert resp.status_code == 303
     uid, fields = calls[0]
     assert uid == "uid-1"
     assert fields["email"] == "sam@example.com" and fields["emailVerified"] is False
     assert fields["phoneNumber"] == "+61400000000"
     assert fields["displayName"] == "Sam"
-    assert fields["password"] == "newpassword1"
+    assert "password" not in fields  # passwords travel via /account/password
 
     with app.config["_db"].connect() as conn:
         account = accounts.get_account(conn, account_id)
     assert account["email"] == "sam@example.com" and account["phone"] == "+61400000000"
+
+
+def test_password_change_writes_through_to_firebase(config, db_path, monkeypatch):
+    app = _app(config)
+    c, account_id = _account(app, uid="uid-1")
+    calls = []
+    monkeypatch.setattr(identity_admin, "available", lambda config: True)
+    monkeypatch.setattr(identity_admin, "update_user",
+                        lambda config, uid, **f: (calls.append((uid, f)), ({"localId": uid}, None))[1])
+
+    resp = c.post("/account/password", data={
+        "password": "newpassword1", "password_confirm": "newpassword1"})
+    assert resp.status_code == 303
+    assert calls == [("uid-1", {"password": "newpassword1"})]
+    with app.config["_db"].connect() as conn:
+        assert accounts.verify_account_password(
+            conn, "user@example.com", "newpassword1") == account_id
 
 
 def test_identity_change_blocks_when_firebase_rejects(config, db_path, monkeypatch):

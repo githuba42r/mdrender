@@ -121,7 +121,8 @@
         if (!input.value.trim()) ok = false;
       });
       var pw = form.querySelector('input[name="password"]');
-      var confirmPw = form.querySelector('input[name="confirm_password"]');
+      var confirmPw = form.querySelector(
+        'input[name="confirm_password"], input[name="password_confirm"]');
       if (pw && confirmPw && pw.value !== confirmPw.value) ok = false;
       if (submit) submit.disabled = !ok;
     }

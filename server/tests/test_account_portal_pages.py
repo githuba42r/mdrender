@@ -94,16 +94,19 @@ def test_profile_rejects_an_admin_email(config, db_path):
     assert resp.status_code == 400
 
 
-def test_profile_password_change_needs_a_matching_confirm(config, db_path):
+def test_password_change_lives_behind_a_dialog(config, db_path):
     app = _app(config)
     c, account_id = _account(app)
 
-    # The page offers a confirm field alongside the new-password field.
-    assert b'name="password_confirm"' in c.get("/account/profile").data
+    # The account-info form no longer carries the password fields; they sit
+    # in a Change-password dialog posted to their own route.
+    page = c.get("/account/profile").data
+    assert b'name="password_confirm"' in page
+    assert b'data-open-dialog="#password-dialog"' in page
+    assert b'action="/account/password"' in page
 
     # A mismatch is refused before anything is written.
-    resp = c.post("/account/profile", data={
-        "name": "Sam", "email": "user@example.com", "phone": "",
+    resp = c.post("/account/password", data={
         "password": "newpassword1", "password_confirm": "different"})
     assert resp.status_code == 400
     assert b"The passwords do not match." in resp.data
@@ -111,14 +114,29 @@ def test_profile_password_change_needs_a_matching_confirm(config, db_path):
         assert accounts.verify_account_password(
             conn, "user@example.com", "newpassword1") is None
 
+    # Short passwords are refused outright.
+    resp = c.post("/account/password", data={
+        "password": "short", "password_confirm": "short"})
+    assert resp.status_code == 400 and b"8+ characters" in resp.data
+
     # Matching fields land the change and the new password signs in.
-    ok = c.post("/account/profile", data={
-        "name": "Sam", "email": "user@example.com", "phone": "",
+    ok = c.post("/account/password", data={
         "password": "newpassword1", "password_confirm": "newpassword1"})
     assert ok.status_code == 303
+    assert ok.headers["Location"] == "/account/profile?ok=password-saved"
     with app.config["_db"].connect() as conn:
         assert accounts.verify_account_password(
             conn, "user@example.com", "newpassword1") == account_id
+
+    # The confirmation message reaches the page.
+    assert b"Password updated." in c.get(ok.headers["Location"]).data
+
+    # The account-info form still saves identity fields on its own.
+    resp = c.post("/account/profile", data={
+        "name": "Sam", "email": "user@example.com", "phone": ""})
+    assert resp.status_code == 303
+    with app.config["_db"].connect() as conn:
+        assert accounts.get_account(conn, account_id)["name"] == "Sam"
 
 
 def test_pushes_and_pending_are_account_scoped(config, db_path):

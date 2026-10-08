@@ -47,6 +47,8 @@ const ERRORS = {
   "auth/too-many-requests": "Too many attempts — please try again later.",
   "auth/quota-exceeded": "Today's sign-in email limit is used up (free Firebase projects get 5 a day). It resets at midnight Pacific — use the password tab until then.",
   "auth/popup-closed-by-user": "The sign-in popup was closed before finishing.",
+  "auth/provider-already-linked": "That sign-in method is already linked to this account.",
+  "auth/credential-already-in-use": "That sign-in method is already linked to this account.",
   "auth/invalid-verification-code": "That code is not correct.",
   "auth/code-expired": "That code has expired — request a new one.",
   "auth/network-request-failed": "Network error — check your connection.",

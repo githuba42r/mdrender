@@ -65,6 +65,41 @@ def test_profile_shows_the_linked_status(config, db_path):
     assert b"Sign-in account linked." not in page  # until ?linked=1
 
 
+def test_profile_lists_linked_methods_and_disables_google(config, db_path,
+                                                          monkeypatch):
+    app = _app(config, **_firebase(config))
+    client, _ = _account(app, uid="uid-linked")
+    monkeypatch.setattr(identity_admin, "available", lambda config: True)
+    monkeypatch.setattr(identity_admin, "get_user", lambda config, uid: ({
+        "localId": uid,
+        "providerData": [
+            {"providerId": "google.com", "email": "philg@gmail.com"},
+            {"providerId": "password", "email": "user@example.com"},
+        ]}, None))
+    page = client.get("/account/profile").data
+
+    # Each method Firebase holds is listed with its address.
+    assert b"philg@gmail.com" in page
+    assert b"Email &amp; password" in page
+    # Google is already linked: its link button is disabled, not offered.
+    assert b"mdrenderGoogle()" not in page
+    assert b"Google &middot; linked" in page
+
+
+def test_profile_falls_back_when_the_lookup_fails(config, db_path,
+                                                  monkeypatch):
+    app = _app(config, **_firebase(config))
+    client, _ = _account(app, uid="uid-linked")
+    monkeypatch.setattr(identity_admin, "available", lambda config: True)
+    monkeypatch.setattr(identity_admin, "get_user",
+                        lambda config, uid: (None, "PERMISSION_DENIED"))
+    page = client.get("/account/profile").data
+    # The plain wording stands in, and the social buttons stay usable — the
+    # already-linked message from Firebase covers a late double-link attempt.
+    assert b"Linked to your sign-in account." in page
+    assert b"mdrenderGoogle()" in page
+
+
 def test_profile_hides_linking_without_firebase(config, db_path):
     app = _app(config)  # local provider, as on the slave
     client, _ = _account(app)

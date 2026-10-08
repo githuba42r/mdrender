@@ -1076,15 +1076,56 @@ def create_app(config):
         revoke_access_tokens(client_id)
         return redirect("/account/clients", 303)
 
+    _PROVIDER_LABELS = {
+        "google.com": "Google",
+        "github.com": "GitHub",
+        "password": "Email & password",
+        "phone": "Phone",
+        "facebook.com": "Facebook",
+        "apple.com": "Apple",
+        "twitter.com": "Twitter",
+        "yahoo.com": "Yahoo",
+        "microsoft.com": "Microsoft",
+    }
+
+    def _linked_signins(account):
+        """What Firebase has linked to this account -> (rows, provider ids).
+
+        Best effort: without a uid, credentials or a working lookup the page
+        falls back to its plain "Linked to your sign-in account." wording.
+        """
+        uid = account["firebase_uid"]
+        if not uid or not identity_admin.available(config):
+            return [], []
+        try:
+            user, err = identity_admin.get_user(config, uid)
+        except Exception:  # noqa: BLE001
+            return [], []
+        if err or not user:
+            return [], []
+        rows, ids = [], []
+        for provider in user.get("providerData") or []:
+            pid = provider.get("providerId") or ""
+            if not pid:
+                continue
+            ids.append(pid)
+            ident = provider.get("email") or (
+                provider.get("rawId") or "" if pid == "phone" else "")
+            rows.append((_PROVIDER_LABELS.get(pid, pid), ident))
+        return rows, ids
+
     @app.route("/account/profile", methods=["GET"])
     def account_profile():
-        """Account info: name, email, phone and password."""
+        """Account info: name, contact details and linked sign-in methods."""
         auth_error = require_account_session()
         if auth_error:
             return auth_error
         account = accounts.get_account(g.db, _principal()["id"])
+        linked_signins, linked_providers = _linked_signins(account)
         return render_template("account_profile.html", account=account,
-                               ok=request.args.get("ok", ""))
+                               ok=request.args.get("ok", ""),
+                               linked_signins=linked_signins,
+                               linked_providers=linked_providers)
 
     @app.route("/account/profile", methods=["POST"])
     def account_profile_update():
@@ -1096,7 +1137,6 @@ def create_app(config):
         name = (request.form.get("name") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         phone = (request.form.get("phone") or "").strip()
-        password = request.form.get("password", "")
         error = None
         if not email or "@" not in email:
             error = "Enter a valid email."
@@ -1112,21 +1152,15 @@ def create_app(config):
                 accounts.get_account_by_phone(g.db, phone) is not None
                 or get_admin_by_firebase_phone(g.db, phone) is not None):
             error = "That phone number is already in use."
-        if error is None and password and len(password) < 8:
-            error = "Choose a password of 8+ characters."
-        if error is None and password and password != request.form.get(
-                "password_confirm", ""):
-            error = "The passwords do not match."
         if error:
             return render_template("account_profile.html", account=account,
                                    error=error), 400
         # Write through to Firebase so the sign-in provider and the local row
-        # stay in step. Identity fields (email/phone/password) must succeed; a
-        # name-only change is best-effort, since it isn't an identity.
+        # stay in step. Identity fields (email/phone) must succeed; a name-only
+        # change is best-effort, since it isn't an identity.
         uid = account["firebase_uid"]
         identity_changing = (email != (account["email"] or "")
-                             or phone != (account["phone"] or "")
-                             or bool(password))
+                             or phone != (account["phone"] or ""))
         name_changing = name != (account["name"] or "")
         if uid and (identity_changing or name_changing) and identity_admin.available(config):
             fields = {}
@@ -1138,8 +1172,6 @@ def create_app(config):
                     fields["phoneNumber"] = phone
                 else:
                     fields["deleteAttribute"] = ["PHONE_NUMBER"]
-            if password:
-                fields["password"] = password
             if name_changing:
                 fields["displayName"] = name
             _result, err = identity_admin.update_user(config, uid, **fields)
@@ -1147,10 +1179,39 @@ def create_app(config):
                 return render_template(
                     "account_profile.html", account=account,
                     error=f"Could not update the sign-in provider: {err}"), 502
-        accounts.update_account(
-            g.db, account_id, name=name, email=email, phone=phone,
-            password=password if password else None)
+        accounts.update_account(g.db, account_id, name=name, email=email,
+                                phone=phone)
         return redirect("/account/profile", 303)
+
+    @app.route("/account/password", methods=["POST"])
+    def account_password_update():
+        """Set a new password from the Change-password dialog."""
+        auth_error = require_account_form("/account/profile")
+        if auth_error:
+            return auth_error
+        account_id = _principal()["id"]
+        account = accounts.get_account(g.db, account_id)
+        password = request.form.get("password", "")
+        error = None
+        if not password or len(password) < 8:
+            error = "Choose a password of 8+ characters."
+        elif password != request.form.get("password_confirm", ""):
+            error = "The passwords do not match."
+        if error:
+            return render_template("account_profile.html", account=account,
+                                   error=error), 400
+        # Write through to Firebase first: an identity change that the
+        # provider refuses must leave the local password untouched.
+        uid = account["firebase_uid"]
+        if uid and identity_admin.available(config):
+            _result, err = identity_admin.update_user(config, uid,
+                                                      password=password)
+            if err:
+                return render_template(
+                    "account_profile.html", account=account,
+                    error=f"Could not update the sign-in provider: {err}"), 502
+        accounts.update_account(g.db, account_id, password=password)
+        return redirect("/account/profile?ok=password-saved", 303)
 
     @app.route("/account/export")
     def account_export():
