@@ -1,9 +1,13 @@
 {# Generic Firebase sign-in / sign-up / link. Set `auth_action`
    ("signin"|"signup"|"link") and `auth_next` before including. Only the
    methods listed in firebase.providers are shown (google, github, phone,
-   password, email_link). A phone-only sign-in with no email reveals the
-   attach-email panel. In "link" mode the ID token binds to the signed-in
-   account at POST /account/link instead of opening a session. #}
+   password, email_link) — with phone disabled the identifier label,
+   placeholder and helper text drop the phone references entirely. A
+   phone-only sign-in with no email reveals the attach-email panel. In
+   "link" mode the ID token binds to the signed-in account at POST
+   /account/link instead of opening a session. Arriving from an email
+   magic link (an `oobCode` in the URL) swaps the form for a completion
+   spinner until the sign-in finishes. #}
 {% set auth_action = auth_action | default('signin') %}
 {% set auth_next = auth_next | default('') %}
 {% set providers = firebase.providers if firebase else [] %}
@@ -84,9 +88,28 @@
   <p id="auth-message" class="login-msg"></p>
   <p id="auth-error" class="login-msg login-msg-error"></p>
   <div id="recaptcha-container"></div>
+  <div id="auth-busy" class="auth-busy" hidden>
+    <div class="busy-spinner" aria-hidden="true"></div>
+    <p class="busy-title">Completing sign-in&hellip;</p>
+    <p class="login-msg">Opening your sign-in link &mdash; this only takes a moment.</p>
+  </div>
   <script>window.__FIREBASE__ = {{ firebase | tojson }};
     window.__FIREBASE_ACTION__ = {{ auth_action | tojson }};
     window.__FIREBASE_NEXT__ = {{ auth_next | tojson }};
     window.__FIREBASE_PROVIDERS__ = {{ providers | tojson }};</script>
   <script type="module" src="{{ url_for('static', filename='firebase-auth.js') }}"></script>
+  <script>
+    /* Magic-link return: an email link comes back to this URL with an
+       `oobCode`, so swap the form for the completion spinner immediately —
+       before the Firebase module even loads — instead of showing a login
+       form that looks like it is doing nothing. The 20s fallback brings the
+       form back if the module never arrives; a successful sign-in simply
+       navigates away. */
+    (function () {
+      if (!new URLSearchParams(window.location.search).has("oobCode")) return;
+      var busy = document.getElementById("auth-busy");
+      if (busy) busy.hidden = false;
+      setTimeout(function () { if (busy) busy.hidden = true; }, 20000);
+    })();
+  </script>
 </div>

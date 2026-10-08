@@ -11,7 +11,18 @@
   {% elif closed %}
   <p class="lede">Signup is currently closed. Please contact the operator.</p>
   {% elif firebase %}
-  <p class="lede">Sign up with an email or phone link, or a social account.</p>
+  {% set methods = [] %}
+  {% if 'phone' in firebase.providers and 'email_link' in firebase.providers %}{% set _ = methods.append('an email or phone link') %}
+  {% elif 'phone' in firebase.providers %}{% set _ = methods.append('a phone link') %}
+  {% elif 'email_link' in firebase.providers %}{% set _ = methods.append('an email link') %}{% endif %}
+  {% if 'google' in firebase.providers or 'github' in firebase.providers %}{% set _ = methods.append('a social account') %}{% endif %}
+  {% if methods | length > 1 %}
+  <p class="lede">Sign up with {{ methods[:-1] | join(', ') }}, or {{ methods[-1] }}.</p>
+  {% elif methods | length == 1 %}
+  <p class="lede">Sign up with {{ methods[0] }}.</p>
+  {% else %}
+  <p class="lede">Sign up to register devices and push files.</p>
+  {% endif %}
   <label for="affiliate-code">Affiliate code (optional)</label>
   <div class="field"><input type="text" id="affiliate-code" value="{{ affiliate }}"></div>
   {% set auth_action = 'signup' %}{% set auth_next = next %}

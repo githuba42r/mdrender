@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Administrator sign-in &middot; Cloud Push Server{% endblock %}
 {% block content %}
+{% if firebase %}
+  {# A failed local sign-in re-renders with `error` or `account_login_hint` —
+     open the password tab so the message is visible; otherwise default to
+     the Firebase tab. #}
+  {% set show_password = (error is defined and error) or (account_login_hint is defined and account_login_hint) %}
+{% endif %}
 <div class="login-card">
   <div class="login-head">
     <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
@@ -10,6 +16,38 @@
   {# Local credentials are always offered, even when Firebase admin login is
      configured: they are the only sign-in that works without a network round
      trip, and they are what the SERVER_PASSWORD bootstrap creates. #}
+  {% if firebase %}
+  <div class="auth-tabs" role="tablist" aria-label="Sign-in method">
+    <button type="button" class="auth-tab{% if not show_password %} active{% endif %}" id="tab-link" role="tab" aria-selected="{{ 'false' if show_password else 'true' }}" aria-controls="panel-link" onclick="mdrenderTab('link')">Magic link</button>
+    <button type="button" class="auth-tab{% if show_password %} active{% endif %}" id="tab-password" role="tab" aria-selected="{{ 'true' if show_password else 'false' }}" aria-controls="panel-password" onclick="mdrenderTab('password')">Email &amp; password</button>
+  </div>
+  <div id="panel-link" role="tabpanel" aria-labelledby="tab-link"{% if show_password %} hidden{% endif %}>
+    {% set auth_action = 'signin' %}{% set auth_next = next %}
+    {% include "_firebase_auth.html" %}
+  </div>
+  <div id="panel-password" role="tabpanel" aria-labelledby="tab-password"{% if not show_password %} hidden{% endif %}>
+    <form method="POST" action="/admin-login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label for="username">Username or email</label>
+      <div class="field">
+        <input type="text" id="username" name="username" autocomplete="username"
+               value="{{ username }}"{% if show_password %} autofocus{% endif %} required>
+      </div>
+      <label for="password">Password</label>
+      <div class="field">
+        <input type="password" name="password" autocomplete="current-password" required>
+      </div>
+      {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
+      {% if account_login_hint %}
+      <p class="login-msg login-msg-error">That address is a user account, not an
+        operator &mdash; <a href="/login{% if next %}?next={{ next | urlencode }}{% endif %}">sign in on the user login</a>.</p>
+      {% endif %}
+      <button type="submit" class="btn-primary">Log in</button>
+    </form>
+  </div>
+  {# Never a signup link here: this is the operator console. Public account
+     creation belongs on the user login (/login), not on /admin-login. #}
+  {% else %}
   <form method="POST" action="/admin-login">
     <input type="hidden" name="next" value="{{ next }}">
     <label for="username">Username or email</label>
@@ -28,13 +66,6 @@
     {% endif %}
     <button type="submit" class="btn-primary">Log in</button>
   </form>
-  {% if firebase %}
-  <div class="divider"><span>or continue with</span></div>
-  {% set auth_action = 'signin' %}{% set auth_next = next %}
-  {% include "_firebase_auth.html" %}
-  {# Never a signup link here: this is the operator console. Public account
-     creation belongs on the user login (/login), not on /admin-login. #}
-  {% else %}
   <p class="login-foot">Signing in as a user?
     <a href="/login{% if next %}?next={{ next | urlencode }}{% endif %}">User login</a>.</p>
   {% endif %}

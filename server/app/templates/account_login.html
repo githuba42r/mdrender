@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Account login &middot; Cloud Push Server{% endblock %}
 {% block content %}
+{% if firebase %}
+  {% set methods = [] %}
+  {% if 'google' in firebase.providers or 'github' in firebase.providers %}{% set _ = methods.append('a social account') %}{% endif %}
+  {% if 'phone' in firebase.providers %}{% set _ = methods.append('a phone code') %}{% endif %}
+  {% if 'email_link' in firebase.providers %}{% set _ = methods.append('a magic email link') %}{% endif %}
+  {# A failed local sign-in re-renders with `error` — open the password tab
+     so the message is visible; otherwise default to the Firebase tab. #}
+  {% set show_password = error is defined and error %}
+{% endif %}
 <div class="login-card">
   <div class="login-head">
     <img class="login-icon" src="{{ url_for('static', filename='icon.svg') }}" alt="" width="46" height="46">
@@ -19,22 +28,45 @@
   </p>
   {% endif %}
   {% if firebase %}
-  <p class="lede">Sign in with a social account, phone code, or magic email link.</p>
-  {% set auth_action = 'signin' %}{% set auth_next = next %}
-  {% include "_firebase_auth.html" %}
-  <div class="divider"><span>or sign in with your server password</span></div>
+  <div class="auth-tabs" role="tablist" aria-label="Sign-in method">
+    <button type="button" class="auth-tab{% if not show_password %} active{% endif %}" id="tab-link" role="tab" aria-selected="{{ 'false' if show_password else 'true' }}" aria-controls="panel-link" onclick="mdrenderTab('link')">Magic link</button>
+    <button type="button" class="auth-tab{% if show_password %} active{% endif %}" id="tab-password" role="tab" aria-selected="{{ 'true' if show_password else 'false' }}" aria-controls="panel-password" onclick="mdrenderTab('password')">Email &amp; password</button>
+  </div>
+  <div id="panel-link" role="tabpanel" aria-labelledby="tab-link"{% if show_password %} hidden{% endif %}>
+    {% if methods | length > 1 %}
+    <p class="lede">Sign in with {{ methods[:-1] | join(', ') }}, or {{ methods[-1] }}.</p>
+    {% elif methods | length == 1 %}
+    <p class="lede">Sign in with {{ methods[0] }}.</p>
+    {% else %}
+    <p class="lede">Sign in to continue.</p>
+    {% endif %}
+    {% set auth_action = 'signin' %}{% set auth_next = next %}
+    {% include "_firebase_auth.html" %}
+  </div>
+  <div id="panel-password" role="tabpanel" aria-labelledby="tab-password"{% if not show_password %} hidden{% endif %}>
+    <p class="lede">Sign in with your server password.</p>
+    <form method="POST" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label for="email">Email</label>
+      <div class="field"><input type="text" id="email" name="email" autocomplete="email"{% if show_password %} autofocus{% endif %} required></div>
+      <label for="password">Password</label>
+      <div class="field"><input type="password" id="password" name="password" autocomplete="current-password" required></div>
+      {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
+      <button type="submit" class="btn-primary">Log in</button>
+    </form>
+  </div>
   {% else %}
   <p class="lede">Sign in with your email to manage your devices and pending files.</p>
-  {% endif %}
   <form method="POST" action="/login">
     <input type="hidden" name="next" value="{{ next }}">
     <label for="email">Email</label>
-    <div class="field"><input type="text" id="email" name="email" autocomplete="email"{% if not firebase %} autofocus{% endif %} required></div>
+    <div class="field"><input type="text" id="email" name="email" autocomplete="email" autofocus required></div>
     <label for="password">Password</label>
     <div class="field"><input type="password" id="password" name="password" autocomplete="current-password" required></div>
     {% if error %}<p class="login-msg login-msg-error">{{ error }}</p>{% endif %}
     <button type="submit" class="btn-primary">Log in</button>
   </form>
+  {% endif %}
   {% if signup_open %}<p class="login-foot">No account? <a href="/signup{% if next %}?next={{ next | urlencode }}{% endif %}">Create one</a>.</p>{% endif %}
   <p class="login-foot">Operator? <a href="/admin-login{% if next %}?next={{ next | urlencode }}{% endif %}">Administrator sign-in</a>.</p>
 </div>

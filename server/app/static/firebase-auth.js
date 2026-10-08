@@ -56,6 +56,14 @@ function friendly(e) {
   return ERRORS[code] || (e && e.message) || String(e);
 }
 
+// The completion spinner shown when we arrive from an email magic link (see
+// the inline script in _firebase_auth.html, which raises it before this
+// module even loads).
+function busy(on) {
+  const el = document.getElementById("auth-busy");
+  if (el) el.hidden = !on;
+}
+
 // Link mode: the visitor is already signed in locally and is binding a
 // Firebase identity to that account, so the token goes to /account/link and
 // success returns to the profile page instead of opening a session.
@@ -91,8 +99,10 @@ async function exchange(user) {
       return;
     }
     const body = await resp.json().catch(() => ({}));
+    busy(false);
     show("auth-error", body.error || `sign-in failed (${resp.status})`);
   } catch (e) {
+    busy(false);
     show("auth-error", friendly(e));
   }
 }
@@ -103,6 +113,7 @@ async function exchange(user) {
 // phone-only identity can bind as it stands.
 async function afterSignIn(user) {
   if (user && !user.email && !linkMode()) {
+    busy(false);
     showEmailLinkPanel();
     return;
   }
@@ -163,8 +174,11 @@ async function sendPhoneCode(phone) {
 window.mdrenderSend = async () => {
   const identifier = val("identifier");
   const providers = window.__FIREBASE_PROVIDERS__ || [];
+  const phoneOn = providers.includes("phone");
   if (!identifier) {
-    show("auth-error", "Enter your email or phone number first.");
+    show("auth-error", phoneOn
+      ? "Enter your email or phone number first."
+      : "Enter your email first.");
     return;
   }
   show("auth-error", "");
@@ -175,8 +189,8 @@ window.mdrenderSend = async () => {
     }
     await sendMagicLink(identifier);
   } else {
-    if (!providers.includes("phone")) {
-      show("auth-error", "Phone sign-in isn't enabled.");
+    if (!phoneOn) {
+      show("auth-error", "That doesn't look like an email address.");
       return;
     }
     await sendPhoneCode(identifier);
@@ -250,16 +264,32 @@ window.mdrenderAttachEmail = async () => {
   }
 };
 
-// Complete a magic-link sign-in if we arrived via one.
-if (isSignInWithEmailLink(auth, window.location.href)) {
+// Complete a magic-link sign-in if we arrived via one. The inline script in
+// _firebase_auth.html has already swapped the form for the completion
+// spinner; here we finish the exchange — and bring the form back (with the
+// error shown on the Magic link tab) if anything goes wrong.
+const arriving = isSignInWithEmailLink(auth, window.location.href);
+if (!arriving) {
+  busy(false); // not a sign-in code — make sure no spinner is stuck up
+} else {
   let email = localStorage.getItem(EMAIL_KEY);
-  if (!email) email = window.prompt("Confirm the email you used to sign in:");
+  if (!email) {
+    busy(false); // the prompt needs the page; re-raise once we have an email
+    email = window.prompt("Confirm the email you used to sign in:");
+  }
   if (email) {
+    busy(true);
     signInWithEmailLink(auth, email, window.location.href)
       .then((result) => {
         localStorage.removeItem(EMAIL_KEY);
         return afterSignIn(result.user);
       })
-      .catch((e) => show("auth-error", friendly(e)));
+      .catch((e) => {
+        busy(false);
+        if (window.mdrenderTab) window.mdrenderTab("link");
+        show("auth-error", friendly(e));
+      });
+  } else {
+    show("auth-message", "Sign-in cancelled — enter your email to send a new link.");
   }
 }

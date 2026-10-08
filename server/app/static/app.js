@@ -427,4 +427,21 @@
     };
     scopeSelect.addEventListener("change", planDialogEl._applyScope);
   }
+
+  // ---- Sign-in tabs -------------------------------------------------------
+  // The login cards offer "Magic link" and "Email & password" as tabs; both
+  // panels render server-side (the templates choose the default) and this
+  // swaps which one is showing. Kept here rather than in firebase-auth.js so
+  // the tabs work even when the Firebase module fails to load.
+  window.mdrenderTab = function (name) {
+    ["link", "password"].forEach(function (n) {
+      var tab = document.getElementById("tab-" + n);
+      var panel = document.getElementById("panel-" + n);
+      if (!tab || !panel) return;
+      var on = n === name;
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+      tab.classList.toggle("active", on);
+      panel.hidden = !on;
+    });
+  };
 })();

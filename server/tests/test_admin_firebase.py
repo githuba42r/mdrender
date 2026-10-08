@@ -70,7 +70,10 @@ def test_local_credentials_stay_available_when_firebase_is_on(config, db_path):
     assert b'action="/admin-login"' in body          # the local form
     assert b'name="username"' in body and b'name="password"' in body
     assert b"window.__FIREBASE__" in body            # ...plus the Firebase block
-    assert body.index(b'action="/admin-login"') < body.index(b"window.__FIREBASE__")
+    # Both live behind sign-in tabs; the Magic link (Firebase) tab defaults,
+    # with the local form one click away on the Email & password tab.
+    assert b'id="tab-link"' in body and b'id="tab-password"' in body
+    assert b'id="panel-password"' in body
     # It is a real <form> with a submit button, so Enter submits; the Firebase
     # fields sit outside any form, so they carry their own Enter handlers.
     assert b"onkeydown" in body
