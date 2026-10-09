@@ -19,4 +19,7 @@ interface PushHistoryDao {
 
     @Query("DELETE FROM push_history")
     suspend fun deleteAll()
+
+    @Query("DELETE FROM push_history WHERE pushed_at < :cutoff")
+    suspend fun deleteBefore(cutoff: Long)
 }

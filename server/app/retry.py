@@ -115,6 +115,9 @@ class SweepWorker:
         with self.db.connect() as conn:
             sweep_stale_devices(conn, self.config.DEVICE_TTL_DAYS)
             push_store.purge_expired_bytes(conn, self.config.PUSH_FILE_TTL_HOURS, time.time())
+            push_store.purge_old_pushes(
+                conn, self.config.PUSH_HISTORY_TTL_DAYS, time.time()
+            )
 
 
 def run_forever(config, db, fcm_client):

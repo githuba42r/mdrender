@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS push_files (
   acked_at INTEGER,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ix_pushes_date ON pushes(date);
+CREATE INDEX IF NOT EXISTS ix_push_files_push_id ON push_files(push_id);
 CREATE TABLE IF NOT EXISTS federated_servers (
   server_id TEXT PRIMARY KEY,
   hostname TEXT NOT NULL,

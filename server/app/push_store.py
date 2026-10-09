@@ -86,6 +86,20 @@ def purge_expired_bytes(conn, ttl_hours, now) -> list[str]:
     return [r["file_id"] for r in rows]
 
 
+def purge_old_pushes(conn, ttl_days, now) -> list[str]:
+    """Delete pushes (and their file rows) older than *ttl_days*.
+
+    A push this old is dead: unacked bytes were purged long before this
+    (PUSH_FILE_TTL_HOURS), so nothing can still arrive for it — the rows are
+    pure history by now. Returns the deleted push ids.
+    """
+    cutoff = now - ttl_days * 86400
+    rows = conn.execute(
+        "SELECT push_id FROM pushes WHERE date < ?", (cutoff,)
+    ).fetchall()
+    return _delete_pushes(conn, [r["push_id"] for r in rows])
+
+
 def push_stats(conn, now=None) -> dict:
     """Push totals for the last hour / day / 30 days / all time.
 

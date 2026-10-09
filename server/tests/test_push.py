@@ -173,3 +173,54 @@ def test_delete_push_on_an_unknown_id_returns_false(config, db_path):
 
         # False is what stops the caller deleting an arbitrary directory.
         assert push_store.delete_push(conn, "does-not-exist") is False
+
+
+def test_purge_old_pushes_removes_history_past_the_ttl(config, db_path):
+    """Pushes older than the history TTL (and their file rows) are deleted;
+    newer pushes are untouched."""
+    db = Database(db_path)
+    with db.connect() as conn:
+        db.init_schema(conn)
+        now = 1_000_000
+        # An old push with one acked and one pending file.
+        create_push(conn, "push-old", "Sunny Falcon")
+        conn.execute("UPDATE pushes SET date = ? WHERE push_id = 'push-old'",
+                     (now - 8 * 86400,))
+        add_file(conn, file_id="f-old-a", push_id="push-old", file_name="a.md",
+                 file_path="", size=1, retrieval_key="k1", stored_path=None,
+                 created_at=now - 8 * 86400)
+        mark_acked(conn, "f-old-a", now - 7 * 86400)
+        add_file(conn, file_id="f-old-p", push_id="push-old", file_name="b.md",
+                 file_path="", size=1, retrieval_key="k2", stored_path=None,
+                 created_at=now - 8 * 86400)
+        # A recent push must survive.
+        create_push(conn, "push-new", "Sunny Falcon")
+        conn.execute("UPDATE pushes SET date = ? WHERE push_id = 'push-new'",
+                     (now - 1 * 86400,))
+        add_file(conn, file_id="f-new", push_id="push-new", file_name="c.md",
+                 file_path="", size=1, retrieval_key="k3", stored_path=None,
+                 created_at=now - 1 * 86400)
+
+        deleted = push_store.purge_old_pushes(conn, ttl_days=7, now=now)
+
+        assert deleted == ["push-old"]
+        assert get_push_by_id(conn, "push-old") is None
+        assert get_push_files(conn, "push-old") == []
+        assert get_push_by_id(conn, "push-new") is not None
+        assert len(get_push_files(conn, "push-new")) == 1
+
+
+def test_purge_old_pushes_keeps_everything_inside_the_ttl(config, db_path):
+    db = Database(db_path)
+    with db.connect() as conn:
+        db.init_schema(conn)
+        now = 1_000_000
+        create_push(conn, "push-1", "Sunny Falcon")
+        conn.execute("UPDATE pushes SET date = ? WHERE push_id = 'push-1'",
+                     (now - 6 * 86400,))
+        add_file(conn, file_id="f1", push_id="push-1", file_name="a.md",
+                 file_path="", size=1, retrieval_key="k1", stored_path=None,
+                 created_at=now - 6 * 86400)
+
+        assert push_store.purge_old_pushes(conn, ttl_days=7, now=now) == []
+        assert get_push_by_id(conn, "push-1") is not None
