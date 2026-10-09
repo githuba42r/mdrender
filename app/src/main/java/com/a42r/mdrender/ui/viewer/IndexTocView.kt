@@ -204,24 +204,6 @@ private fun parseOneTable(rows: List<String>): List<TocEntry> {
     return result
 }
 
-/** Split a markdown table row into cells, respecting [] for links. */
-private fun splitTableRow(row: String): List<String> {
-    val inner = row.trim().removeSurrounding("|")
-    val cells = mutableListOf<String>()
-    var buf = StringBuilder()
-    var depth = 0
-    for (ch in inner) {
-        when (ch) {
-            '[' -> { buf.append(ch); depth++ }
-            ']' -> { buf.append(ch); depth-- }
-            '|' -> if (depth == 0) { cells.add(buf.toString().trim()); buf = StringBuilder() } else buf.append(ch)
-            else -> buf.append(ch)
-        }
-    }
-    if (buf.isNotEmpty()) cells.add(buf.toString().trim())
-    return cells
-}
-
 // ── Composable ──────────────────────────────────────────────────────────────
 
 /**
@@ -366,47 +348,58 @@ private fun renderMarkdownText(
     onSurfaceVariant: androidx.compose.ui.graphics.Color
 ) {
     val lines = text.split("\n")
-    for (line in lines) {
-        val trimmed = line.trim()
-        when {
-            trimmed.startsWith("# ") -> Text(
-                text = trimmed.removePrefix("# ").trim(),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            trimmed.startsWith("## ") -> Text(
-                text = trimmed.removePrefix("## ").trim(),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
-            )
-            trimmed.startsWith("### ") -> Text(
-                text = trimmed.removePrefix("### ").trim(),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-            )
-            trimmed.startsWith("> ") -> Text(
-                text = trimmed.removePrefix("> ").trim(),
-                style = MaterialTheme.typography.bodyMedium,
-                fontStyle = FontStyle.Italic,
-                color = onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
-            trimmed.startsWith("- ") || trimmed.startsWith("* ") -> Text(
-                text = "• ${trimmed.removePrefix("- ").removePrefix("* ")}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = onSurface,
-                modifier = Modifier.padding(start = 8.dp, top = 1.dp, bottom = 1.dp)
-            )
-            trimmed.isBlank() -> Spacer(Modifier.height(8.dp))
-            else -> Text(
-                text = trimmed,
-                style = MaterialTheme.typography.bodyMedium,
-                color = onSurface,
-                modifier = Modifier.padding(vertical = 2.dp)
-            )
+    var i = 0
+    while (i < lines.size) {
+        val trimmed = lines[i].trim()
+        if (isTableLine(trimmed)) {
+            val tableLines = mutableListOf<String>()
+            while (i < lines.size && isTableLine(lines[i])) {
+                tableLines.add(lines[i].trim())
+                i++
+            }
+            MarkdownTableBlock(parseMarkdownTable(tableLines))
+        } else {
+            when {
+                trimmed.startsWith("# ") -> Text(
+                    text = trimmed.removePrefix("# ").trim(),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                trimmed.startsWith("## ") -> Text(
+                    text = trimmed.removePrefix("## ").trim(),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                )
+                trimmed.startsWith("### ") -> Text(
+                    text = trimmed.removePrefix("### ").trim(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                )
+                trimmed.startsWith("> ") -> Text(
+                    text = trimmed.removePrefix("> ").trim(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                    color = onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                trimmed.startsWith("- ") || trimmed.startsWith("* ") -> Text(
+                    text = "• ${trimmed.removePrefix("- ").removePrefix("* ")}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = onSurface,
+                    modifier = Modifier.padding(start = 8.dp, top = 1.dp, bottom = 1.dp)
+                )
+                trimmed.isBlank() -> Spacer(Modifier.height(8.dp))
+                else -> Text(
+                    text = trimmed,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = onSurface,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+            i++
         }
     }
 }

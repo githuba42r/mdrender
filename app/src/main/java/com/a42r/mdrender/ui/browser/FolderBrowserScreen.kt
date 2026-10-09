@@ -287,12 +287,12 @@ fun FolderBrowserScreen(
                     Icon(Icons.Filled.Add, contentDescription = "Add")
                 }
             }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        }
     ) { padding ->
+        Box(modifier = Modifier.padding(padding)) {
         Column(
             modifier = Modifier
-                .padding(padding)
+                .fillMaxSize()
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
@@ -439,6 +439,18 @@ fun FolderBrowserScreen(
                     }
                 }
             }
+        }
+
+        // Toast sits at the very bottom, over the (+) FAB area, so it never
+        // covers the last file rows (Scaffold's default host stacks it above
+        // the FAB, overlaying the list).
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 16.dp)
+        )
         }
     }
 
