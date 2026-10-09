@@ -5,10 +5,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.a42r.mdrender.data.entity.FileEntity
 import com.a42r.mdrender.data.repository.FileRepository
+import com.a42r.mdrender.data.repository.FolderRepository
 import com.a42r.mdrender.localsend.LocalSendSessionManager
+import com.a42r.mdrender.security.AppLock
+import com.a42r.mdrender.ui.browser.MoveTarget
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -37,6 +43,8 @@ data class ImagePagerState(
 @HiltViewModel
 class ViewerViewModel @Inject constructor(
     private val fileRepository: FileRepository,
+    private val folderRepository: FolderRepository,
+    private val appLock: AppLock,
     private val viewerPrefs: ViewerPrefs,
     private val localSendSessionManager: LocalSendSessionManager,
     savedStateHandle: SavedStateHandle
@@ -53,6 +61,14 @@ class ViewerViewModel @Inject constructor(
     // Populated for image viewing; null until the sibling list is resolved.
     private val _imagePager = MutableStateFlow<ImagePagerState?>(null)
     val imagePager: StateFlow<ImagePagerState?> = _imagePager.asStateFlow()
+
+    /** One-off notices (delete/move results) shown as snackbars. */
+    private val _userMessage = MutableSharedFlow<String>()
+    val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
+
+    /** Flattened folder tree for the Move dialog. */
+    private val _moveTargets = MutableStateFlow<List<MoveTarget>>(emptyList())
+    val moveTargets: StateFlow<List<MoveTarget>> = _moveTargets.asStateFlow()
 
     private val currentFileName: String get() = _uiState.value.fileName
 
@@ -137,6 +153,64 @@ class ViewerViewModel @Inject constructor(
     fun saveScrollPosition(pos: Int) {
         viewModelScope.launch {
             fileRepository.saveScrollPosition(fileId, pos)
+        }
+    }
+
+    // --- Delete / move (image viewer context menu) -------------------------
+
+    /** Delete [id] and drop it from the image pager. */
+    fun deleteFile(id: Long) {
+        viewModelScope.launch {
+            val name = fileRepository.getFileMetadata(id)?.name ?: "File"
+            fileRepository.deleteFile(id)
+            removeImageFromPager(id)
+            _userMessage.emit("Deleted \"$name\"")
+        }
+    }
+
+    /** Move [id] into [targetFolderId] (null = Home). Blocks on name conflict. */
+    fun moveFile(id: Long, targetFolderId: Long?) {
+        viewModelScope.launch {
+            val meta = fileRepository.getFileMetadata(id) ?: return@launch
+            val existing = fileRepository.findByName(targetFolderId, meta.name)
+            if (existing != null && existing.id != id) {
+                val dest = targetFolderId?.let { folderRepository.getFolder(it)?.name } ?: "Home"
+                _userMessage.emit("A file named \"${meta.name}\" already exists in \"$dest\"")
+                return@launch
+            }
+            fileRepository.moveFile(id, targetFolderId)
+            removeImageFromPager(id)
+            val dest = targetFolderId?.let { folderRepository.getFolder(it)?.name } ?: "Home"
+            _userMessage.emit("Moved \"${meta.name}\" to \"$dest\"")
+        }
+    }
+
+    /** Refresh the flattened folder tree for the Move dialog. Hidden folders
+     *  (and their subtrees) are omitted unless currently revealed. */
+    fun loadMoveTargets() {
+        viewModelScope.launch {
+            val reveal = appLock.revealHidden.value
+            val flattened = mutableListOf<MoveTarget>()
+            fun flatten(nodes: List<com.a42r.mdrender.data.repository.FolderNode>, depth: Int) {
+                for (node in nodes) {
+                    if (!reveal && node.folder.hidden) continue
+                    flattened.add(MoveTarget(node.folder, depth))
+                    flatten(node.children, depth + 1)
+                }
+            }
+            flatten(folderRepository.buildTree(), 0)
+            _moveTargets.value = flattened
+        }
+    }
+
+    private fun removeImageFromPager(id: Long) {
+        _imagePager.update { pager ->
+            if (pager == null || id !in pager.ids) return@update pager
+            val newIds = pager.ids - id
+            pager.copy(
+                ids = newIds,
+                startIndex = pager.startIndex.coerceIn(0, (newIds.size - 1).coerceAtLeast(0))
+            )
         }
     }
 }
