@@ -1,12 +1,14 @@
 package com.a42r.mdrender.ui.viewer
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,7 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ImageViewerScreen(
     onBack: () -> Unit,
@@ -130,6 +132,40 @@ fun ImageViewerScreen(
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                         }
+                    },
+                    actions = {
+                        var menuExpanded by remember { mutableStateOf(false) }
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Move") },
+                                leadingIcon = { Icon(Icons.Filled.DriveFileMove, null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.loadMoveTargets()
+                                    showMoveDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    confirmDelete = true
+                                }
+                            )
+                        }
                     }
                 )
             }
@@ -157,12 +193,12 @@ fun ImageViewerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
-                    .pointerInput(id) {
-                        detectTapGestures(
-                            onTap = { showAppBar = !showAppBar },
-                            onLongPress = { showActionsMenu = true }
-                        )
-                    }
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { showAppBar = !showAppBar },
+                        onLongClick = { showActionsMenu = true }
+                    )
                     .pointerInput(id) {
                         // Only handle (and consume) the gesture when it's a
                         // pinch or the image is already zoomed. A one-finger
