@@ -32,11 +32,26 @@ data class TocEntry(
 )
 
 /**
- * Split INDEX.md into preamble, TOC entries, and notes.
+ * A `## `-headed story section: its title, an optional link to the story's
+ * own folder index (captured from a `Folder index: [INDEX.md](...)` line),
+ * and the chapter entries from the tables beneath the heading.
+ */
+data class TocStory(
+    val title: String,
+    val indexLink: String?,
+    val chapters: List<TocEntry>
+)
+
+/**
+ * Split INDEX.md into preamble, story sections, loose entries, and notes.
+ *
+ * Tables that appear before any `## ` heading (the legacy single-table
+ * format) end up in [looseEntries] instead of a story section.
  */
 data class IndexTocData(
     val preamble: String,
-    val entries: List<TocEntry>,
+    val stories: List<TocStory>,
+    val looseEntries: List<TocEntry>,
     val notes: String
 )
 
@@ -96,36 +111,77 @@ fun parseIndexToc(markdown: String): IndexTocData {
         .replace(Regex("\\*(.+?)\\*"), "$1")
         .replace(Regex("`(.+?)`"), "$1")
 
-    val entries = parseTableRows(tableContent)
+    val (stories, looseEntries) = parseStories(tableContent)
 
-    return IndexTocData(preamble = preamble, entries = entries, notes = notes)
+    return IndexTocData(
+        preamble = preamble,
+        stories = stories,
+        looseEntries = looseEntries,
+        notes = notes
+    )
 }
 
 /**
- * Extract TOC entries from the lines between the `---` separators, which
- * may contain one or more markdown tables.
+ * Walk the lines between the `---` separators, grouping markdown tables
+ * under the nearest preceding `## ` story heading. Non-table lines are
+ * scanned for a link ending in `INDEX.md` — that becomes the story's
+ * folder-index link (e.g. `Folder index: [INDEX.md](story/INDEX.md)`).
+ *
+ * Tables with no preceding heading are collected as loose entries so the
+ * legacy single-table format still renders.
  */
-private fun parseTableRows(lines: List<String>): List<TocEntry> {
-    val entries = mutableListOf<TocEntry>()
+private fun parseStories(lines: List<String>): Pair<List<TocStory>, List<TocEntry>> {
+    val stories = mutableListOf<TocStory>()
+    val loose = mutableListOf<TocEntry>()
 
-    // Find all table regions (consecutive lines starting with |)
+    var title: String? = null
+    var indexLink: String? = null
+    var chapters = mutableListOf<TocEntry>()
+
+    fun flush() {
+        if (title.isNullOrBlank()) {
+            loose.addAll(chapters)
+        } else {
+            stories.add(
+                TocStory(title = title!!, indexLink = indexLink, chapters = chapters.toList())
+            )
+        }
+        title = null
+        indexLink = null
+        chapters = mutableListOf()
+    }
+
     var i = 0
     while (i < lines.size) {
         val line = lines[i].trim()
-        if (line.startsWith("|")) {
-            // Collect all consecutive table rows
-            val tableRows = mutableListOf<String>()
-            while (i < lines.size && lines[i].trim().startsWith("|")) {
-                tableRows.add(lines[i].trim())
-                i++
+        when {
+            line.startsWith("## ") -> {
+                flush()
+                title = line.removePrefix("## ").trim()
             }
-            // Parse this table
-            entries.addAll(parseOneTable(tableRows))
-        } else {
-            i++
+            line.startsWith("|") -> {
+                val tableRows = mutableListOf<String>()
+                while (i < lines.size && lines[i].trim().startsWith("|")) {
+                    tableRows.add(lines[i].trim())
+                    i++
+                }
+                chapters.addAll(parseOneTable(tableRows))
+                continue
+            }
+            else -> {
+                if (title != null && indexLink == null) {
+                    val m = linkRegex.find(line)
+                    if (m != null && m.groupValues[2].endsWith("INDEX.md", ignoreCase = true)) {
+                        indexLink = m.groupValues[2]
+                    }
+                }
+            }
         }
+        i++
     }
-    return entries
+    flush()
+
+    return stories to loose
 }
 
 /** Parse a single markdown table into TOC entries. */
@@ -235,47 +291,72 @@ fun IndexTocView(
         // ── Preamble ──
         renderMarkdownText(parsed.preamble, onSurface, onSurfaceVariant)
 
-        // ── TOC entries ──
+        // ── TOC ──
         Spacer(Modifier.height(8.dp))
 
-        val mainEntries = parsed.entries.filter { !it.isCompanion }
-        val companionEntries = parsed.entries.filter { it.isCompanion }
-
-        // Main chapter entries
-        if (mainEntries.isNotEmpty()) {
-            for (entry in mainEntries) {
-                if (entry.link != null) {
-                    val display = if (entry.number.all { it.isDigit() }) {
-                        "Chapter ${entry.number} — ${entry.title}"
-                    } else {
-                        "${entry.number} — ${entry.title}"
-                    }
-                    LinkText(
-                        text = display,
-                        color = primary,
-                        onClick = {
-                            coroutineScope.launch {
-                                val fileId = resolveLink(entry.link)
-                                if (fileId != null) {
-                                    onNavigateToFile(fileId)
-                                } else {
-                                    Log.w(TAG, "TOC link not resolved: ${entry.link}")
-                                }
-                            }
-                        }
-                    )
+        val openLink: (String) -> Unit = { link ->
+            coroutineScope.launch {
+                val fileId = resolveLink(link)
+                if (fileId != null) {
+                    onNavigateToFile(fileId)
                 } else {
-                    Text(
-                        text = entry.title.ifBlank { entry.number },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
+                    Log.w(TAG, "TOC link not resolved: $link")
                 }
             }
         }
 
-        // Companion entries
+        // Story sections (`## `-headed), each with an optional link to the
+        // story's own folder index followed by its chapter entries.
+        for (story in parsed.stories) {
+            if (story.indexLink != null) {
+                Text(
+                    text = story.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = primary,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp, bottom = 4.dp)
+                        .clickable { openLink(story.indexLink) }
+                )
+            } else {
+                Text(
+                    text = story.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = onSurface,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                )
+            }
+            for (entry in story.chapters) {
+                TocRow(
+                    entry = entry,
+                    startPad = 8.dp,
+                    primary = primary,
+                    onSurfaceVariant = onSurfaceVariant,
+                    openLink = openLink
+                )
+            }
+        }
+
+        // Loose entries — tables with no preceding story heading
+        // (the legacy single-table format).
+        val mainEntries = parsed.looseEntries.filter { !it.isCompanion }
+        val companionEntries = parsed.looseEntries.filter { it.isCompanion }
+
+        if (mainEntries.isNotEmpty()) {
+            for (entry in mainEntries) {
+                TocRow(
+                    entry = entry,
+                    startPad = 0.dp,
+                    primary = primary,
+                    onSurfaceVariant = onSurfaceVariant,
+                    openLink = openLink
+                )
+            }
+        }
+
         if (companionEntries.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
             Text(
@@ -285,26 +366,13 @@ fun IndexTocView(
                 modifier = Modifier.padding(vertical = 8.dp)
             )
             for (entry in companionEntries) {
-                if (entry.link != null) {
-                    LinkText(
-                        text = entry.title,
-                        color = primary,
-                        onClick = {
-                            coroutineScope.launch {
-                                val fileId = resolveLink(entry.link)
-                                if (fileId != null) onNavigateToFile(fileId)
-                            }
-                        }
-                    )
-                    if (entry.companionRef != null) {
-                        Text(
-                            text = "Companion to: ${entry.companionRef}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = onSurfaceVariant,
-                            modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
-                        )
-                    }
-                }
+                TocRow(
+                    entry = entry,
+                    startPad = 0.dp,
+                    primary = primary,
+                    onSurfaceVariant = onSurfaceVariant,
+                    openLink = openLink
+                )
             }
         }
 
@@ -338,6 +406,50 @@ private fun LinkText(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )
+}
+
+/** One TOC row: a tappable "Chapter N — Title" link (or plain text when
+ *  unlinked), indented by [startPad], with a companion caption when the
+ *  entry references another chapter. */
+@Composable
+private fun TocRow(
+    entry: TocEntry,
+    startPad: androidx.compose.ui.unit.Dp,
+    primary: androidx.compose.ui.graphics.Color,
+    onSurfaceVariant: androidx.compose.ui.graphics.Color,
+    openLink: (String) -> Unit
+) {
+    Column(Modifier.padding(start = startPad)) {
+        if (entry.link != null) {
+            val display = when {
+                entry.number.isNotEmpty() && entry.number.all { it.isDigit() } ->
+                    "Chapter ${entry.number} — ${entry.title}"
+                entry.number.isNotEmpty() ->
+                    "${entry.number} — ${entry.title}"
+                else -> entry.title
+            }
+            LinkText(
+                text = display,
+                color = primary,
+                onClick = { openLink(entry.link) }
+            )
+        } else {
+            Text(
+                text = entry.title.ifBlank { entry.number },
+                style = MaterialTheme.typography.bodyMedium,
+                color = onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+        }
+        if (entry.link != null && entry.companionRef != null) {
+            Text(
+                text = "Companion to: ${entry.companionRef}",
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
+            )
+        }
+    }
 }
 
 /** Render simple markdown as styled text blocks. */
