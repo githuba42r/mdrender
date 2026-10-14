@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.a42r.mdrender.MDRenderApplication
 import com.a42r.mdrender.data.dao.FileListItem
 import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
@@ -536,6 +537,9 @@ fun FolderBrowserScreen(
                     modifier = Modifier.clickable {
                         menuFile = null
                         downloadFileId = file.id
+                        // Opening the system picker backgrounds us; don't
+                        // demand re-auth (or finish) on the way back.
+                        MDRenderApplication.instance.appLock.suspendNextLock()
                         downloadLauncher.launch(file.name)
                     }
                 )
