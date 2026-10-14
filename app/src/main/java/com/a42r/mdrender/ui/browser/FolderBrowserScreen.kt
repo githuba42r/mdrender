@@ -1,6 +1,7 @@
 package com.a42r.mdrender.ui.browser
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +69,20 @@ fun FolderBrowserScreen(
     val lastOpenedFile by viewModel.lastOpenedFile.collectAsStateWithLifecycle()
     val lastOpenedFileHidden by viewModel.lastOpenedFileHidden.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+
+    // "Download" from the long-press menu: the user picks a destination with
+    // the system file picker (My Files → Downloads etc.), then the ViewModel
+    // streams the file out of the app's storage into the chosen location.
+    var downloadFileId by rememberSaveable { mutableLongStateOf(-1L) }
+    val downloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        val fileId = downloadFileId
+        downloadFileId = -1L
+        if (uri != null && fileId > 0L) {
+            scope.launch { viewModel.downloadFileTo(fileId, uri) }
+        }
+    }
     val context = LocalContext.current
 
     val notifPermission = rememberLauncherForActivityResult(
@@ -150,6 +166,13 @@ fun FolderBrowserScreen(
             if (result == SnackbarResult.ActionPerformed) {
                 undo.action()
             }
+        }
+    }
+
+    // Save-to-device results surface as snackbars.
+    LaunchedEffect(Unit) {
+        viewModel.downloadStatus.collect { message ->
+            snackbarHostState.showSnackbar(message)
         }
     }
 
@@ -505,6 +528,15 @@ fun FolderBrowserScreen(
                     modifier = Modifier.clickable {
                         menuFile = null
                         viewModel.requestShare(listOf(file.id))
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Download") },
+                    leadingContent = { Icon(Icons.Filled.Download, "Download") },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        downloadFileId = file.id
+                        downloadLauncher.launch(file.name)
                     }
                 )
                 ListItem(

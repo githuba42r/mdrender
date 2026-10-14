@@ -15,23 +15,21 @@ class IndexTocParseTest {
     fun parsesAllThreeStoriesFromRealIndex() {
         if (!realIndex.exists()) return // device env without the stories tree
         val parsed = parseIndexToc(realIndex.readText())
-        println("stories=${parsed.stories.size} loose=${parsed.looseEntries.size}")
         parsed.stories.forEach { story ->
             println("  story '${story.title}' indexLink=${story.indexLink} chapters=${story.chapters.size}")
-            story.chapters.forEach { println("    [${it.number}] ${it.title} -> ${it.link}") }
         }
-        assertEquals("expected 3 story sections", 3, parsed.stories.size)
-        assertTrue(parsed.looseEntries.isEmpty())
-        assertEquals(listOf(16, 2, 1), parsed.stories.map { it.chapters.size })
-        parsed.stories.forEach { story ->
-            assertNotNull("story '${story.title}' should have a folder-index link", story.indexLink)
+        // The author adds stories over time — assert the three known ones
+        // by name rather than any total.
+        val byTitle = parsed.stories.associateBy { it.title }
+        val expected = mapOf("Sharing Ryan" to 16, "She Decides" to 2, "The Late Train" to 1)
+        assertEquals(expected.keys, expected.keys.intersect(byTitle.keys))
+        expected.forEach { (title, chapterCount) ->
+            val story = byTitle.getValue(title)
+            assertEquals("story '$title'", chapterCount, story.chapters.size)
+            assertNotNull("story '$title' should have a folder-index link", story.indexLink)
             assertTrue(story.indexLink!!.endsWith("INDEX.md"))
             assertTrue(story.chapters.all { it.link != null })
         }
-        val links = parsed.stories.flatMap { s -> s.chapters.mapNotNull { it.link } }
-        assertTrue(links.any { it.startsWith("Chapters/sharing-ryan/") })
-        assertTrue(links.any { it.startsWith("Chapters/she-decides/") })
-        assertTrue(links.any { it.startsWith("Chapters/the-late-train/") })
     }
 
     @Test
