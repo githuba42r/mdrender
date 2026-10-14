@@ -114,6 +114,7 @@ class MainActivity : FragmentActivity() {
                 val currentRoute = currentBackStackEntry?.destination?.route
                 val showMiniPlayer = info.fileId != 0L &&
                     currentRoute?.startsWith("audio_player/") != true &&
+                    currentRoute?.startsWith("video_player/") != true &&
                     (!isHiddenFile || revealHidden)
 
                 val showHiddenAudio = info.fileId != 0L &&

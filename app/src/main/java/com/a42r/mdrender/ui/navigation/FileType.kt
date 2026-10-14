@@ -9,8 +9,10 @@ enum class FileType(val icon: ImageVector, val label: String) {
     FOLDER(Icons.Filled.Folder, "Folder"),
     MARKDOWN(Icons.Filled.Description, "Markdown"),
     TEXT(Icons.AutoMirrored.Filled.TextSnippet, "Text"),
+    HTML(Icons.Filled.Public, "HTML"),
     IMAGE(Icons.Filled.Image, "Image"),
     AUDIO(Icons.Filled.MusicNote, "Audio"),
+    VIDEO(Icons.Filled.VideoFile, "Video"),
     UNKNOWN(Icons.AutoMirrored.Filled.InsertDriveFile, "File");
 
     companion object {
@@ -18,8 +20,10 @@ enum class FileType(val icon: ImageVector, val label: String) {
             isFolder -> FOLDER
             mimeType.startsWith("text/markdown") -> MARKDOWN
             mimeType.startsWith("text/plain") -> TEXT
+            mimeType.startsWith("text/html") -> HTML
             mimeType.startsWith("image/") -> IMAGE
             mimeType.startsWith("audio/") -> AUDIO
+            mimeType.startsWith("video/") -> VIDEO
             else -> UNKNOWN
         }
     }

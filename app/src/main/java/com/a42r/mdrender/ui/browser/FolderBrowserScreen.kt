@@ -130,7 +130,9 @@ fun FolderBrowserScreen(
             val route = when {
                 file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
                 file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
+                file.mimeType.startsWith("text/html") -> Routes.HtmlViewer.createRoute(file.id)
                 file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
+                file.mimeType.startsWith("video/") -> Routes.VideoPlayer.createRoute(file.id)
                 else -> Routes.TextViewer.createRoute(file.id)
             }
             navController.navigate(route)
@@ -223,7 +225,9 @@ fun FolderBrowserScreen(
                                         val route = when {
                                             lastFile.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(lastFile.id)
                                             lastFile.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(lastFile.id)
+                                            lastFile.mimeType.startsWith("text/html") -> Routes.HtmlViewer.createRoute(lastFile.id)
                                             lastFile.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(lastFile.id)
+                                            lastFile.mimeType.startsWith("video/") -> Routes.VideoPlayer.createRoute(lastFile.id)
                                             else -> Routes.TextViewer.createRoute(lastFile.id)
                                         }
                                         navController.navigate(route)

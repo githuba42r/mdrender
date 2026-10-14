@@ -25,6 +25,9 @@ data class ViewerUiState(
     val mimeType: String = "",
     val markdownContent: String = "",
     val textContent: String = "",
+    val htmlContent: String? = null,
+    /** Base URL for resolving relative resources in [htmlContent] (plain storage only). */
+    val htmlBaseUrl: String? = null,
     val imageBytes: ByteArray? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
@@ -135,6 +138,21 @@ class ViewerViewModel @Inject constructor(
                             _uiState.update { it.copy(markdownContent = text) }
                         } else {
                             _uiState.update { it.copy(textContent = text) }
+                        }
+                    }
+                    mimeType.startsWith("text/html") -> {
+                        // Base URL = the file's own directory for plain storage so
+                        // relative links to sibling images/css resolve; encrypted
+                        // files have no on-disk siblings, so no base.
+                        val baseUrl = if (metadata?.storageType == "plain") {
+                            fileRepository.getPlainFile(fileId)?.parentFile?.let { p ->
+                                "file://${p.absolutePath}/"
+                            }
+                        } else {
+                            null
+                        }
+                        _uiState.update {
+                            it.copy(htmlContent = String(bytes, Charsets.UTF_8), htmlBaseUrl = baseUrl)
                         }
                     }
                     mimeType.startsWith("image/") -> {

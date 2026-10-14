@@ -13,9 +13,11 @@ import com.a42r.mdrender.audio.AudioPlayerScreen
 import com.a42r.mdrender.audio.AudioPlayerViewModel
 import com.a42r.mdrender.ui.browser.BrowserViewModel
 import com.a42r.mdrender.ui.browser.FolderBrowserScreen
+import com.a42r.mdrender.ui.viewer.HtmlViewerScreen
 import com.a42r.mdrender.ui.viewer.ImageViewerScreen
 import com.a42r.mdrender.ui.viewer.MarkdownViewerScreen
 import com.a42r.mdrender.ui.viewer.TextViewerScreen
+import com.a42r.mdrender.ui.viewer.VideoPlayerScreen
 import com.a42r.mdrender.ui.import.ImportScreen
 import com.a42r.mdrender.ui.settings.SettingsScreen
 
@@ -66,6 +68,25 @@ fun MDRenderNavHost(navController: NavHostController) {
                 onNavigateToFile = { fileId ->
                     navController.navigate(Routes.ImageViewer.createRoute(fileId))
                 }
+            )
+        }
+        composable(
+            route = Routes.HtmlViewer.route,
+            arguments = listOf(navArgument("fileId") { type = NavType.LongType })
+        ) {
+            HtmlViewerScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToFile = { fileId ->
+                    navController.navigate(Routes.HtmlViewer.createRoute(fileId))
+                }
+            )
+        }
+        composable(
+            route = Routes.VideoPlayer.route,
+            arguments = listOf(navArgument("fileId") { type = NavType.LongType })
+        ) {
+            VideoPlayerScreen(
+                onBack = { navController.popBackStack() }
             )
         }
         composable(
