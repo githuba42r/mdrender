@@ -198,6 +198,7 @@ a:hover { color: #f0bc6a; }
   border-radius: var(--radius);
   overflow: hidden;
   margin: 0;
+  max-width: 100%;
 }
 
 .frame img { border-top-left-radius: 0; border-top-right-radius: 0; }
@@ -229,6 +230,10 @@ a:hover { color: #f0bc6a; }
   border: 1px solid var(--line);
   border-radius: 5px;
   padding: 0.12rem 0.6rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .phone {
@@ -464,7 +469,7 @@ code {
 
 .foot-brand .brand-mark { width: 20px; height: 20px; }
 
-.foot-nav { display: flex; gap: 1.4rem; }
+.foot-nav { display: flex; flex-wrap: wrap; gap: 0.6rem 1.4rem; }
 
 .foot-nav a {
   color: var(--muted);
@@ -479,7 +484,7 @@ code {
 @media (max-width: 980px) {
   .hero-grid,
   .split,
-  .run-grid { grid-template-columns: 1fr; }
+  .run-grid { grid-template-columns: minmax(0, 1fr); }
 
   .hero { padding: 3rem 0 4rem; }
 
@@ -689,6 +694,7 @@ code {
 @media (max-width: 720px) {
   .app-shots { grid-template-columns: 1fr; }
   .app-shots .phone { max-width: 17rem; }
+  .app-hero-shot .phone { width: auto; flex: 0 1 12.5rem; min-width: 0; }
   .script-grid { grid-template-columns: 1fr; }
 }
 
