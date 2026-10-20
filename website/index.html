@@ -3,9 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MDRender — encrypted documents and a push server you own</title>
-<meta name="description" content="MDRender is an open-source Android document viewer with encrypted storage. The app and its clients work with no server at all; run your own Cloud Push server — registering with the cloud push master — when you want pushes from anywhere.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<title>MDRender — encrypted Android document viewer and push server</title>
+<meta name="description" content="Open-source encrypted document viewer for Android. Send files over the LAN with LocalSend, or run your own Cloud Push server to push from anywhere.">
+<link rel="canonical" href="https://mdrender.a42r.com/">
+<meta name="theme-color" content="#0f1420">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MDRender">
+<meta property="og:locale" content="en_AU">
+<meta property="og:title" content="MDRender — encrypted Android document viewer and push server">
+<meta property="og:description" content="Open-source encrypted document viewer for Android. Send files over the LAN with LocalSend, or run your own Cloud Push server to push from anywhere.">
+<meta property="og:url" content="https://mdrender.a42r.com/">
+<meta property="og:image" content="https://mdrender.a42r.com/images/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="MDRender app icon and a Markdown document open in the app: encrypted documents, pushed to your phone.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="images/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://mdrender.a42r.com/#website",
+      "url": "https://mdrender.a42r.com/",
+      "name": "MDRender"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "MDRender",
+      "operatingSystem": "Android",
+      "applicationCategory": "UtilitiesApplication",
+      "description": "Open-source encrypted document viewer for Android. Send files over the LAN with LocalSend, or run your own Cloud Push server to push from anywhere.",
+      "url": "https://mdrender.a42r.com/",
+      "image": "https://mdrender.a42r.com/images/icon-512.png",
+      "screenshot": [
+        "https://mdrender.a42r.com/images/app-browser.png",
+        "https://mdrender.a42r.com/images/app-markdown.png",
+        "https://mdrender.a42r.com/images/app-push.png"
+      ],
+      "downloadUrl": "https://github.com/githuba42r/mdrender/releases/latest",
+      "isAccessibleForFree": true,
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "AUD"
+      },
+      "sameAs": [
+        "https://github.com/githuba42r/mdrender"
+      ]
+    }
+  ]
+}
+</script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -46,10 +99,10 @@
       <div class="hero-shot">
         <figure class="frame browser hero-browser">
           <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pushes</span></div>
-          <img src="images/pushes-desktop.png" alt="The Cloud Push console on desktop: push totals per period, a per-account breakdown, and a list of recent pushes with pending status.">
+          <img src="images/pushes-desktop.png" alt="The Cloud Push console on desktop: push totals per period, a per-account breakdown, and a list of recent pushes with pending status." width="1440" height="1250">
         </figure>
         <figure class="frame phone hero-phone">
-          <img src="images/push-mobile-nav.png" alt="The same console at phone width with the navigation menu open: Users, Pushes, Pending, Federation, and the rest.">
+          <img src="images/push-mobile-nav.png" alt="The same console at phone width with the navigation menu open: Users, Pushes, Pending, Federation, and the rest." width="390" height="570">
         </figure>
       </div>
     </div>
@@ -180,7 +233,7 @@
       </div>
       <figure class="frame browser">
         <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/federation</span></div>
-        <img src="images/federation-desktop.png" alt="Federation page of a slave server showing master URL field, connection status, last heartbeat, and a Connect to a master button.">
+        <img src="images/federation-desktop.png" alt="Federation page of a slave server showing master URL field, connection status, last heartbeat, and a Connect to a master button." width="1440" height="1050" loading="lazy" decoding="async">
       </figure>
     </div>
   </section>

@@ -41,7 +41,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-img { max-width: 100%; display: block; }
+img { max-width: 100%; height: auto; display: block; }
 
 a { color: var(--brass); text-underline-offset: 3px; }
 a:hover { color: #f0bc6a; }

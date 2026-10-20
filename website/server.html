@@ -3,9 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Run your own MDRender push server — Docker, federation, prepaid credit</title>
-<meta name="description" content="One Docker container from ghcr.io: pair your devices, host your own pending downloads, keep pushes end-to-end encrypted, and register your server with the cloud push master under operator consent. Prepaid credit, no subscriptions.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 5 6v10c0 7 4.6 11.7 11 14 6.4-2.3 11-7 11-14V6L16 2z' fill='%23E94560'/%3E%3Cpath d='M11 12h10v10H11z' fill='%23141420'/%3E%3C/svg%3E">
+<title>Run your own MDRender push server — Docker and federation</title>
+<meta name="description" content="One Docker container from ghcr.io: pair devices, hold pending downloads, keep pushes end-to-end encrypted, federate with the cloud push master. Prepaid credit.">
+<link rel="canonical" href="https://mdrender.a42r.com/server.html">
+<meta name="theme-color" content="#0f1420">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MDRender">
+<meta property="og:locale" content="en_AU">
+<meta property="og:title" content="Run your own MDRender push server — Docker and federation">
+<meta property="og:description" content="One Docker container from ghcr.io: pair devices, hold pending downloads, keep pushes end-to-end encrypted, federate with the cloud push master. Prepaid credit.">
+<meta property="og:url" content="https://mdrender.a42r.com/server.html">
+<meta property="og:image" content="https://mdrender.a42r.com/images/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="MDRender app icon and a Markdown document open in the app: encrypted documents, pushed to your phone.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="images/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -45,10 +61,10 @@
       <div class="hero-shot">
         <figure class="frame browser hero-browser">
           <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/users</span></div>
-          <img src="images/accounts-desktop.png" alt="Users page of the console listing accounts with host, device counts, statuses, prepaid balances, and per-row actions.">
+          <img src="images/accounts-desktop.png" alt="Users page of the console listing accounts with host, device counts, statuses, prepaid balances, and per-row actions." width="1440" height="1300">
         </figure>
         <figure class="frame phone hero-phone">
-          <img src="images/billing-mobile.png" alt="Billing at phone width showing prepaid balance, PayPal top-up, and payment history.">
+          <img src="images/billing-mobile.png" alt="Billing at phone width showing prepaid balance, PayPal top-up, and payment history." width="390" height="1060">
         </figure>
       </div>
     </div>
@@ -133,19 +149,19 @@
       <div class="gallery">
         <figure class="frame browser">
           <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pair</span></div>
-          <img src="images/pair-desktop.png" alt="Pair a device page showing an inline QR code, the server URL, and a waiting-for-scan status.">
+          <img src="images/pair-desktop.png" alt="Pair a device page showing an inline QR code, the server URL, and a waiting-for-scan status." width="1440" height="950" loading="lazy" decoding="async">
           <figcaption>Pair a device — the QR carries the server URL and public key; it
           is single-use and expires in fifteen minutes.</figcaption>
         </figure>
         <figure class="frame browser">
           <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/users</span></div>
-          <img src="images/accounts-desktop.png" alt="Users page listing accounts with host, device counts, active status, prepaid balances, and per-row actions.">
+          <img src="images/accounts-desktop.png" alt="Users page listing accounts with host, device counts, active status, prepaid balances, and per-row actions." width="1440" height="1300" loading="lazy" decoding="async">
           <figcaption>Users — accounts, paired devices, prepaid balances, and confirmed
           deletions waiting out their fourteen-day hold.</figcaption>
         </figure>
         <figure class="frame browser">
           <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/account/billing</span></div>
-          <img src="images/billing-desktop.png" alt="Account billing page with prepaid balance, plan and service tiles, a PayPal top-up form, and expandable payment history.">
+          <img src="images/billing-desktop.png" alt="Account billing page with prepaid balance, plan and service tiles, a PayPal top-up form, and expandable payment history." width="1440" height="1300" loading="lazy" decoding="async">
           <figcaption>Billing — balance at a glance, a PayPal top-up, and payment
           history that expands to the PayPal order.</figcaption>
         </figure>
@@ -185,7 +201,7 @@
       </div>
       <figure class="frame browser split-shot">
         <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/federation</span></div>
-        <img src="images/federation-desktop.png" alt="Federation page of a slave server showing master URL field, connection status, last heartbeat, billing plan, and a Connect to a master button.">
+        <img src="images/federation-desktop.png" alt="Federation page of a slave server showing master URL field, connection status, last heartbeat, billing plan, and a Connect to a master button." width="1440" height="1050" loading="lazy" decoding="async">
         <figcaption>A slave's federation page: connection state, heartbeat, and the
         connect button that starts consent.</figcaption>
       </figure>
@@ -214,11 +230,11 @@
       <div class="split-shots">
         <figure class="frame browser">
           <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/billing?tab=payments</span></div>
-          <img src="images/payments-desktop.png" alt="Admin billing payments tab: a connected PayPal gateway notice and a table of top-up orders with amount, status, provider id, and date.">
+          <img src="images/payments-desktop.png" alt="Admin billing payments tab: a connected PayPal gateway notice and a table of top-up orders with amount, status, provider id, and date." width="1440" height="1250" loading="lazy" decoding="async">
           <figcaption>Gateway state and top-up orders, per account.</figcaption>
         </figure>
         <figure class="frame phone">
-          <img src="images/billing-mobile.png" alt="Billing page at phone width with prepaid balance, top-up amount field, a Top up with PayPal button, and payment history.">
+          <img src="images/billing-mobile.png" alt="Billing page at phone width with prepaid balance, top-up amount field, a Top up with PayPal button, and payment history." width="390" height="1060" loading="lazy" decoding="async">
           <figcaption>Top-ups from a phone.</figcaption>
         </figure>
       </div>
@@ -244,7 +260,7 @@
       </div>
       <figure class="frame browser">
         <div class="frame-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="frame-url">push.example.com/pending</span></div>
-        <img src="images/pending-desktop.png" alt="The Pending page listing files waiting to be delivered, with sizes, targets, and download controls.">
+        <img src="images/pending-desktop.png" alt="The Pending page listing files waiting to be delivered, with sizes, targets, and download controls." width="1440" height="1050" loading="lazy" decoding="async">
       </figure>
     </div>
   </section>
