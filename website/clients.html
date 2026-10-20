@@ -165,7 +165,7 @@ TOKEN=$(curl -s -d grant_type=client_credentials \
 
 curl -H "Authorization: Bearer $TOKEN" \
   -F target_device=Pixel \
-  <!--email_off-->-F file=@report.pdf<!--/email_off--> \
+  -F file=&#64;report.pdf \
   "$URL/api/push"</code></pre>
       </div>
       <p class="note">Both raw paths — this curl example and
