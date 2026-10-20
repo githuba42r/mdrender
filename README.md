@@ -172,4 +172,6 @@ Uses Room with schema versioning. Current version: 7. Migration objects in `AppD
 
 ## License
 
-Proprietary — see [LICENSE](LICENSE). All rights reserved.
+Copyright © 2026 Phil Gersekowski. Licensed under the GNU General Public License v3.0 — see [LICENSE](LICENSE).
+
+You are free to use, modify and distribute MDRender, but any distributed modifications must also be released under GPL v3.

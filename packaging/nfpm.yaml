@@ -14,7 +14,7 @@ description: |
   Send files to MDRender (or any LocalSend receiver) from the command line.
   LAN discovery, local DNS resolution, and cloud-push. Installs mdrender-send
   and mdrender-push (cloud push only).
-license: Proprietary
+license: GPL-3.0-only
 depends:
   - python3
   - python3-cryptography

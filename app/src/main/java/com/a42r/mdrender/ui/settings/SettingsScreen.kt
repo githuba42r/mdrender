@@ -470,6 +470,6 @@ private fun AboutSection(uiState: SettingsUiState) {
     )
     ListItem(
         headlineContent = { Text("Copyright") },
-        supportingContent = { Text("© 2026 Phil Gersekowski. All rights reserved.") }
+        supportingContent = { Text("© 2026 Phil Gersekowski. Licensed under the GNU GPL v3.") }
     )
 }

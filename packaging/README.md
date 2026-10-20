@@ -99,8 +99,8 @@ Gatekeeper/SmartScreen warning.
 
 ## Notes
 
-- License: **Proprietary — all rights reserved** (per the repository README), so
-  packages declare `custom:Proprietary` / `Proprietary`.
+- License: **GPL-3.0-only** (see the repository LICENSE), so packages declare
+  the SPDX identifier `GPL-3.0-only`.
 - The tool installs as `mdrender-send`, so `--help`/`--version` show that name
   (argparse derives the program name from `argv[0]`).
 - CI artifact names: `mdrender-send-ubuntu-latest`, `-windows-latest`,
