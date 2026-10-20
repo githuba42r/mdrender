@@ -1,0 +1,108 @@
+name: Deploy website
+
+# Publishes website/ to the nginx host behind https://mdrender.a42r.com/
+#
+# Triggers:
+#   - push to main/master that touches website/ or this workflow
+#   - manual dispatch
+#
+# Required repository secrets:
+#   DEPLOY_SSH_KEY            private key; its authorized_keys entry on the host is
+#                             command="rrsync /opt/apps/mdrender/website",restrict
+#   DEPLOY_HOST               host name or IP of the web server
+#   DEPLOY_USER               SSH user (owner of /opt/apps/mdrender/website)
+#   DEPLOY_KNOWN_HOSTS        host key line(s), from: ssh-keyscan -t ed25519 <host>
+#
+# Optional repository secrets (purge the Cloudflare cache after deploy):
+#   CLOUDFLARE_ZONE_ID        zone ID for a42r.com
+#   CLOUDFLARE_API_TOKEN      token with Zone > Cache Purge permission
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "website/**"
+      - ".github/workflows/deploy-website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-website
+  cancel-in-progress: false
+
+env:
+  SITE_URL: https://mdrender.a42r.com/
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify deploy secrets are configured
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          if [ -z "$SSH_KEY" ]; then missing="$missing DEPLOY_SSH_KEY"; fi
+          if [ -z "$SSH_HOST" ]; then missing="$missing DEPLOY_HOST"; fi
+          if [ -z "$SSH_USER" ]; then missing="$missing DEPLOY_USER"; fi
+          if [ -z "$KNOWN_HOSTS" ]; then missing="$missing DEPLOY_KNOWN_HOSTS"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub Actions secrets:$missing"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Rsync website/
+        env:
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # The key's authorized_keys entry forces rrsync rooted at the site
+          # directory, so the remote path is relative to it.
+          rsync -av --delete \
+            -e "ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
+            website/ "${SSH_USER}@${SSH_HOST}:"
+
+      - name: Purge Cloudflare cache
+        env:
+          CF_ZONE: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CF_ZONE" ] || [ -z "$CF_TOKEN" ]; then
+            echo "Cloudflare secrets not set; skipping purge (edge cache expires on its own)."
+            exit 0
+          fi
+          files=$(cd website && find . -type f | sed "s|^\./|${SITE_URL}|" | jq -R . | jq -sc '{files: (. + ["'"$SITE_URL"'"])}')
+          echo "Purging $(echo "$files" | jq '.files | length') URLs"
+          # The purge API takes at most 30 URLs per call.
+          echo "$files" | jq -c '.files | . as $f | range(0; length; 30) | {files: $f[.:(. + 30)]}' | while read -r batch; do
+            curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/purge_cache" \
+              -H "Authorization: Bearer ${CF_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$batch" | jq -e '.success' >/dev/null
+          done
+
+      - name: Smoke test
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL")
+          echo "GET $SITE_URL -> $code"
+          [ "$code" = "200" ]
