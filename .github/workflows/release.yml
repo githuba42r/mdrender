@@ -38,6 +38,11 @@ concurrency:
   group: release-master
   cancel-in-progress: false
 
+# Optional success-notification secrets (email sent after a successful release):
+#   RELEASE_NOTIFY_EMAIL / SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM
+env:
+  NOTIFY_ENABLED: ${{ secrets.RELEASE_NOTIFY_EMAIL != '' && secrets.SMTP_HOST != '' && secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' && secrets.SMTP_FROM != '' }}
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -139,6 +144,8 @@ jobs:
     needs: [plan, test]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -227,3 +234,47 @@ jobs:
             --title "MDRender ${VERSION}" \
             --notes-file "docs/releases/${TAG}.md" \
             release-assets/*
+
+      - name: Export release notes for the notification email
+        if: env.NOTIFY_ENABLED == 'true'
+        run: |
+          {
+            echo "RELEASE_NOTES_HTML<<NOTES_EOF"
+            python3 -c 'import html,sys; print(html.escape(open(sys.argv[1]).read().strip()))' \
+              "docs/releases/${TAG}.md" 2>/dev/null || true
+            echo "NOTES_EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Send success email
+        if: env.NOTIFY_ENABLED == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT || 465 }}
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          from: "GitHub Actions <${{ secrets.SMTP_FROM }}>"
+          to: ${{ secrets.RELEASE_NOTIFY_EMAIL }}
+          subject: "[MDRender] v${{ env.VERSION }} built & released"
+          html_body: |
+            <h2>MDRender — release v${{ env.VERSION }} is built and published</h2>
+            <p>The release <b>${{ env.TAG }}</b> was published as a <b>GitHub Release</b> carrying the
+            Android APK, the desktop packages and the server image.</p>
+            <h3>Server image</h3>
+            <ul>
+              <li>New image: <code>ghcr.io/githuba42r/mdrender-server:${{ env.VERSION }}</code> (<code>:latest</code> also updated)</li>
+              <li>Digest: <code>${{ needs.docker.outputs.digest || 'unknown' }}</code></li>
+            </ul>
+            <p><u>Links</u></p>
+            <ul>
+              <li><b>GitHub Release</b> (downloads / release notes):
+                <a href="${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.TAG }}">
+                  ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.TAG }}</a></li>
+              <li><b>Build log:</b>
+                <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">
+                  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}</a></li>
+              <li><b>Website:</b> <a href="https://mdrender.a42r.com/" target="_blank">https://mdrender.a42r.com/</a></li>
+            </ul>
+            <h3>Release notes</h3>
+            <pre>${{ env.RELEASE_NOTES_HTML }}</pre>
+          convert_markdown: false

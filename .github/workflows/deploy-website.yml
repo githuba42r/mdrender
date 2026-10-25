@@ -17,6 +17,11 @@ name: Deploy website
 #   CLOUDFLARE_ZONE_ID        zone ID for a42r.com
 #   CLOUDFLARE_API_TOKEN      token with Zone > Cache Purge permission
 
+#
+# Optional success-notification secrets (email sent after a successful deploy):
+#   RELEASE_NOTIFY_EMAIL      recipient; when unset no email is sent
+#   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM  SMTP account
+
 on:
   push:
     branches:
@@ -36,6 +41,7 @@ concurrency:
 
 env:
   SITE_URL: https://mdrender.a42r.com/
+  NOTIFY_ENABLED: ${{ secrets.RELEASE_NOTIFY_EMAIL != '' && secrets.SMTP_HOST != '' && secrets.SMTP_USER != '' && secrets.SMTP_PASS != '' && secrets.SMTP_FROM != '' }}
 
 jobs:
   deploy:
@@ -106,3 +112,19 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL")
           echo "GET $SITE_URL -> $code"
           [ "$code" = "200" ]
+      - name: Send success email
+        if: env.NOTIFY_ENABLED == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT || 465 }}
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          from: "GitHub Actions <${{ secrets.SMTP_FROM }}>"
+          to: ${{ secrets.RELEASE_NOTIFY_EMAIL }}
+          subject: "[MDRender] website deployed"
+          html_body: |
+            <h2>MDRender — website deployed</h2>
+            <p>The website was published to <a href="${{ env.SITE_URL }}" target="_blank">${{ env.SITE_URL }}</a>
+            (commit ${{ github.sha }}, smoke test passed).</p>
+          convert_markdown: false
