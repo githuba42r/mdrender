@@ -13,11 +13,11 @@ import javax.inject.Singleton
 /**
  * Drains a verified push into the user's library.
  *
- * Kept apart from [CloudPushDownloadService] because this is where the
+ * Runs from [MDRenderApplication]'s cloud-push scope when the manager signals
+ * a verified manifest. Kept apart from the manager because this is where the
  * awkward parts live — reading the size before the temp file is consumed,
  * acking a cancelled file so the server stops offering it, and not acking a
- * failed one so the server can retry — and none of that is worth testing
- * through a Service.
+ * failed one so the server can retry.
  */
 @Singleton
 class CloudPushDownloader @Inject constructor(

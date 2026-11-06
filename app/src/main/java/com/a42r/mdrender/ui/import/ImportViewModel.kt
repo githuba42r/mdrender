@@ -47,7 +47,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     val mimeType = fileRepository.mimeTypeFromExtension(fileName)
                     if (mimeType == "application/octet-stream") {
                         val resolvedMime = contentResolver.getType(uri) ?: mimeType
-                        if (!resolvedMime.startsWith("text/") && !resolvedMime.startsWith("image/")) {
+                        if (!resolvedMime.startsWith("text/") && !resolvedMime.startsWith("image/") &&
+                            !resolvedMime.startsWith("video/")
+                        ) {
                             Log.w(TAG, "Skipping unsupported type $resolvedMime for $uri")
                             skipped++
                             _uiState.update { it.copy(skippedCount = skipped) }
@@ -67,7 +69,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             val failed = uris.size - count - skipped
             val errorMessage = when {
                 failed > 0 -> "Imported $count of ${uris.size} file(s). $failed failed: $lastError"
-                skipped > 0 && count == 0 -> "No files imported — $skipped unsupported file type(s). Only text and image files are supported."
+                skipped > 0 && count == 0 -> "No files imported — $skipped unsupported file type(s). Only text, image, and video files are supported."
                 else -> null
             }
             _uiState.update { it.copy(isImporting = false, errorMessage = errorMessage) }

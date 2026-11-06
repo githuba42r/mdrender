@@ -13,6 +13,12 @@ sealed class Routes(val route: String) {
     data object ImageViewer : Routes("image_viewer/{fileId}") {
         fun createRoute(fileId: Long): String = "image_viewer/$fileId"
     }
+    data object HtmlViewer : Routes("html_viewer/{fileId}") {
+        fun createRoute(fileId: Long): String = "html_viewer/$fileId"
+    }
+    data object VideoPlayer : Routes("video_player/{fileId}") {
+        fun createRoute(fileId: Long): String = "video_player/$fileId"
+    }
     data object Settings : Routes("settings")
     data object Import : Routes("import/{folderId}") {
         fun createRoute(folderId: Long?): String = "import/${folderId ?: "root"}"

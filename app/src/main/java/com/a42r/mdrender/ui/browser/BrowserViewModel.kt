@@ -25,10 +25,13 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import javax.inject.Inject
 
 data class BrowserUiState(
@@ -135,6 +138,10 @@ class BrowserViewModel @Inject constructor(
     private val _shareIntent = MutableSharedFlow<Intent>()
     val shareIntent: SharedFlow<Intent> = _shareIntent.asSharedFlow()
 
+    /** One-off save-to-device results shown as snackbars. */
+    private val _downloadStatus = MutableSharedFlow<String>()
+    val downloadStatus: SharedFlow<String> = _downloadStatus.asSharedFlow()
+
     /** Share failures, for the snackbar. */
     private val _shareError = MutableSharedFlow<String>()
     val shareError: SharedFlow<String> = _shareError.asSharedFlow()
@@ -196,6 +203,37 @@ class BrowserViewModel @Inject constructor(
 
     fun cancelShare() {
         _pendingShare.value = null
+    }
+
+    /**
+     * Export a library file to a location the user picked via the system
+     * file picker (SAF CreateDocument). Plain files stream straight off
+     * disk; encrypted files are decrypted to memory first. The result is
+     * reported through [downloadStatus].
+     */
+    fun downloadFileTo(fileId: Long, target: android.net.Uri) {
+        viewModelScope.launch {
+            try {
+                val meta = fileRepository.getFileMetadata(fileId)
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(target)?.use { out ->
+                        val plain = fileRepository.getPlainFile(fileId)
+                        if (plain != null) {
+                            plain.inputStream().use { it.copyTo(out) }
+                        } else {
+                            val (bytes, _) = fileRepository.getDecryptedContent(fileId)
+                                ?: throw IOException("File not found")
+                            out.write(bytes)
+                        }
+                    } ?: throw IOException("Could not open destination")
+                }
+                _downloadStatus.emit("Saved \"${meta?.name ?: "file"}\"")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _downloadStatus.emit("Download failed: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
     }
 
     private fun toEntities(metas: List<FileMetadata>): List<FileEntity> =

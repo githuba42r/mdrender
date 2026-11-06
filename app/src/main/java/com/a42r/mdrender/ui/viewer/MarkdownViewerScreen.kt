@@ -25,7 +25,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -407,32 +406,56 @@ fun MarkdownText(
     val annotatedString = remember(markdown, fontScale) {
         buildAnnotatedString {
             val lines = markdown.split("\n")
-            for (line in lines) {
-                when {
-                    line.startsWith("# ") -> withStyle(SpanStyle(fontSize = h1Size, fontWeight = FontWeight.Bold)) {
-                        append(line.removePrefix("# "))
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i]
+                if (isTableLine(line)) {
+                    // Collect the whole table block (consecutive | lines)
+                    // and emit it as aligned monospace rows.
+                    val tableLines = mutableListOf<String>()
+                    while (i < lines.size && isTableLine(lines[i])) {
+                        tableLines.add(lines[i].trim())
+                        i++
                     }
-                    line.startsWith("## ") -> withStyle(SpanStyle(fontSize = h2Size, fontWeight = FontWeight.Bold)) {
-                        append(line.removePrefix("## "))
-                    }
-                    line.startsWith("### ") -> withStyle(SpanStyle(fontSize = h3Size, fontWeight = FontWeight.Bold)) {
-                        append(line.removePrefix("### "))
-                    }
-                    line.startsWith("- ") || line.startsWith("* ") -> {
-                        append("  \u2022 ")
-                        appendStyled(line.removePrefix("- ").removePrefix("* "), this, linkColor)
-                    }
-                    line.startsWith("`") && line.endsWith("`") -> {
-                        withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg)) {
-                            append(line.removeSurrounding("`", "`"))
+                    append("\n")
+                    appendTable(
+                        table = parseMarkdownTable(tableLines),
+                        builder = this,
+                        linkColor = linkColor,
+                        monoBase = SpanStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = (bodySize.value * 0.85f).sp
+                        )
+                    )
+                    append("\n")
+                } else {
+                    when {
+                        line.startsWith("# ") -> withStyle(SpanStyle(fontSize = h1Size, fontWeight = FontWeight.Bold)) {
+                            append(line.removePrefix("# "))
                         }
+                        line.startsWith("## ") -> withStyle(SpanStyle(fontSize = h2Size, fontWeight = FontWeight.Bold)) {
+                            append(line.removePrefix("## "))
+                        }
+                        line.startsWith("### ") -> withStyle(SpanStyle(fontSize = h3Size, fontWeight = FontWeight.Bold)) {
+                            append(line.removePrefix("### "))
+                        }
+                        line.startsWith("- ") || line.startsWith("* ") -> {
+                            append("  \u2022 ")
+                            appendStyled(line.removePrefix("- ").removePrefix("* "), this, linkColor)
+                        }
+                        line.startsWith("`") && line.endsWith("`") -> {
+                            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg)) {
+                                append(line.removeSurrounding("`", "`"))
+                            }
+                        }
+                        line.startsWith("> ") -> withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = onSurfaceVariant)) {
+                            appendStyled(line.removePrefix("> "), this, linkColor)
+                        }
+                        else -> appendStyled(line, this, linkColor)
                     }
-                    line.startsWith("> ") -> withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = onSurfaceVariant)) {
-                        appendStyled(line.removePrefix("> "), this, linkColor)
-                    }
-                    else -> appendStyled(line, this, linkColor)
+                    append("\n")
+                    i++
                 }
-                append("\n")
             }
         }
     }
@@ -875,30 +898,3 @@ private fun PositionScrollbar(scrollState: androidx.compose.foundation.ScrollSta
         }
     }
 }
-
-private fun appendStyled(raw: String, builder: AnnotatedString.Builder, linkColor: Color) {
-    val linkRegex = Regex("\\[(.+?)\\]\\((.+?)\\)")
-    var lastEnd = 0
-    for (match in linkRegex.findAll(raw)) {
-        if (match.range.first > lastEnd) {
-            builder.append(plainStyled(raw.substring(lastEnd, match.range.first)))
-        }
-        val text = match.groupValues[1]
-        val url = match.groupValues[2]
-        builder.pushStringAnnotation("link", url)
-        builder.withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
-            builder.append(text)
-        }
-        builder.pop()
-        lastEnd = match.range.last + 1
-    }
-    if (lastEnd < raw.length) {
-        builder.append(plainStyled(raw.substring(lastEnd)))
-    }
-}
-
-private fun plainStyled(text: String): String = text
-    .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
-    .replace(Regex("\\*(.+?)\\*"), "$1")
-    .replace(Regex("`(.+?)`"), "$1")
-

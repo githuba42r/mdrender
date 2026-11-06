@@ -20,6 +20,10 @@ DEFAULTS = {
     "PUSH_STORAGE_DIR": "/data/push",
     "DB_PATH": "/data/push/server.db",
     "PUSH_FILE_TTL_HOURS": 24,
+    # Push history rows (pushes + push_files) older than this are deleted by
+    # the sweep worker. Bytes for unacked files die much sooner (see above);
+    # by day 7 nothing can still arrive, so the rows are pure history.
+    "PUSH_HISTORY_TTL_DAYS": 7,
     "PUSH_RETRY_COUNT": 5,
     "PUSH_RETRY_INTERVAL_MINUTES": 30,
     "DEVICE_TTL_DAYS": 90,
@@ -114,6 +118,7 @@ def load_config(*, overrides: dict | None = None) -> Config:
                  "ENROL_CODE_TTL_SECONDS", "ENROL_CODE_MAX_ATTEMPTS",
                  "SESSION_TTL_SECONDS",
                  "ACCESS_TOKEN_TTL_SECONDS", "PUSH_FILE_TTL_HOURS",
+                 "PUSH_HISTORY_TTL_DAYS",
                  "PUSH_RETRY_COUNT", "PUSH_RETRY_INTERVAL_MINUTES",
                  "DEVICE_TTL_DAYS", "ACCOUNT_MAX_BYTES", "ACCOUNT_MAX_FILES",
                  "ACCOUNT_MAX_AGE_HOURS", "STORAGE_BILL_AFTER_HOURS",

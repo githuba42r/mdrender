@@ -492,6 +492,7 @@ class FileRepository @Inject constructor(
         return when {
             filename.endsWith(".md", ignoreCase = true) -> "text/markdown"
             filename.endsWith(".txt", ignoreCase = true) -> "text/plain"
+            filename.endsWith(".html", ignoreCase = true) || filename.endsWith(".htm", ignoreCase = true) -> "text/html"
             filename.endsWith(".png", ignoreCase = true) -> "image/png"
             filename.endsWith(".jpg", ignoreCase = true) || filename.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
             filename.endsWith(".gif", ignoreCase = true) -> "image/gif"
@@ -502,6 +503,10 @@ class FileRepository @Inject constructor(
             filename.endsWith(".ogg", ignoreCase = true) -> "audio/ogg"
             filename.endsWith(".wav", ignoreCase = true) -> "audio/wav"
             filename.endsWith(".flac", ignoreCase = true) -> "audio/flac"
+            filename.endsWith(".mp4", ignoreCase = true) || filename.endsWith(".m4v", ignoreCase = true) -> "video/mp4"
+            filename.endsWith(".webm", ignoreCase = true) -> "video/webm"
+            filename.endsWith(".mov", ignoreCase = true) -> "video/quicktime"
+            filename.endsWith(".mkv", ignoreCase = true) -> "video/x-matroska"
             else -> "application/octet-stream"
         }
     }

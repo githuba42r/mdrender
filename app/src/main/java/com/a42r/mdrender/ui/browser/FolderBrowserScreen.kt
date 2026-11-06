@@ -1,6 +1,7 @@
 package com.a42r.mdrender.ui.browser
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.a42r.mdrender.MDRenderApplication
 import com.a42r.mdrender.data.dao.FileListItem
 import com.a42r.mdrender.share.SharePlan
 import com.a42r.mdrender.ui.navigation.FileType
@@ -67,6 +70,20 @@ fun FolderBrowserScreen(
     val lastOpenedFile by viewModel.lastOpenedFile.collectAsStateWithLifecycle()
     val lastOpenedFileHidden by viewModel.lastOpenedFileHidden.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+
+    // "Download" from the long-press menu: the user picks a destination with
+    // the system file picker (My Files → Downloads etc.), then the ViewModel
+    // streams the file out of the app's storage into the chosen location.
+    var downloadFileId by rememberSaveable { mutableLongStateOf(-1L) }
+    val downloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        val fileId = downloadFileId
+        downloadFileId = -1L
+        if (uri != null && fileId > 0L) {
+            scope.launch { viewModel.downloadFileTo(fileId, uri) }
+        }
+    }
     val context = LocalContext.current
 
     val notifPermission = rememberLauncherForActivityResult(
@@ -130,7 +147,9 @@ fun FolderBrowserScreen(
             val route = when {
                 file.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(file.id)
                 file.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(file.id)
+                file.mimeType.startsWith("text/html") -> Routes.HtmlViewer.createRoute(file.id)
                 file.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(file.id)
+                file.mimeType.startsWith("video/") -> Routes.VideoPlayer.createRoute(file.id)
                 else -> Routes.TextViewer.createRoute(file.id)
             }
             navController.navigate(route)
@@ -148,6 +167,13 @@ fun FolderBrowserScreen(
             if (result == SnackbarResult.ActionPerformed) {
                 undo.action()
             }
+        }
+    }
+
+    // Save-to-device results surface as snackbars.
+    LaunchedEffect(Unit) {
+        viewModel.downloadStatus.collect { message ->
+            snackbarHostState.showSnackbar(message)
         }
     }
 
@@ -223,7 +249,9 @@ fun FolderBrowserScreen(
                                         val route = when {
                                             lastFile.mimeType.startsWith("text/markdown") -> Routes.MarkdownViewer.createRoute(lastFile.id)
                                             lastFile.mimeType.startsWith("text/plain") -> Routes.TextViewer.createRoute(lastFile.id)
+                                            lastFile.mimeType.startsWith("text/html") -> Routes.HtmlViewer.createRoute(lastFile.id)
                                             lastFile.mimeType.startsWith("image/") -> Routes.ImageViewer.createRoute(lastFile.id)
+                                            lastFile.mimeType.startsWith("video/") -> Routes.VideoPlayer.createRoute(lastFile.id)
                                             else -> Routes.TextViewer.createRoute(lastFile.id)
                                         }
                                         navController.navigate(route)
@@ -287,12 +315,12 @@ fun FolderBrowserScreen(
                     Icon(Icons.Filled.Add, contentDescription = "Add")
                 }
             }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        }
     ) { padding ->
+        Box(modifier = Modifier.padding(padding)) {
         Column(
             modifier = Modifier
-                .padding(padding)
+                .fillMaxSize()
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
@@ -440,6 +468,18 @@ fun FolderBrowserScreen(
                 }
             }
         }
+
+        // Toast sits at the very bottom, over the (+) FAB area, so it never
+        // covers the last file rows (Scaffold's default host stacks it above
+        // the FAB, overlaying the list).
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 16.dp)
+        )
+        }
     }
 
     // Bottom Sheet for FAB
@@ -489,6 +529,18 @@ fun FolderBrowserScreen(
                     modifier = Modifier.clickable {
                         menuFile = null
                         viewModel.requestShare(listOf(file.id))
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Download") },
+                    leadingContent = { Icon(Icons.Filled.Download, "Download") },
+                    modifier = Modifier.clickable {
+                        menuFile = null
+                        downloadFileId = file.id
+                        // Opening the system picker backgrounds us; don't
+                        // demand re-auth (or finish) on the way back.
+                        MDRenderApplication.instance.appLock.suspendNextLock()
+                        downloadLauncher.launch(file.name)
                     }
                 )
                 ListItem(

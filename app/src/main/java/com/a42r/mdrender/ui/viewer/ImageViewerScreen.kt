@@ -1,18 +1,24 @@
 package com.a42r.mdrender.ui.viewer
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,7 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ImageViewerScreen(
     onBack: () -> Unit,
@@ -68,15 +74,37 @@ fun ImageViewerScreen(
         }
     }
 
+    // Delete/move notices from the context menu actions.
+    LaunchedEffect(Unit) {
+        viewModel.userMessage.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    var showActionsMenu by remember { mutableStateOf(false) }
+    var showMoveDialog by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
     val state = pager
-    if (state == null || state.ids.isEmpty()) {
+    if (state == null) {
         Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
         return
     }
 
+    // All images deleted or moved out of the folder — leave the viewer.
+    if (state.ids.isEmpty()) {
+        LaunchedEffect(Unit) { onBack() }
+        return
+    }
+
     val pagerState = rememberPagerState(initialPage = state.startIndex) { state.ids.size }
+
+    // After a delete/move removes pages, clamp the current index into range.
+    LaunchedEffect(state.ids) {
+        if (pagerState.currentPage > state.ids.lastIndex) {
+            pagerState.scrollToPage(state.ids.lastIndex)
+        }
+    }
 
     // Reset zoom when the settled page changes; also update the title source.
     LaunchedEffect(pagerState.currentPage) {
@@ -84,8 +112,11 @@ fun ImageViewerScreen(
         offset = Offset.Zero
     }
 
-    val currentId = state.ids[pagerState.currentPage]
+    // Clamp here too: composition can run before the LaunchedEffect below
+    // scrolls the pager back into range after a delete/move.
+    val currentId = state.ids[pagerState.currentPage.coerceIn(0, state.ids.lastIndex)]
     val currentName by produceState("", currentId) { value = viewModel.fileNameFor(currentId) }
+    val currentFolderId = viewModel.folderId
 
     Scaffold(
         containerColor = Color.Black,
@@ -100,6 +131,40 @@ fun ImageViewerScreen(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    },
+                    actions = {
+                        var menuExpanded by remember { mutableStateOf(false) }
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Move") },
+                                leadingIcon = { Icon(Icons.Filled.DriveFileMove, null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.loadMoveTargets()
+                                    showMoveDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    confirmDelete = true
+                                }
+                            )
                         }
                     }
                 )
@@ -128,9 +193,12 @@ fun ImageViewerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
-                    .pointerInput(id) {
-                        detectTapGestures(onTap = { showAppBar = !showAppBar })
-                    }
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { showAppBar = !showAppBar },
+                        onLongClick = { showActionsMenu = true }
+                    )
                     .pointerInput(id) {
                         // Only handle (and consume) the gesture when it's a
                         // pinch or the image is already zoomed. A one-finger
@@ -175,5 +243,98 @@ fun ImageViewerScreen(
                 }
             }
         }
+    }
+
+    // Long-press context menu for the current image.
+    if (showActionsMenu) {
+        ModalBottomSheet(onDismissRequest = { showActionsMenu = false }) {
+            Column(modifier = Modifier.padding(bottom = 24.dp)) {
+                ListItem(
+                    headlineContent = { Text(currentName, maxLines = 1) },
+                    supportingContent = { Text("Image") }
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("Move") },
+                    leadingContent = { Icon(Icons.Filled.DriveFileMove, "Move") },
+                    modifier = Modifier.clickable {
+                        showActionsMenu = false
+                        viewModel.loadMoveTargets()
+                        showMoveDialog = true
+                    }
+                )
+                ListItem(
+                    headlineContent = { Text("Delete") },
+                    leadingContent = {
+                        Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                    },
+                    modifier = Modifier.clickable {
+                        showActionsMenu = false
+                        confirmDelete = true
+                    }
+                )
+            }
+        }
+    }
+
+    // Move destination picker
+    if (showMoveDialog) {
+        val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+        AlertDialog(
+            onDismissRequest = { showMoveDialog = false },
+            title = { Text("Move \"$currentName\" to") },
+            text = {
+                LazyColumn {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("Home") },
+                            leadingContent = { Icon(Icons.Filled.Home, "Home") },
+                            modifier = Modifier.clickable(enabled = currentFolderId != null) {
+                                viewModel.moveFile(currentId, null)
+                                showMoveDialog = false
+                            },
+                            colors = ListItemDefaults.colors(
+                                headlineColor = if (currentFolderId == null)
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                else ListItemDefaults.colors().headlineColor
+                            )
+                        )
+                    }
+                    items(
+                        moveTargets.filter { it.folder.id != currentFolderId },
+                        key = { it.folder.id }
+                    ) { target ->
+                        ListItem(
+                            headlineContent = { Text(target.folder.name) },
+                            leadingContent = { Icon(Icons.Filled.Folder, "Folder") },
+                            modifier = Modifier
+                                .padding(start = (target.depth * 16).dp)
+                                .clickable {
+                                    viewModel.moveFile(currentId, target.folder.id)
+                                    showMoveDialog = false
+                                }
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showMoveDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    // Delete confirmation
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete File?") },
+            text = { Text("\"$currentName\" will be permanently deleted.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteFile(currentId)
+                    confirmDelete = false
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+        )
     }
 }

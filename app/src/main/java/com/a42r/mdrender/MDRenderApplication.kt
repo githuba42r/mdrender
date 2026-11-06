@@ -3,9 +3,10 @@ package com.a42r.mdrender
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import com.a42r.mdrender.audio.AudioPlayerState
-import com.a42r.mdrender.cloudpush.CloudPushDownloadService
+import com.a42r.mdrender.cloudpush.CloudPushDownloader
 import com.a42r.mdrender.cloudpush.CloudPushManager
 import com.a42r.mdrender.cloudpush.PushClient
 import com.a42r.mdrender.cloudpush.PushServerConfig
@@ -19,6 +20,10 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 @HiltAndroidApp
@@ -29,6 +34,7 @@ class MDRenderApplication : Application() {
     @Inject lateinit var shareOutManager: ShareOutManager
     @Inject lateinit var audioPlayerState: AudioPlayerState
     @Inject lateinit var cloudPushManager: CloudPushManager
+    @Inject lateinit var cloudPushDownloader: CloudPushDownloader
     @Inject lateinit var pushConfig: PushServerConfig
     @Inject lateinit var pushClient: PushClient
 
@@ -44,6 +50,8 @@ class MDRenderApplication : Application() {
     private var startedActivities = 0
     private var foregroundActivity: WeakReference<Activity>? = null
     private lateinit var screenOffReceiver: ScreenOffReceiver
+
+    private val cloudPushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** True when the audio player has a file loaded. */
     private fun isAudioActive(): Boolean = audioPlayerState.info.value.fileId != 0L
@@ -112,9 +120,17 @@ class MDRenderApplication : Application() {
         thread { cleanupOrphanedFiles() }
 
         // The manager only fires this once a manifest has been verified, so the
-        // download service is never started by an unverified doorbell.
+        // download is never started by an unverified doorbell. Runs silently in
+        // an application-scoped coroutine — no foreground service, no
+        // notification.
         cloudPushManager.onPushReady { pushId ->
-            CloudPushDownloadService.start(this, pushId)
+            cloudPushScope.launch {
+                try {
+                    cloudPushDownloader.drain(pushId, cacheDir) { }
+                } catch (e: Exception) {
+                    Log.w("CloudPushDownload", "download failed (${e.javaClass.simpleName})")
+                }
+            }
         }
 
         screenOffReceiver = ScreenOffReceiver().also {
