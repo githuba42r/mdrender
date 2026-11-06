@@ -10,7 +10,7 @@
 # the package with an Apple Developer ID (see packaging/README.md).
 set -eu
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 IDENTIFIER="com.aspedia.mdrender.send"
 BIN="dist/mdrender-send"
 
